@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ushers</title>
+<meta name="theme-color" content="#5b2a86">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="shared/style.css">
+<script src="config.js"></script>
+<script src="shared/core.js"></script>
+</head>
+<body>
+<header class="bar">
+  <span class="title" id="title">Ushers</span>
+  <a id="toAdmin" href="admin/" hidden>Open Admin App</a>
+  <button id="signOut" hidden>Sign out</button>
+</header>
+<nav class="tabs" id="tabs" hidden>
+  <a href="#home" data-r="home">Home</a>
+  <a href="#rota" data-r="rota">Rota</a>
+  <a href="#notes" data-r="notes">Notifications<span class="badge" id="unread" hidden></span></a>
+  <a href="#dues" data-r="dues">Dues</a>
+  <a href="#history" data-r="history">History</a>
+  <a href="#pin" data-r="pin">PIN</a>
+</nav>
+<div class="banner" id="queueBanner" hidden></div>
+<main id="main"></main>
+<footer class="foot" id="foot"></footer>
+<script>
+(function () {
+  "use strict";
+  var C = window.UshersCore, h = C.h, main = document.getElementById("main");
+  var ME = null, CONF = null;
+
+  function msg(text, kind) { return h("div", { class: "msg " + (kind || "") }, text); }
+  function show() { C.clear(main); main.appendChild(h.apply(null, ["div", {}].concat(Array.prototype.slice.call(arguments)))); C.foot(document.getElementById("foot")); }
+  function loading() { show(h("p", { class: "muted" }, "Loading…")); }
+  function offline(err) { show(msg(err && err.network ? "No connection. Showing nothing new until the signal is back." : String(err), "bad")); }
+  function statusChip(code, label) { return h("span", { class: "chip status-" + (code || "") }, label || "Not started"); }
+
+  C.onSignedOut = function () { ME = null; signIn(); };
+  C.onQueueChange = paintQueue;
+
+  function paintQueue() {
+    var q = C.queue(), b = document.getElementById("queueBanner");
+    b.hidden = !q.length;
+    b.textContent = q.length ? q.length + " saved on this phone — waiting for connection" +
+      (q.some(function (x) { return x.lastError; }) ? ". One was refused: open Home to see why." : "") : "";
+  }
+
+  /* ---- sign in ---------------------------------------------------------- */
+
+  function signIn() {
+    document.getElementById("tabs").hidden = true;
+    document.getElementById("signOut").hidden = true;
+    document.getElementById("toAdmin").hidden = true;
+    var who = h("select", { id: "who" }, h("option", { value: "" }, "Choose your name"));
+    var typed = h("input", { id: "whoTyped", placeholder: "e.g. John Smith", autocomplete: "name", hidden: true });
+    var pin = h("input", { id: "pin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "6" });
+    var out = h("div");
+    var go = h("button", { onclick: function () {
+      out.textContent = "";
+      var body = { pin: pin.value };
+      if (!typed.hidden) body.name = typed.value; else body.usherId = who.value;
+      if ((!body.usherId && !body.name) || !pin.value) { out.appendChild(msg("Choose your name and enter your PIN.", "bad")); return; }
+      go.disabled = true;
+      C.api("login", body).then(function (j) {
+        go.disabled = false;
+        if (!j.ok) { out.appendChild(msg(j.message + (j.left !== undefined ? " " + j.left + " tries left." : ""), "bad")); return; }
+        C.setToken(j.token);
+        C.rememberPin(j.me.name, pin.value);
+        start();
+      }, function (e) { go.disabled = false; out.appendChild(msg("No connection. Try again when you have signal.", "bad")); });
+    } }, "Sign in");
+    show(h("h1", {}, "Sign in"),
+      h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), who, typed, h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
+    C.api("people").then(function (j) {
+      if (j.typeName) { who.hidden = true; typed.hidden = false; return; }
+      (j.people || []).forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
+    }, function () { who.hidden = true; typed.hidden = false; });
+  }
+
+  /* ---- start ------------------------------------------------------------ */
+
+  function start() {
+    if (!C.token()) return signIn();
+    loading();
+    C.api("me").then(function (j) {
+      if (!j.ok) return signIn();
+      ME = j.me; CONF = j.config;
+      document.getElementById("title").textContent = ME.name;
+      document.getElementById("tabs").hidden = false;
+      document.getElementById("signOut").hidden = false;
+      /* Open Admin App only when the server says so; the Admin App asks
+         the server again before it shows anything. */
+      document.getElementById("toAdmin").hidden = ME.permissions.indexOf("admin.app") === -1;
+      paintQueue();
+      C.flush();
+      route();
+    }, offline);
+  }
+
+  document.getElementById("signOut").addEventListener("click", function () {
+    C.api("logout").then(function () {}, function () {}).then(function () { C.setToken(""); signIn(); });
+  });
+
+  function route() {
+    if (!ME) return;
+    var hash = (location.hash || "#home").slice(1).split("/");
+    Array.prototype.forEach.call(document.querySelectorAll("#tabs a"), function (a) {
+      a.className = a.getAttribute("data-r") === hash[0] ? "on" : "";
+    });
+    ({ home: home, rota: rota, report: function () { report({ eventId: hash[1] }); }, rep: function () { report({ reportId: hash[1] }); },
+       notes: notes, dues: dues, history: history, pin: pinScreen }[hash[0]] || home)();
+  }
+  window.addEventListener("hashchange", route);
+
+  /* ---- home: "What am I doing?" ---------------------------------------- */
+
+  function dutyCard(d) {
+    var duty = d.duty === "counting" ? "Second Service offering counting" : d.duty === "ushering" ? "Ushering" : d.duty;
+    return h("div", { class: "card" },
+      h("div", { class: "row" }, h("b", { class: "grow" }, d.title), d.thanksgiving ? h("span", { class: "chip" }, "Thanksgiving") : null),
+      h("div", { class: "muted" }, C.dateLabel(d.date) + (d.start ? " · " + d.start : "")),
+      h("div", {}, duty),
+      d.cancelled ? h("div", { class: "chip bad" }, "Cancelled") : null,
+      d.reportDue && !d.cancelled ? h("div", { class: "row" }, statusChip(d.reportStatus, d.reportStatusLabel),
+        h("a", { class: "btn ghost", href: "#report/" + d.eventId }, d.reportStatus && d.reportStatus !== "draft" ? "View report" : "Open report")) : null);
+  }
+
+  function home() {
+    loading();
+    C.api("home").then(function (j) {
+      if (!j.ok) return show(msg(j.message, "bad"));
+      var unread = document.getElementById("unread");
+      unread.hidden = !j.unread; unread.textContent = j.unread;
+      var parts = [h("h1", {}, "What am I doing?")];
+      var q = C.queue();
+      if (q.length) {
+        parts.push(h("div", { class: "card" }, h("b", {}, "Saved on this phone — waiting for connection"),
+          q.map(function (x) {
+            return h("div", { class: "row" }, h("span", { class: "grow" }, x.label),
+              x.lastError ? h("span", { class: "chip bad" }, x.lastError) : h("span", { class: "chip warn" }, "Waiting"),
+              x.lastError ? h("button", { class: "ghost", onclick: function () { C.queueRemove(x.id); paintQueue(); home(); } }, "Remove") : null);
+          }), h("button", { class: "ghost", onclick: function () { C.flush().then(home); } }, "Try again now")));
+      }
+      var open = C.drafts().filter(function (d) { return !q.some(function (x) { return x.eventId === d.eventId; }); });
+      if (open.length) {
+        parts.push(h("div", { class: "card" }, h("b", {}, "Unfinished report"),
+          open.map(function (d) { return h("div", { class: "row" }, h("span", { class: "grow" }, (d.draft.title || "Report") + " · " + C.dateLabel(d.draft.date)),
+            h("a", { class: "btn ghost", href: "#report/" + d.eventId }, "Resume")); })));
+      }
+      if (j.toCountersign.length) {
+        parts.push(h("h2", {}, "To countersign"));
+        j.toCountersign.forEach(function (x) {
+          parts.push(h("div", { class: "card" }, h("b", {}, x.title), h("div", { class: "muted" }, C.dateLabel(x.date) + " · from " + x.submitter),
+            x.state === "ready" ? h("a", { class: "btn", href: "#rep/" + x.reportId }, "Review and countersign")
+              : h("span", { class: "chip warn" }, x.state === "rejected" ? "Not approved" : "Waiting for approval")));
+        });
+      }
+      parts.push(h("h2", {}, "This week" + (j.thanksgiving ? " · Thanksgiving Sunday" : "")));
+      parts.push(j.thisWeek.length ? j.thisWeek.map(dutyCard) : h("p", { class: "muted" }, "You are not on duty this week."));
+      if (j.recent.length) { parts.push(h("h2", {}, "Report not yet submitted")); parts.push(j.recent.map(dutyCard)); }
+      if (j.later.length) { parts.push(h("h2", {}, "Coming up")); parts.push(j.later.map(dutyCard)); }
+      show.apply(null, parts);
+    }, offline);
+  }
+
+  /* ---- rota ------------------------------------------------------------- */
+
+  function serviceBlock(s) {
+    var label = s.type === "SUN_SECOND" ? "Offering counting" : "Ushers";
+    return h("div", {}, h("h3", {}, s.title + (s.status === "cancelled" ? " (cancelled)" : "")),
+      h("div", { class: "muted" }, label),
+      s.people.length ? h("div", { class: "people" }, s.people.map(function (p) { return h("div", {}, p.mine ? h("b", {}, p.name + " (you)") : p.name); }))
+        : h("div", { class: "muted" }, "Nobody yet"));
+  }
+
+  function rota() {
+    loading();
+    C.api("rota", { weeks: 8 }).then(function (j) {
+      if (!j.ok) return show(msg(j.message, "bad"));
+      var parts = [h("h1", {}, "Rota")];
+      j.sundays.forEach(function (s) {
+        parts.push(h("div", { class: "card" }, h("div", { class: "row" }, h("b", { class: "grow" }, C.dateLabel(s.sunday)), s.thanksgiving ? h("span", { class: "chip" }, "Thanksgiving Sunday") : null),
+          s.services.length ? s.services.map(serviceBlock) : h("div", { class: "muted" }, "Not set yet")));
+      });
+      if (j.events.length) {
+        parts.push(h("h2", {}, "Other events"));
+        j.events.forEach(function (e) { parts.push(h("div", { class: "card" }, h("div", { class: "muted" }, C.dateLabel(e.date)), serviceBlock(e))); });
+      }
+      show.apply(null, parts);
+    }, offline);
+  }
+
+  /* ---- the report ------------------------------------------------------- */
+
+  function report(ref) {
+    loading();
+    var openArgs = ref.reportId ? { reportId: ref.reportId } : { eventId: ref.eventId };
+    C.api("report.open", openArgs).then(function (j) {
+      if (!j.ok) return show(msg(j.message, "bad"));
+      if (j.report && j.report.status && j.report.status !== "draft") return viewReport(j);
+      editReport(j);
+    }, function (e) {
+      /* No signal: a draft on this phone can still be finished and signed. */
+      var d = ref.eventId && C.draftGet(ref.eventId);
+      if (d && d.event) editReport({ event: d.event, canSubmit: true, offline: true });
+      else offline(e);
+    });
+  }
+
+  function totalsOf(entries) {
+    var by = {}, total = 0;
+    entries.forEach(function (x) { var a = x.denomination * x.quantity; by[x.category] = (by[x.category] || 0) + a; total += a; });
+    return { by: by, total: total };
+  }
+
+  function editReport(j) {
+    var ev = j.event, cur = CONF.currencies[CONF.defaultCurrency];
+    var saved = C.draftGet(ev.id) || {};
+    var server = j.report && j.report.status === "draft" ? j.report : null;
+    var state = {
+      attendance: saved.attendance || (server ? server.attendance : { male: "", female: "", children: "" }),
+      entries: saved.entries || (server ? server.entries : []),
+      notes: saved.notes || (server ? server.notes : ""),
+      countersignerId: saved.countersignerId || ""
+    };
+    function keep() { C.draftSave(ev.id, { event: ev, title: ev.title, date: ev.date, attendance: state.attendance, entries: state.entries, notes: state.notes, countersignerId: state.countersignerId }); }
+
+    var parts = [h("h1", {}, ev.title), h("p", { class: "muted" }, C.dateLabel(ev.date) + (ev.thanksgiving ? " · Thanksgiving Sunday" : ""))];
+    if (j.offline) parts.push(msg("No connection. Your report is saved on this phone as you type.", ""));
+    if (!j.canSubmit) {
+      parts.push(askApproval(j));
+      return show.apply(null, parts);
+    }
+    parts.push(h("p", { class: "muted" }, "Saved on this phone as you type."));
+
+    /* Attendance: the total is worked out, never typed. */
+    var tot = h("span", { class: "total" });
+    function paintTotal() { var a = state.attendance; tot.textContent = (Number(a.male) || 0) + (Number(a.female) || 0) + (Number(a.children) || 0); }
+    if (ev.attendance) {
+      parts.push(h("div", { class: "card" }, h("h2", {}, "Attendance"),
+        h("div", { class: "grid3" }, ["male", "female", "children"].map(function (k) {
+          return h("div", {}, h("label", { for: "att-" + k }, k.charAt(0).toUpperCase() + k.slice(1)),
+            h("input", { id: "att-" + k, type: "number", min: "0", step: "1", inputmode: "numeric", value: state.attendance[k], placeholder: "e.g. 40",
+              oninput: function (e) { state.attendance[k] = e.target.value; paintTotal(); keep(); } }));
+        })), h("p", {}, "Total: ", tot)));
+      paintTotal();
+    }
+
+    /* Offering: one line per denomination. */
+    var lines = h("div"), totals = h("div");
+    function paintLines() {
+      C.clear(lines);
+      if (!state.entries.length) lines.appendChild(h("p", { class: "muted" }, "No lines yet."));
+      else lines.appendChild(h("table", {}, h("tr", {}, h("th", {}, "Category"), h("th", { class: "num" }, "Note/coin"), h("th", { class: "num" }, "Qty"), h("th", { class: "num" }, "Amount"), h("th")),
+        state.entries.map(function (x, i) {
+          return h("tr", {}, h("td", {}, x.category), h("td", { class: "num" }, C.denomLabel(x.denomination, cur.symbol)), h("td", { class: "num" }, x.quantity),
+            h("td", { class: "num" }, C.money(x.denomination * x.quantity, cur.symbol)),
+            h("td", {}, h("button", { class: "ghost", "aria-label": "Remove line", onclick: function () { state.entries.splice(i, 1); keep(); paintLines(); } }, "✕")));
+        })));
+      var t = totalsOf(state.entries);
+      C.clear(totals);
+      totals.appendChild(h("table", {}, CONF.offeringCategories.filter(function (c) { return t.by[c]; }).map(function (c) {
+        return h("tr", {}, h("td", {}, c), h("td", { class: "num" }, C.money(t.by[c], cur.symbol)));
+      }), h("tr", {}, h("td", {}, h("b", {}, "Total")), h("td", { class: "num total" }, C.money(t.total, cur.symbol)))));
+    }
+    if (ev.offering) {
+      var cat = h("select", { id: "cat" }, CONF.offeringCategories.map(function (c) { return h("option", { value: c }, c); }));
+      var den = h("select", { id: "den" }, cur.denominations.map(function (d) { return h("option", { value: d }, C.denomLabel(d, cur.symbol)); }));
+      var qty = h("input", { id: "qty", type: "number", min: "1", step: "1", inputmode: "numeric", placeholder: "e.g. 10" });
+      parts.push(h("div", { class: "card" }, h("h2", {}, "Offering"),
+        h("div", { class: "grid3" }, h("div", {}, h("label", { for: "cat" }, "Category"), cat), h("div", {}, h("label", { for: "den" }, "Note or coin"), den),
+          h("div", {}, h("label", { for: "qty" }, "Quantity"), qty)),
+        h("p"), h("button", { class: "ghost", onclick: function () {
+          var q = parseInt(qty.value, 10);
+          if (!(q > 0)) { qty.focus(); return; }
+          state.entries.push({ category: cat.value, currency: CONF.defaultCurrency, denomination: Number(den.value), quantity: q });
+          qty.value = ""; keep(); paintLines();
+        } }, "Add line"), lines, h("h3", {}, "Totals"), totals));
+      paintLines();
+    }
+
+    parts.push(h("div", { class: "card" }, h("label", { for: "notes" }, "Notes"),
+      h("textarea", { id: "notes", rows: "2", placeholder: "e.g. Doors opened late", oninput: function (e) { state.notes = e.target.value; keep(); } }, state.notes)));
+
+    /* Sign and send. */
+    var cs = h("select", { id: "cs" }, h("option", { value: "" }, "Choose who will countersign"));
+    var sig = h("input", { id: "sig", placeholder: "e.g. " + ME.name, autocomplete: "off" });
+    var agree = h("input", { type: "checkbox", id: "agree" });
+    var pin = h("input", { id: "spin", type: "password", inputmode: "numeric", maxlength: "6" });
+    var out = h("div");
+    if (ev.countersign) {
+      C.api("ushers.selectable").then(function (s) {
+        (s.people || []).forEach(function (p) { cs.appendChild(h("option", { value: p.id, selected: p.id === state.countersignerId }, p.name)); });
+      }, function () {
+        if (state.countersignerId) cs.appendChild(h("option", { value: state.countersignerId, selected: true }, saved.countersignerName || "As chosen before"));
+      });
+      cs.addEventListener("change", function () { state.countersignerId = cs.value; saved.countersignerName = cs.options[cs.selectedIndex].text; keep(); });
+    }
+    var send = h("button", { onclick: function () { submit(); } }, "Sign and submit");
+    parts.push(h("div", { class: "card" }, h("h2", {}, "Sign"),
+      ev.countersign ? [h("label", { for: "cs" }, "Countersigner"), cs] : null,
+      h("label", { for: "sig" }, "Type your full name to sign"), sig,
+      h("label", { class: "check" }, agree, "I confirm this report is correct."),
+      h("label", { for: "spin" }, "PIN"), pin, h("p"), send, out));
+    show.apply(null, parts);
+
+    function submit() {
+      C.clear(out);
+      if (ev.countersign && !cs.value) return out.appendChild(msg("Choose who will countersign.", "bad"));
+      if (!agree.checked) return out.appendChild(msg("Tick to confirm the report is correct.", "bad"));
+      if (!sig.value.trim()) return out.appendChild(msg("Type your full name to sign.", "bad"));
+      if (!pin.value) return out.appendChild(msg("Enter your PIN.", "bad"));
+      var body = { eventId: ev.id, submissionId: saved.submissionId || C.newId("sub"), attendance: state.attendance,
+        entries: state.entries, notes: state.notes, countersignerId: cs.value, signature: sig.value.trim() };
+      saved.submissionId = body.submissionId;
+      C.draftSave(ev.id, Object.assign(C.draftGet(ev.id) || {}, { submissionId: body.submissionId }));
+      send.disabled = true;
+      C.api("report.submit", Object.assign({ pin: pin.value }, body)).then(function (r) {
+        send.disabled = false;
+        if (r.error === "needs_authorisation") { out.appendChild(msg(r.message, "")); return; }
+        if (!r.ok) { out.appendChild(msg(r.message + (r.left !== undefined ? " " + r.left + " tries left." : ""), "bad")); return; }
+        C.draftClear(ev.id);
+        location.hash = "#rep/" + r.report.id;
+      }, function () {
+        /* No signal. If this phone knows the PIN, keep the signed report and
+           send it later; otherwise it stays as a draft. */
+        C.checkPinOnDevice(ME.name, pin.value).then(function (ok) {
+          send.disabled = false;
+          if (!ok || !CONF.offlineSigning) { out.appendChild(msg("No connection. Your report is saved on this phone; submit it when you have signal.", "")); return; }
+          C.queueAdd({ id: body.submissionId, eventId: ev.id, action: "report.submit", label: ev.title + " · " + C.dateLabel(ev.date),
+                       body: Object.assign({ offline: true, signedAt: Date.now() }, body) });
+          paintQueue();
+          show(h("h1", {}, ev.title), msg("Saved on device — waiting for connection. It will be sent automatically.", "ok"), h("a", { class: "btn", href: "#home" }, "Home"));
+        });
+      });
+    }
+  }
+
+  function askApproval(j) {
+    var reason = h("input", { id: "why", placeholder: "e.g. I did this duty in place of John" });
+    var out = h("div");
+    var box = h("div", { class: "card" }, h("b", {}, "You are not on the rota for this."),
+      j.submitApproval === "pending" ? msg("You have asked for approval. You will be told when it is decided.") : [
+        h("label", { for: "why" }, "Why are you submitting this report?"), reason, h("p"),
+        h("button", { onclick: function () {
+          C.api("authorisation.request", { kind: "report_submission", eventId: j.event.id, reason: reason.value }).then(function (r) {
+            C.clear(out).appendChild(msg(r.ok ? "Asked. You will be told when it is decided." : r.message, r.ok ? "ok" : "bad"));
+          }, function () { C.clear(out).appendChild(msg("No connection.", "bad")); });
+        } }, "Ask for approval")], out);
+    return box;
+  }
+
+  function viewReport(j) {
+    var r = j.report, cur = CONF.currencies[CONF.defaultCurrency];
+    var parts = [h("h1", {}, j.event.title), h("p", { class: "muted" }, C.dateLabel(j.event.date)),
+      h("div", { class: "row" }, statusChip(r.status, r.statusLabel))];
+    if (r.restricted) { parts.push(msg("This report has been submitted.")); return show.apply(null, parts); }
+    parts.push(h("div", { class: "card" }, h("div", {}, "Submitted by ", h("b", {}, r.submitter), " · " + C.timeLabel(r.submittedAt)),
+      r.countersignRequired ? h("div", {}, "Countersigner: ", h("b", {}, r.countersigner || "—"), r.countersignedAt ? " · " + C.timeLabel(r.countersignedAt) : "") : null,
+      r.countersignApproval === "pending" || r.countersignApproval === "missing" ? h("div", { class: "chip warn" }, "Countersigner waiting for approval") : null,
+      r.countersignApproval === "rejected" ? h("div", { class: "chip bad" }, "Countersigner not approved: choose somebody else") : null));
+    if (j.event.attendance) {
+      parts.push(h("div", { class: "card" }, h("h2", {}, "Attendance"), h("div", { class: "grid4" },
+        [["Male", r.attendance.male], ["Female", r.attendance.female], ["Children", r.attendance.children], ["Total", r.attendance.total]]
+          .map(function (x) { return h("div", { class: "stat" }, h("b", {}, x[1]), h("span", {}, x[0])); }))));
+    }
+    if (j.event.offering) {
+      parts.push(h("div", { class: "card" }, h("h2", {}, "Offering"),
+        h("table", {}, h("tr", {}, h("th", {}, "Category"), h("th", { class: "num" }, "Note/coin"), h("th", { class: "num" }, "Qty"), h("th", { class: "num" }, "Amount")),
+          r.entries.map(function (x) { return h("tr", {}, h("td", {}, x.category), h("td", { class: "num" }, C.denomLabel(x.denomination, cur.symbol)), h("td", { class: "num" }, x.quantity), h("td", { class: "num" }, C.money(x.amount, cur.symbol))); })),
+        h("h3", {}, "Totals"),
+        h("table", {}, Object.keys(r.byCategory).map(function (c) { return h("tr", {}, h("td", {}, c), h("td", { class: "num" }, C.money(r.byCategory[c], cur.symbol))); }),
+          h("tr", {}, h("td", {}, h("b", {}, "Total")), h("td", { class: "num total" }, C.money(r.offeringTotal, cur.symbol))))));
+    }
+    if (r.notes) parts.push(h("div", { class: "card" }, h("b", {}, "Notes"), h("div", {}, r.notes)));
+    if (r.iAmSubmitter && r.status === "pending_countersignature" && (r.countersignApproval === "rejected" || r.countersignApproval === "pending" || r.countersignApproval === "missing")) {
+      parts.push(changeCountersigner(r));
+    }
+    if (r.canCountersign) parts.push(countersignBox(r, j));
+    parts.push(h("div", { class: "card" }, h("h3", {}, "History"), r.history.map(function (x) {
+      return h("div", { class: "muted" }, C.timeLabel(x.at) + " · " + (x.from ? x.from + " → " : "") + x.to + (x.who ? " · " + x.who : "") + (x.note ? " · " + x.note : ""));
+    })));
+    show.apply(null, parts);
+  }
+
+  function changeCountersigner(r) {
+    var cs = h("select", { id: "cs2" }, h("option", { value: "" }, "Choose somebody else"));
+    var out = h("div");
+    C.api("ushers.selectable").then(function (s) { (s.people || []).forEach(function (p) { cs.appendChild(h("option", { value: p.id }, p.name)); }); });
+    return h("div", { class: "card" }, h("label", { for: "cs2" }, "Change countersigner"), cs, h("p"),
+      h("button", { class: "ghost", onclick: function () {
+        if (!cs.value) return;
+        C.api("report.countersigner", { reportId: r.id, countersignerId: cs.value }).then(function (x) {
+          if (x.ok) report({ reportId: r.id }); else C.clear(out).appendChild(msg(x.message, "bad"));
+        });
+      } }, "Change"), out);
+  }
+
+  function countersignBox(r, j) {
+    var sig = h("input", { id: "csig", placeholder: "e.g. " + ME.name, autocomplete: "off" });
+    var agree = h("input", { type: "checkbox" });
+    var pin = h("input", { id: "cpin", type: "password", inputmode: "numeric", maxlength: "6" });
+    var out = h("div"), sid = C.newId("cs");
+    var btn = h("button", { onclick: function () {
+      C.clear(out);
+      if (!agree.checked) return out.appendChild(msg("Tick to confirm you have reviewed the report.", "bad"));
+      if (!sig.value.trim() || !pin.value) return out.appendChild(msg("Type your full name and enter your PIN.", "bad"));
+      var body = { reportId: r.id, submissionId: sid, signature: sig.value.trim() };
+      btn.disabled = true;
+      C.api("report.countersign", Object.assign({ pin: pin.value }, body)).then(function (x) {
+        btn.disabled = false;
+        if (!x.ok) return out.appendChild(msg(x.message + (x.left !== undefined ? " " + x.left + " tries left." : ""), "bad"));
+        report({ reportId: r.id });
+      }, function () {
+        C.checkPinOnDevice(ME.name, pin.value).then(function (ok) {
+          btn.disabled = false;
+          if (!ok || !CONF.offlineSigning) return out.appendChild(msg("No connection. Countersign when you have signal.", "bad"));
+          C.queueAdd({ id: sid, action: "report.countersign", label: "Countersign " + j.event.title, body: Object.assign({ offline: true, signedAt: Date.now() }, body) });
+          paintQueue();
+          out.appendChild(msg("Saved on device — waiting for connection.", "ok"));
+        });
+      });
+    } }, "Countersign");
+    return h("div", { class: "card" }, h("h2", {}, "Countersign"),
+      h("p", {}, "Check the report above. You are confirming it, not filling in another one."),
+      h("label", { class: "check" }, agree, "I have reviewed this report and it is correct."),
+      h("label", { for: "csig" }, "Type your full name to sign"), sig, h("label", { for: "cpin" }, "PIN"), pin, h("p"), btn, out);
+  }
+
+  /* ---- notifications ---------------------------------------------------- */
+
+  function notes() {
+    loading();
+    C.api("notifications.list").then(function (j) {
+      var parts = [h("div", { class: "row" }, h("h1", { class: "grow" }, "Notifications"),
+        h("button", { class: "ghost", onclick: function () { C.api("notifications.read", { all: true }).then(notes); } }, "Mark all read"))];
+      if (!j.notifications.length) parts.push(h("p", { class: "muted" }, "Nothing yet."));
+      j.notifications.forEach(function (n) {
+        var link = n.refType === "report" ? "#rep/" + n.refId : n.refType === "event" ? "#report/" + n.refId :
+                   n.refType === "authorisation" && ME.permissions.indexOf("exceptions.approve") !== -1 ? "admin/#approvals" : "";
+        parts.push(h("div", { class: "card", style: n.read ? "opacity:.7" : "" },
+          h("div", { class: "row" }, h("b", { class: "grow" }, n.title), n.read ? null : h("span", { class: "chip warn" }, "New")),
+          n.body ? h("div", {}, n.body) : null, h("div", { class: "muted" }, C.timeLabel(n.at)),
+          h("div", { class: "row" }, link ? h("a", { class: "btn ghost", href: link, onclick: function () { C.api("notifications.read", { ids: [n.id] }); } }, "Open") : null,
+            n.read ? null : h("button", { class: "ghost", onclick: function () { C.api("notifications.read", { ids: [n.id] }).then(notes); } }, "Mark read"))));
+      });
+      show.apply(null, parts);
+    }, offline);
+  }
+
+  /* ---- dues ------------------------------------------------------------- */
+
+  function dues() {
+    loading();
+    C.api("dues.mine").then(function (j) {
+      var parts = [h("h1", {}, "My dues"), h("p", { class: "muted" }, C.money(j.monthly) + " a month")];
+      j.years.forEach(function (y) {
+        parts.push(h("div", { class: "card" }, h("div", { class: "row" }, h("b", { class: "grow" }, String(y.year)),
+            h("span", { class: "chip " + (y.status === "Behind" ? "bad" : "ok") }, y.status)),
+          h("div", { class: "grid4" }, [["Expected so far", y.expected], ["Paid", y.paid], ["Outstanding", y.outstanding], ["Year target", y.annualTarget]]
+            .map(function (x) { return h("div", { class: "stat" }, h("b", {}, C.money(x[1])), h("span", {}, x[0])); })),
+          y.payments.length ? h("table", {}, y.payments.map(function (p) { return h("tr", {}, h("td", {}, C.dateLabel(p.paidOn)), h("td", { class: "num" }, C.money(p.amount))); }))
+            : h("p", { class: "muted" }, "No payments recorded.")));
+      });
+      show.apply(null, parts);
+    }, offline);
+  }
+
+  /* ---- history ---------------------------------------------------------- */
+
+  function history() {
+    loading();
+    C.api("history.mine").then(function (j) {
+      show(h("h1", {}, "My history"),
+        h("h2", {}, "Duties"), j.duties.length ? h("div", { class: "card" }, h("table", {}, j.duties.map(function (d) {
+          return h("tr", {}, h("td", {}, C.dateLabel(d.date)), h("td", {}, d.title), h("td", {}, d.duty), h("td", {}, d.reportStatusLabel));
+        }))) : h("p", { class: "muted" }, "None yet."),
+        h("h2", {}, "Reports"), j.reports.length ? h("div", { class: "card" }, h("table", {}, j.reports.map(function (r) {
+          return h("tr", {}, h("td", {}, C.dateLabel(r.date)), h("td", {}, h("a", { href: "#rep/" + r.reportId }, r.title)), h("td", {}, r.role), h("td", {}, r.statusLabel));
+        }))) : h("p", { class: "muted" }, "None yet."));
+    }, offline);
+  }
+
+  /* ---- PIN -------------------------------------------------------------- */
+
+  function pinScreen() {
+    var old = h("input", { id: "old", type: "password", inputmode: "numeric", maxlength: "6" });
+    var nw = h("input", { id: "new", type: "password", inputmode: "numeric", maxlength: "6" });
+    var again = h("input", { id: "again", type: "password", inputmode: "numeric", maxlength: "6" });
+    var out = h("div");
+    show(h("h1", {}, "Change PIN"), h("div", { class: "card" },
+      h("label", { for: "old" }, "Current PIN"), old, h("label", { for: "new" }, "New PIN (" + CONF.pinMin + " to " + CONF.pinMax + " digits)"), nw,
+      h("label", { for: "again" }, "New PIN again"), again, h("p"),
+      h("button", { onclick: function () {
+        C.clear(out);
+        if (nw.value !== again.value) return out.appendChild(msg("The new PINs do not match.", "bad"));
+        C.api("pin.change", { oldPin: old.value, newPin: nw.value }).then(function (j) {
+          if (!j.ok) return out.appendChild(msg(j.message, "bad"));
+          C.rememberPin(ME.name, nw.value);
+          old.value = nw.value = again.value = "";
+          out.appendChild(msg("PIN changed. You are signed out on other phones.", "ok"));
+        }, function () { out.appendChild(msg("No connection.", "bad")); });
+      } }, "Change PIN"), out));
+  }
+
+  if ("serviceWorker" in navigator) { navigator.serviceWorker.register("sw.js").catch(function () {}); }
+  start();
+})();
+</script>
+</body>
+</html>
