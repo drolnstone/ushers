@@ -42,6 +42,7 @@ export function cleanup(root) {
 
 /* Outbound fetch (the knock on the sheet) is recorded, never sent. */
 export const outbound = [];
+export const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, opts) => { outbound.push({ url: String(url), opts }); return new Response("ok", { status: 200 }); };
 
 export function makeEnv(root, over) {

@@ -1,0 +1,68 @@
+# Setting up the Ushering App
+
+Versions: app v0.1.0 · server w0.1.0 · sheet v0.1.0. First deploy.
+
+## 1. The database and server (Cloudflare)
+
+1. Workers & Pages → D1 → Create database `ushers`.
+2. Open it → Console → paste the whole of
+   https://raw.githubusercontent.com/drolnstone/ushers/main/server/schema.sql
+   → Execute.
+3. Workers & Pages → Create → Worker, named `ushers-api`. Edit code → paste
+   the whole of https://raw.githubusercontent.com/drolnstone/ushers/main/server/worker.js
+   → Deploy.
+4. The Worker → Settings → Bindings → D1 database: variable name `DB`,
+   database `ushers`.
+5. Settings → Variables and Secrets, add as **Secret**:
+   - `PIN_PEPPER`: a long random value. Never change it once PINs are set.
+   - `SHEET_TOKEN`: another long random value.
+   - `BOOTSTRAP_TOKEN`: a third random value (delete it after step 3 below).
+   And as plain text:
+   - `ALLOWED_ORIGINS`: `https://drolnstone.github.io`
+6. Settings → Triggers → Cron Triggers → add `*/5 * * * *` (reminders and
+   the sheet knock).
+
+## 2. The pages (GitHub Pages)
+
+1. Put the Worker's address (e.g. `https://ushers-api.<you>.workers.dev`) in
+   `config.js` as `api`, and merge.
+2. Repository Settings → Pages → Deploy from branch `main`, folder `/`.
+   The Ushers App is then at https://drolnstone.github.io/ushers/ and the
+   Admin App at https://drolnstone.github.io/ushers/admin/.
+
+## 3. The first System Administrator
+
+Run once, from any computer (replace the three values):
+
+    curl -X POST https://ushers-api.<you>.workers.dev/api/bootstrap \
+      -H 'content-type: application/json' \
+      -d '{"token":"<BOOTSTRAP_TOKEN>","fullName":"<Your Name>","pin":"<4-6 digits>"}'
+
+Then delete `BOOTSTRAP_TOKEN` from the Worker. Sign in on the Ushers App,
+Open Admin App → Ushers to add everyone and give roles.
+
+## 4. The Google Sheet
+
+1. Make a new Google Sheet under the church's Google account, Europe/London
+   (File → Settings → Time zone).
+2. Extensions → Apps Script → paste the whole of
+   https://raw.githubusercontent.com/drolnstone/ushers/main/Code.gs → Save.
+3. Project Settings → Script Properties: `WORKER_URL` (the Worker address),
+   `SHEET_TOKEN` (same as the Worker's), optionally `SENDER_NAME`,
+   `REPLY_TO`.
+4. Deploy → New deployment → Web app, execute as Me, access Anyone → copy
+   the address. Put it in the Worker as the plain variable `SHEET_WEBAPP_URL`.
+5. Reload the sheet → Ushering → Set up the sheet (allow the permissions).
+6. Ushering → Check everything: every line should be ✓.
+
+## Afterwards, check
+
+A. The foot of both apps reads app v0.1.0 · server w0.1.0 · sheet v0.1.0
+   (the sheet number appears after the first drain).
+B. A Head Usher signed in on the Ushers App sees Open Admin App, and it opens
+   without asking for the PIN again.
+C. Admin → Rota: choosing one Second Service counter is refused; two saves.
+D. An usher on the rota opens the report, the attendance total adds itself
+   up, signs, and the report shows Pending Countersignature.
+E. Within a minute the REPORTS, ATTENDANCE, OFFERING and AUDIT tabs have the
+   rows, and every tab is still protected.

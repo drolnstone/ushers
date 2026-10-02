@@ -260,7 +260,9 @@ async function nextId(env, name, prefix, width) {
   return prefix + String(row.n).padStart(width, "0");
 }
 
-/* A statement that adds one row to the outbox. key = upsert by that header. */
+/* A statement that adds one row to the outbox. key = upsert by that header.
+   Every tab has a key, so a drain that is cut off and pulled again writes
+   the same row once rather than twice. */
 function stOutbox(env, tab, row, keyHeader) {
   return env.DB.prepare(
     "INSERT INTO outbox (tab, mode, key_header, key_value, row_json, created_at) VALUES (?,?,?,?,?,?)"
@@ -281,12 +283,12 @@ function stAudit(env, actorId, action, targetType, targetId, before, after, reas
     stOutbox(env, "AUDIT", {
       AUDIT_ID: id, AT: londonStamp(at), ACTOR_ID: actorId || "", ACTION: action,
       TARGET_TYPE: targetType || "", TARGET_ID: String(targetId || ""), BEFORE: b, AFTER: a, REASON: text(reason, 500)
-    })
+    }, "AUDIT_ID")
   ];
 }
 
 function stAuthLog(env, usherId, what, detail) {
-  return stOutbox(env, "AUTH_LOG", { AT: londonStamp(Date.now()), USHER_ID: usherId || "", EVENT: what, DETAIL: text(detail, 200) });
+  return stOutbox(env, "AUTH_LOG", { LOG_ID: uuid(), AT: londonStamp(Date.now()), USHER_ID: usherId || "", EVENT: what, DETAIL: text(detail, 200) }, "LOG_ID");
 }
 
 /* A notification, its sheet row, and an email when the type is important
@@ -302,7 +304,7 @@ function stNotify(env, cfg, usher, type, title, body, refType, refId, dedupe) {
     stOutbox(env, "NOTIFICATIONS", {
       NOTIFICATION_ID: id, USHER_ID: usher.id, FULL_NAME: usher.full_name, TYPE: type, TITLE: text(title, 140),
       REF_TYPE: refType || "", REF_ID: String(refId || ""), CREATED_AT: londonStamp(at)
-    })
+    }, "NOTIFICATION_ID")
   ];
   if (email) {
     out.push(stOutbox(env, "@email", { to: usher.email, subject: text(title, 140), body: text(body, 1000) }));
@@ -1240,11 +1242,11 @@ async function aReportSubmit(env, cfg, b, me) {
   st.push(stOutbox(env, "REPORTS", reportRow(rec, e, names), "REPORT_ID"));
   if (t.attendance) {
     st.push(stOutbox(env, "ATTENDANCE", { REPORT_ID: id, EVENT_ID: e.id, DATE: e.date, EVENT_TITLE: e.title,
-      MALE: c.male, FEMALE: c.female, CHILDREN: c.children, TOTAL: c.total, RECORDED_AT: londonStamp(now) }));
+      MALE: c.male, FEMALE: c.female, CHILDREN: c.children, TOTAL: c.total, RECORDED_AT: londonStamp(now) }, "REPORT_ID"));
   }
   for (const x of c.entries) {
-    st.push(stOutbox(env, "OFFERING", { REPORT_ID: id, EVENT_ID: e.id, DATE: e.date, LINE: x.line_no, CATEGORY: x.category,
-      CURRENCY: x.currency, DENOMINATION: pounds(x.denomination), QUANTITY: x.quantity, AMOUNT: pounds(x.amount), RECORDED_AT: londonStamp(now) }));
+    st.push(stOutbox(env, "OFFERING", { OFFERING_ID: id + "-" + x.line_no, REPORT_ID: id, EVENT_ID: e.id, DATE: e.date, LINE: x.line_no, CATEGORY: x.category,
+      CURRENCY: x.currency, DENOMINATION: pounds(x.denomination), QUANTITY: x.quantity, AMOUNT: pounds(x.amount), RECORDED_AT: londonStamp(now) }, "OFFERING_ID"));
   }
   await run(env, st);
   const fresh = await env.DB.prepare("SELECT * FROM reports WHERE id=?").bind(id).first();
@@ -1281,7 +1283,7 @@ async function aReportCountersign(env, cfg, b, me) {
     env.DB.prepare("UPDATE reports SET status='verified', countersign_submission_id=?, countersign_signature=?, countersigned_at=?, countersign_pin_check=?, countersign_auth_id=?, verified_at=?, updated_at=? WHERE id=? AND status='pending_countersignature'")
       .bind(sid, signature, now, pinCheck, auth ? auth.id : null, now, now, r.id),
     env.DB.prepare("INSERT INTO report_history (report_id, at, actor_id, from_status, to_status, note) VALUES (?,?,?,?,?,?)")
-      .bind(r.id, now, me.usher.id, "pending_countersignature", "verified", auth ? "Countersigned under authorisation " + auth.id : ""),
+      .bind(r.id, now, me.usher.id, "pending_countersignature", "verified", auth ? "Countersigned with the coordinator's approval" : ""),
     stAudit(env, me.usher.id, "report.countersign", "report", r.id, { status: r.status }, { status: "verified", pinCheck, authorisation: auth ? auth.id : "" }, ""),
     stOutbox(env, "REPORTS", reportRow(after, e, names), "REPORT_ID"),
     stNotify(env, cfg, await getUsher(env, r.submitter_id), "report_status", "Verified: " + e.title + " " + ukDate(e.date),
@@ -1952,6 +1954,7 @@ async function handle(request, env, ctx) {
       if (!me) fail(401, "signed_out", "Please sign in again.");
     }
     const out = await spec.fn(env, cfg, b, me);
+    if (out && typeof out === "object" && out.sheet === undefined) out.sheet = await setting(env, "sheet_version");
     if (spec.write && ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(knockSheet(env));
     return json(out, 200, cors);
   } catch (err) {

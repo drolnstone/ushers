@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ushers Admin</title>
+<meta name="theme-color" content="#2d1544">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="../shared/style.css">
+<style>header.bar { background: #2d1544; color: #fff; } header.bar a, header.bar button { color: #fff; }</style>
+<script src="../config.js"></script>
+<script src="../shared/core.js"></script>
+</head>
+<body>
+<!-- No service worker: every screen is read from the server as it opens,
+     as the Driver App's coordinator app. -->
+<header class="bar">
+  <span class="title" id="title">Ushers Admin</span>
+  <a href="../">Open Ushers App</a>
+  <button id="signOut" hidden>Sign out</button>
+</header>
+<nav class="tabs" id="tabs" hidden></nav>
+<main id="main"></main>
+<footer class="foot" id="foot"></footer>
+<script>
+(function () {
+  "use strict";
+  var C = window.UshersCore, h = C.h, main = document.getElementById("main");
+  var ME = null, CONF = null, timer = null;
+  /* Each screen and the permission the server needs for it. The server
+     refuses anyway; this only decides what is offered. */
+  var SCREENS = [
+    ["dashboard", "Dashboard", "dashboard.view"],
+    ["rota", "Rota", "rota.manage"],
+    ["events", "Events", "events.manage"],
+    ["reports", "Reports", "reports.view_all"],
+    ["approvals", "Approvals", "exceptions.approve"],
+    ["ushers", "Ushers", "ushers.view"],
+    ["treasurer", "Treasurer", "dues.view_all"],
+    ["message", "Message", "notifications.send"],
+    ["audit", "Audit", "audit.view"],
+    ["settings", "Settings", "config.manage"]
+  ];
+  function can(p) { return ME && ME.permissions.indexOf(p) !== -1; }
+  function msg(text, kind) { return h("div", { class: "msg " + (kind || "") }, text); }
+  function show() { C.clear(main); main.appendChild(h.apply(null, ["div", {}].concat(Array.prototype.slice.call(arguments)))); C.foot(document.getElementById("foot")); }
+  function loading() { show(h("p", { class: "muted" }, "Loading…")); }
+  function failed(e) { show(msg(e && e.network ? "No connection to the server." : String(e && e.message || e), "bad")); }
+  function money(p) { return C.money(p); }
+  function chip(code, label) { return h("span", { class: "chip status-" + (code || "") }, label || "Not started"); }
+  function pinInput(id) { return h("input", { id: id, type: "password", inputmode: "numeric", maxlength: "6" }); }
+
+  C.onSignedOut = function () { location.href = "../"; };
+
+  function start() {
+    if (!C.token()) return show(h("h1", {}, "Please sign in"), h("p", {}, "Sign in on the Ushers App, then open the Admin App from there."), h("a", { class: "btn", href: "../" }, "Open Ushers App"));
+    C.api("me").then(function (j) {
+      if (!j.ok) return start();
+      ME = j.me; CONF = j.config;
+      if (!can("admin.app")) return show(h("h1", {}, "Not available"), msg("Your roles do not include the Admin App."), h("a", { class: "btn", href: "../" }, "Open Ushers App"));
+      document.getElementById("title").textContent = ME.name + " · Admin";
+      document.getElementById("signOut").hidden = false;
+      var tabs = document.getElementById("tabs");
+      C.clear(tabs);
+      SCREENS.filter(function (s) { return can(s[2]); }).forEach(function (s) { tabs.appendChild(h("a", { href: "#" + s[0], "data-r": s[0] }, s[1])); });
+      tabs.hidden = false;
+      route();
+    }, failed);
+  }
+  document.getElementById("signOut").addEventListener("click", function () {
+    C.api("logout").then(function () {}, function () {}).then(function () { C.setToken(""); location.href = "../"; });
+  });
+
+  function route() {
+    if (!ME) return;
+    if (timer) { clearInterval(timer); timer = null; }
+    var allowed = SCREENS.filter(function (s) { return can(s[2]); });
+    var parts = (location.hash || "").slice(1).split("/");
+    var name = parts[0];
+    if (!allowed.some(function (s) { return s[0] === name; })) name = allowed.length ? allowed[0][0] : "";
+    Array.prototype.forEach.call(document.querySelectorAll("#tabs a"), function (a) { a.className = a.getAttribute("data-r") === name ? "on" : ""; });
+    var fn = { dashboard: dashboard, rota: rota, events: events, reports: reports, approvals: approvals, ushers: ushers,
+               treasurer: treasurer, message: message, audit: audit, settings: settings, report: function () { reportView(parts[1]); } }[parts[0] === "report" ? "report" : name];
+    if (fn) fn(parts[1]); else show(msg("Nothing here for your roles."));
+  }
+  window.addEventListener("hashchange", route);
+
+  /* ---- dashboard -------------------------------------------------------- */
+
+  function attendanceStats(a) {
+    return h("div", { class: "grid4" }, [["Male", a.male], ["Female", a.female], ["Children", a.children], ["Total", a.total]]
+      .map(function (x) { return h("div", { class: "stat" }, h("b", {}, x[1]), h("span", {}, x[0])); }));
+  }
+  function offeringTable(by, total) {
+    return h("table", {}, CONF.offeringCategories.map(function (c) { return h("tr", {}, h("td", {}, c), h("td", { class: "num" }, money(by[c] || 0))); }),
+      h("tr", {}, h("td", {}, h("b", {}, "Total")), h("td", { class: "num total" }, money(total))));
+  }
+  function rotaCard(s, title) {
+    return h("div", { class: "card" }, h("div", { class: "row" }, h("h2", { class: "grow" }, title + ": " + C.dateLabel(s.sunday)),
+        s.thanksgiving ? h("span", { class: "chip" }, "Thanksgiving Sunday") : null),
+      s.services.map(function (sv) {
+        return h("div", {}, h("h3", {}, sv.title), sv.people.length ? h("div", { class: "people" }, sv.people.map(function (p) { return h("div", {}, p.name); }))
+          : h("div", { class: "muted" }, sv.type === "SUN_SECOND" ? "Counters not appointed" : "Nobody on the rota yet"));
+      }), can("rota.manage") ? h("a", { class: "btn ghost", href: "#rota/" + s.sunday }, "Edit rota") : null);
+  }
+
+  function dashboard() {
+    function load() {
+      C.api("dashboard").then(function (d) {
+        if (!d.ok) return show(msg(d.message, "bad"));
+        var cur = d.current, rep = cur.reporting;
+        var parts = [h("h1", {}, d.currentLabel + ": " + C.dateLabel(cur.sunday) + (cur.thanksgiving ? " · Thanksgiving" : ""))];
+        parts.push(h("div", { class: "card" }, h("h2", {}, "Needs your attention"), h("div", { class: "grid4" },
+          [["Reports received", rep.received], ["Reports outstanding", rep.outstanding], ["Countersignatures pending", rep.pendingCountersignature], ["Approval requests", rep.approvalRequests]]
+            .map(function (x) { return h("div", { class: "stat" }, h("b", {}, x[1]), h("span", {}, x[0])); })),
+          rep.approvalRequests && can("exceptions.approve") ? h("p", {}, h("a", { class: "btn", href: "#approvals" }, "Review approvals")) : null));
+        parts.push(h("div", { class: "card" }, h("h2", {}, "Attendance"), attendanceStats(cur.totals.attendance)));
+        parts.push(h("div", { class: "card" }, h("h2", {}, "Offering"), offeringTable(cur.totals.offering, cur.totals.offeringTotal)));
+        parts.push(h("div", { class: "card" }, h("h2", {}, "Services"), cur.services.map(function (s) {
+          return h("div", { class: "row" }, h("span", { class: "grow" }, s.title), chip(s.reportStatus, s.reportStatusLabel),
+            s.reportId ? h("a", { class: "btn ghost", href: "#report/" + s.reportId }, "View") : null);
+        })));
+        parts.push(rotaCard(d.next, "Next Sunday"));
+        if (d.olderOutstanding.length) {
+          parts.push(h("div", { class: "card" }, h("h2", {}, "Older reports not submitted"), d.olderOutstanding.map(function (e) {
+            return h("div", {}, C.dateLabel(e.date) + " · " + e.title);
+          })));
+        }
+        if (d.otherEvents.length) {
+          parts.push(h("div", { class: "card" }, h("h2", {}, "Other events coming up"), d.otherEvents.map(function (e) {
+            return h("div", {}, C.dateLabel(e.date) + " · " + e.title + " · " + e.people.length + " on duty");
+          })));
+        }
+        parts.push(h("p", { class: "muted" }, "Updated " + new Date().toLocaleTimeString("en-GB", { timeZone: "Europe/London" })));
+        show.apply(null, parts);
+      }, failed);
+    }
+    loading(); load();
+    timer = setInterval(load, (C.CFG.refreshSeconds || 30) * 1000);
+  }
+
+  /* ---- rota ------------------------------------------------------------- */
+
+  var USHERS = null;
+  function activeUshers() {
+    if (USHERS) return Promise.resolve(USHERS);
+    return C.api("ushers.list").then(function (j) { USHERS = (j.ushers || []).filter(function (u) { return u.active; }); return USHERS; });
+  }
+
+  function picker(sv, people, exact) {
+    var chosen = {};
+    sv.people.forEach(function (p) { chosen[p.usherId] = true; });
+    var count = h("span", { class: "chip" });
+    function paint() { var n = Object.keys(chosen).filter(function (k) { return chosen[k]; }).length; count.textContent = n + (exact ? " of " + exact : "") + " chosen"; }
+    var out = h("div");
+    var box = h("div", { class: "card" }, h("div", { class: "row" }, h("h3", { class: "grow" }, sv.title), count),
+      exact ? h("div", { class: "muted" }, "Exactly " + exact + " offering counters.") : h("div", { class: "muted" }, "Choose who is on duty."),
+      h("div", { class: "people" }, people.map(function (u) {
+        return h("label", { class: "check" }, h("input", { type: "checkbox", checked: !!chosen[u.usherId], onchange: function (e) { chosen[u.usherId] = e.target.checked; paint(); } }), u.name);
+      })),
+      h("p"), h("button", { onclick: function () {
+        var ids = Object.keys(chosen).filter(function (k) { return chosen[k]; });
+        C.clear(out);
+        C.api("rota.set", { eventId: sv.eventId, usherIds: ids }).then(function (j) {
+          out.appendChild(j.ok ? msg("Saved.", "ok") : msg(j.message, "bad"));
+        }, function () { out.appendChild(msg("No connection.", "bad")); });
+      } }, "Save"), out);
+    paint();
+    return box;
+  }
+
+  function rota(sunday) {
+    loading();
+    var today = C.londonToday();
+    var from = sunday || today;
+    Promise.all([C.api("rota", { from: from, weeks: 1 }), activeUshers()]).then(function (r) {
+      var j = r[0], people = r[1];
+      if (!j.ok) return show(msg(j.message, "bad"));
+      var s = j.sundays[0];
+      var date = h("input", { type: "date", id: "sun", value: s.sunday });
+      var parts = [h("h1", {}, "Rota"),
+        h("div", { class: "card row" }, h("label", { for: "sun", class: "grow" }, "Sunday"), date,
+          h("button", { class: "ghost", onclick: function () { location.hash = "#rota/" + addDays(s.sunday, -7); } }, "← Week"),
+          h("button", { class: "ghost", onclick: function () { location.hash = "#rota/" + addDays(s.sunday, 7); } }, "Week →")),
+        s.thanksgiving ? msg("Thanksgiving Sunday (first Sunday of the month).") : null];
+      date.addEventListener("change", function () { if (date.value) location.hash = "#rota/" + date.value; });
+      s.services.forEach(function (sv) { parts.push(picker(sv, people, sv.type === "SUN_SECOND" ? CONF.secondServiceCounters : 0)); });
+      show.apply(null, parts.filter(Boolean));
+    }, failed);
+  }
+  function addDays(key, n) {
+    var d = new Date(Date.UTC(+key.slice(0, 4), +key.slice(5, 7) - 1, +key.slice(8, 10) + n));
+    return d.toISOString().slice(0, 10);
+  }
+
+  /* ---- other events ----------------------------------------------------- */
+
+  function events(eventId) {
+    loading();
+    Promise.all([C.api("rota", { from: addDays(C.londonToday(), -7), weeks: 12 }), activeUshers()]).then(function (r) {
+      var j = r[0], people = r[1];
+      var types = Object.keys(CONF.eventTypes).filter(function (k) { return !CONF.eventTypes[k].sunday; });
+      var type = h("select", { id: "etype" }, types.map(function (k) { return h("option", { value: k }, CONF.eventTypes[k].label); }));
+      var title = h("input", { id: "etitle", placeholder: "e.g. Naming Ceremony for the Okafor family" });
+      var date = h("input", { id: "edate", type: "date" });
+      var time = h("input", { id: "etime", type: "time" });
+      var notes = h("input", { id: "enotes", placeholder: "e.g. Main hall" });
+      var out = h("div");
+      var parts = [h("h1", {}, "Events"), h("div", { class: "card" }, h("h2", {}, "New event"),
+        h("label", { for: "etype" }, "Type"), type, h("label", { for: "etitle" }, "Title"), title,
+        h("div", { class: "grid3" }, h("div", {}, h("label", { for: "edate" }, "Date"), date), h("div", {}, h("label", { for: "etime" }, "Start"), time), h("div")),
+        h("label", { for: "enotes" }, "Notes"), notes, h("p"),
+        h("button", { onclick: function () {
+          C.clear(out);
+          C.api("event.save", { type: type.value, title: title.value, date: date.value, start: time.value, notes: notes.value }).then(function (x) {
+            if (!x.ok) return out.appendChild(msg(x.message, "bad"));
+            location.hash = "#events/" + x.eventId;
+          });
+        } }, "Create"), out)];
+      parts.push(h("h2", {}, "Coming up"));
+      if (!j.events.length) parts.push(h("p", { class: "muted" }, "No other events in the next weeks."));
+      j.events.forEach(function (e) {
+        var card = h("div", { class: "card" }, h("div", { class: "row" }, h("b", { class: "grow" }, e.title), chip(e.reportStatus, e.reportStatus ? e.reportStatus.replace(/_/g, " ") : "No report")),
+          h("div", { class: "muted" }, C.dateLabel(e.date) + (e.start ? " · " + e.start : "") + (e.status === "cancelled" ? " · cancelled" : "")),
+          h("div", {}, e.people.map(function (p) { return p.name; }).join(", ") || "Nobody on duty yet"),
+          h("div", { class: "row" }, h("a", { class: "btn ghost", href: "#events/" + e.eventId }, "Choose who is on duty"),
+            h("button", { class: "ghost", onclick: function () { C.api("event.cancel", { eventId: e.eventId, restore: e.status === "cancelled" }).then(function () { events(); }); } },
+              e.status === "cancelled" ? "Restore" : "Cancel event")));
+        parts.push(card);
+        if (eventId === e.eventId) parts.push(picker(e, people, 0));
+      });
+      show.apply(null, parts);
+    }, failed);
+  }
+
+  /* ---- reports ---------------------------------------------------------- */
+
+  function reports(status) {
+    loading();
+    C.api("reports.list", { status: status || "" }).then(function (j) {
+      var sel = h("select", { onchange: function (e) { location.hash = "#reports/" + e.target.value; } },
+        [["", "All"], ["pending_countersignature", "Pending Countersignature"], ["verified", "Verified"], ["draft", "Draft"]].map(function (x) {
+          return h("option", { value: x[0], selected: (status || "") === x[0] }, x[1]);
+        }));
+      show(h("h1", {}, "Reports"), sel, h("div", { class: "card" }, j.reports.length ? h("table", {},
+        h("tr", {}, h("th", {}, "Date"), h("th", {}, "Event"), h("th", {}, "Status"), h("th", { class: "num" }, "People"), h("th", { class: "num" }, "Offering")),
+        j.reports.map(function (r) {
+          return h("tr", {}, h("td", {}, C.dateLabel(r.date)), h("td", {}, r.status === "draft" ? r.title : h("a", { href: "#report/" + r.id }, r.title)),
+            h("td", {}, chip(r.status, r.statusLabel)), h("td", { class: "num" }, r.attendanceTotal), h("td", { class: "num" }, money(r.offeringTotal)));
+        })) : h("p", { class: "muted" }, "None.")));
+    }, failed);
+  }
+
+  function reportView(id) {
+    loading();
+    C.api("report.open", { reportId: id }).then(function (j) {
+      if (!j.ok) return show(msg(j.message, "bad"));
+      var r = j.report;
+      show(h("h1", {}, j.event.title), h("p", { class: "muted" }, C.dateLabel(j.event.date)), chip(r.status, r.statusLabel),
+        h("div", { class: "card" }, h("div", {}, "Submitted by " + r.submitter + " · " + C.timeLabel(r.submittedAt)),
+          r.countersignRequired ? h("div", {}, "Countersigner: " + (r.countersigner || "—") + (r.countersignedAt ? " · " + C.timeLabel(r.countersignedAt) : "")) : null),
+        j.event.attendance ? h("div", { class: "card" }, h("h2", {}, "Attendance"), attendanceStats(r.attendance)) : null,
+        j.event.offering ? h("div", { class: "card" }, h("h2", {}, "Offering"),
+          h("table", {}, r.entries.map(function (x) { return h("tr", {}, h("td", {}, x.category), h("td", { class: "num" }, C.denomLabel(x.denomination)), h("td", { class: "num" }, "× " + x.quantity), h("td", { class: "num" }, money(x.amount))); })),
+          h("h3", {}, "Totals"), offeringTable(r.byCategory, r.offeringTotal)) : null,
+        r.notes ? h("div", { class: "card" }, h("b", {}, "Notes"), h("div", {}, r.notes)) : null,
+        h("div", { class: "card" }, h("h3", {}, "History"), r.history.map(function (x) {
+          return h("div", { class: "muted" }, C.timeLabel(x.at) + " · " + (x.from ? x.from + " → " : "") + x.to + (x.who ? " · " + x.who : "") + (x.note ? " · " + x.note : ""));
+        })));
+    }, failed);
+  }
+
+  /* ---- approvals -------------------------------------------------------- */
+
+  function approvals() {
+    loading();
+    Promise.all([C.api("authorisations.list", { status: "pending" }), C.api("authorisations.list", {})]).then(function (r) {
+      var pending = r[0].authorisations, all = r[1].authorisations.filter(function (a) { return a.status !== "pending"; }).slice(0, 30);
+      var parts = [h("h1", {}, "Approvals")];
+      if (!pending.length) parts.push(h("p", { class: "muted" }, "Nothing waiting."));
+      pending.forEach(function (a) {
+        var note = h("input", { placeholder: "e.g. Confirmed with the Head Usher" });
+        var pin = pinInput("p-" + a.id), out = h("div");
+        function decide(decision) {
+          C.clear(out);
+          C.api("authorisation.decide", { id: a.id, decision: decision, note: note.value, pin: pin.value }).then(function (x) {
+            if (!x.ok) return out.appendChild(msg(x.message + (x.left !== undefined ? " " + x.left + " tries left." : ""), "bad"));
+            approvals();
+          }, function () { out.appendChild(msg("No connection.", "bad")); });
+        }
+        parts.push(h("div", { class: "card" }, h("b", {}, a.kindLabel), h("div", {}, a.about.title ? a.about.title + " · " + C.dateLabel(a.about.date) : ""),
+          h("div", {}, "For: " + a.subject + (a.requestedBy && a.requestedBy !== a.subject ? " · asked by " + a.requestedBy : "")),
+          a.about.rostered ? h("div", {}, "Rostered: " + a.about.rostered) : null,
+          a.reason ? h("div", { class: "muted" }, a.reason) : null,
+          a.about.reportId ? h("a", { href: "#report/" + a.about.reportId }, "See the report") : null,
+          a.canDecide ? [h("label", {}, "Note"), note, h("label", { for: "p-" + a.id }, "Your PIN"), pin, h("p"),
+            h("div", { class: "row" }, h("button", { onclick: function () { decide("approve"); } }, "Approve"),
+              h("button", { class: "danger", onclick: function () { decide("reject"); } }, "Reject"))]
+            : h("div", { class: "muted" }, "Somebody else must decide this one."), out));
+      });
+      if (all.length) {
+        parts.push(h("h2", {}, "Decided"));
+        parts.push(h("div", { class: "card" }, h("table", {}, all.map(function (a) {
+          return h("tr", {}, h("td", {}, a.kindLabel), h("td", {}, a.subject), h("td", {}, a.status), h("td", {}, a.decidedBy || ""));
+        }))));
+      }
+      show.apply(null, parts);
+    }, failed);
+  }
+
+  /* ---- ushers and roles ------------------------------------------------- */
+
+  function ushers(editing) {
+    loading();
+    USHERS = null;
+    C.api("ushers.list").then(function (j) {
+      var parts = [h("h1", {}, "Ushers")];
+      if (j.canManage) parts.push(usherForm(null, j));
+      j.ushers.forEach(function (u, i) {
+        var key = String(i);
+        parts.push(h("div", { class: "card" }, h("div", { class: "row" }, h("b", { class: "grow" }, u.name), u.active ? null : h("span", { class: "chip bad" }, "Inactive"),
+            u.hasPin ? null : h("span", { class: "chip warn" }, "No PIN")),
+          h("div", {}, u.roles.map(function (r) { return h("span", { class: "chip" }, labelOf(r)); })),
+          h("div", { class: "muted" }, [u.email, u.phone].filter(Boolean).join(" · ")),
+          j.canManage ? h("a", { class: "btn ghost", href: "#ushers/" + key }, "Edit") : null,
+          editing === key ? usherForm(u, j) : null));
+      });
+      show.apply(null, parts);
+    }, failed);
+  }
+  function labelOf(r) { var x = CONF.roles.filter(function (y) { return y.key === r; })[0]; return x ? x.label : r; }
+
+  function usherForm(u, j) {
+    var name = h("input", { value: u ? u.name : "", placeholder: "e.g. John Smith" });
+    var email = h("input", { type: "email", value: u ? u.email : "", placeholder: "e.g. john@example.org" });
+    var phone = h("input", { type: "tel", value: u ? u.phone : "", placeholder: "e.g. 07700 900123" });
+    var active = h("input", { type: "checkbox", checked: u ? u.active : true });
+    var pin = pinInput(u ? "rp" : "np");
+    var out = h("div");
+    var roles = {};
+    (u ? u.roles : ["usher"]).forEach(function (r) { roles[r] = true; });
+    var roleBoxes = u ? h("div", {}, h("label", {}, "Roles"), CONF.roles.map(function (r) {
+      var allowed = j.canGrantAny || ["usher", "head_usher", "assistant_head_usher"].indexOf(r.key) !== -1;
+      return h("label", { class: "check" }, h("input", { type: "checkbox", checked: !!roles[r.key], disabled: !allowed,
+        onchange: function (e) { roles[r.key] = e.target.checked; } }), r.label);
+    })) : null;
+    return h("div", { class: "card" }, h("h2", {}, u ? "Edit " + u.name : "Add an usher"),
+      h("label", {}, "Full name"), name, h("label", {}, "Email"), email, h("label", {}, "Phone"), phone,
+      u ? h("label", { class: "check" }, active, "Active") : null, roleBoxes,
+      h("label", {}, u ? "New PIN (leave blank to keep)" : "PIN (" + CONF.pinMin + " to " + CONF.pinMax + " digits)"), pin, h("p"),
+      h("button", { onclick: function () {
+        C.clear(out);
+        var body = { usherId: u ? u.usherId : undefined, name: name.value, email: email.value, phone: phone.value, active: active.checked };
+        if (!u && pin.value) body.pin = pin.value;
+        C.api("usher.save", body).then(function (x) {
+          if (!x.ok) throw new Error(x.message);
+          var steps = [];
+          if (u) steps.push(C.api("usher.roles", { usherId: u.usherId, roles: Object.keys(roles).filter(function (k) { return roles[k]; }) }));
+          if (u && pin.value) steps.push(C.api("usher.resetPin", { usherId: u.usherId, pin: pin.value }));
+          return Promise.all(steps);
+        }).then(function (rs) {
+          var bad = (rs || []).filter(function (x) { return !x.ok; })[0];
+          if (bad) throw new Error(bad.message);
+          location.hash = "#ushers"; ushers();
+        }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
+      } }, u ? "Save" : "Add"), out);
+  }
+
+  /* ---- treasurer -------------------------------------------------------- */
+
+  function treasurer(usherId) {
+    loading();
+    var year = Number(C.londonToday().slice(0, 4));
+    C.api("dues.overview", { year: year }).then(function (j) {
+      if (!j.ok) return show(msg(j.message, "bad"));
+      var parts = [h("h1", {}, "Treasurer · dues " + j.year),
+        h("div", { class: "card" }, h("div", { class: "grid4" }, [["Expected so far", money(j.totals.expected)], ["Paid", money(j.totals.paid)], ["Outstanding", money(j.totals.outstanding)], ["Behind", j.totals.behind]]
+          .map(function (x) { return h("div", { class: "stat" }, h("b", {}, x[1]), h("span", {}, x[0])); })),
+          h("p"), h("button", { class: "ghost", onclick: function (e) {
+            e.target.disabled = true;
+            C.api("dues.remind", {}).then(function (x) { e.target.textContent = x.ok ? "Reminders sent: " + x.sent : x.message; });
+          } }, "Remind everyone who is behind"))];
+      parts.push(h("div", { class: "card" }, h("table", {}, h("tr", {}, h("th", {}, "Name"), h("th", { class: "num" }, "Paid"), h("th", { class: "num" }, "Outstanding"), h("th", {}, "Status")),
+        j.members.map(function (m) {
+          return h("tr", {}, h("td", {}, h("a", { href: "#treasurer/" + m.usherId }, m.name)), h("td", { class: "num" }, money(m.paid)),
+            h("td", { class: "num" }, money(m.outstanding)), h("td", {}, h("span", { class: "chip " + (m.status === "Behind" ? "bad" : "ok") }, m.status)));
+        }))));
+      show.apply(null, parts);
+      if (usherId) member(usherId, parts);
+    }, failed);
+  }
+
+  function member(usherId, parts) {
+    C.api("dues.member", { usherId: usherId }).then(function (j) {
+      if (!j.ok) return;
+      var paidOn = h("input", { type: "date", value: C.londonToday() });
+      var amount = h("input", { type: "number", min: "0.01", step: "0.01", value: "5.00", inputmode: "decimal" });
+      var year = h("input", { type: "number", value: C.londonToday().slice(0, 4) });
+      var method = h("select", {}, ["Cash", "Bank transfer", "Card", "Other"].map(function (x) { return h("option", {}, x); }));
+      var note = h("input", { placeholder: "e.g. Paid at the Sunday meeting" });
+      var out = h("div");
+      var card = h("div", { class: "card" }, h("h2", {}, j.name),
+        j.years.map(function (y) {
+          return h("div", {}, h("h3", {}, y.year + " · " + y.status), h("div", { class: "muted" }, "Expected " + money(y.expected) + " · paid " + money(y.paid) + " · outstanding " + money(y.outstanding)),
+            h("table", {}, y.payments.map(function (p) {
+              return h("tr", {}, h("td", {}, C.dateLabel(p.paidOn)), h("td", { class: "num" }, money(p.amount)), h("td", {}, p.method), h("td", {},
+                h("button", { class: "ghost", onclick: function () {
+                  var why = prompt("Why is this payment being voided?");
+                  if (why) C.api("dues.void", { id: p.id, reason: why }).then(function (x) { if (x.ok) treasurer(usherId); else alert(x.message); });
+                } }, "Void")));
+            })));
+        }),
+        h("h3", {}, "Record a payment"),
+        h("div", { class: "grid3" }, h("div", {}, h("label", {}, "Date paid"), paidOn), h("div", {}, h("label", {}, "Amount (£)"), amount), h("div", {}, h("label", {}, "Dues year"), year)),
+        h("label", {}, "Method"), method, h("label", {}, "Note"), note, h("p"),
+        h("button", { onclick: function () {
+          C.clear(out);
+          C.api("dues.record", { usherId: usherId, paidOn: paidOn.value, amountPence: Math.round(Number(amount.value) * 100), year: Number(year.value), method: method.value, note: note.value })
+            .then(function (x) { if (x.ok) treasurer(usherId); else out.appendChild(msg(x.message, "bad")); });
+        } }, "Record payment"), out);
+      var w = main.firstChild; w.insertBefore(card, w.children[1] || null);
+    });
+  }
+
+  /* ---- message ---------------------------------------------------------- */
+
+  function message() {
+    var title = h("input", { placeholder: "e.g. Ushers meeting after service" });
+    var body = h("textarea", { rows: "4", placeholder: "e.g. Please stay for ten minutes after the Second Service." });
+    var out = h("div");
+    show(h("h1", {}, "Message the ushers"), h("div", { class: "card" }, h("label", {}, "Title"), title, h("label", {}, "Message"), body, h("p"),
+      h("button", { onclick: function () {
+        C.clear(out);
+        C.api("notify.send", { all: true, title: title.value, body: body.value }).then(function (x) {
+          out.appendChild(x.ok ? msg("Sent to " + x.sent + ".", "ok") : msg(x.message, "bad"));
+        });
+      } }, "Send to all active ushers"), out));
+  }
+
+  /* ---- audit and settings ---------------------------------------------- */
+
+  function audit() {
+    loading();
+    C.api("audit.list").then(function (j) {
+      show(h("h1", {}, "Audit (latest 200)"), h("div", { class: "card" }, h("table", {}, j.audit.map(function (a) {
+        return h("tr", {}, h("td", {}, C.timeLabel(a.at)), h("td", {}, a.who), h("td", {}, a.action), h("td", { class: "muted" }, a.reason || ""));
+      }))));
+    }, failed);
+  }
+
+  function settings() {
+    loading();
+    C.api("config.get").then(function (j) {
+      var parts = [h("h1", {}, "Settings"), h("p", { class: "muted" }, "Each rule is stored on the server and written to the CONFIG tab. Values are JSON.")];
+      Object.keys(j.config).forEach(function (k) {
+        var box = h("textarea", { rows: typeof j.config[k] === "object" && j.config[k] !== null ? "4" : "1" }, JSON.stringify(j.config[k], null, 1));
+        var out = h("span");
+        parts.push(h("div", { class: "card" }, h("b", {}, k), box, h("p"), h("button", { class: "ghost", onclick: function () {
+          var v;
+          try { v = JSON.parse(box.value); } catch (e) { out.textContent = " Not valid JSON."; return; }
+          C.api("config.set", { key: k, value: v }).then(function (x) { out.textContent = x.ok ? " Saved." : " " + x.message; });
+        } }, "Save"), out));
+      });
+      show.apply(null, parts);
+    }, failed);
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>

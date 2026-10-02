@@ -1,0 +1,22 @@
+# Runs tests/run-tests.mjs on every pull request and every push to main,
+# on London time, as the Driver App does. The browser journey in
+# tests/browser is run by hand.
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22        # node:sqlite, used by the Worker tests, needs 22.5+
+      - run: node tests/run-tests.mjs
+        env:
+          TZ: Europe/London
