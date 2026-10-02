@@ -20,7 +20,7 @@
    Menu: Ushering > Set up the sheet (once), then Check everything.
    ========================================================================== */
 
-var SHEET_VERSION = "v0.1.0";
+var SHEET_VERSION = "v0.2.0";
 
 /* The tabs and the headers each starts with. A missing header is added at
    the end; a header is never renamed or moved by this script, and a column
@@ -32,8 +32,13 @@ var TABS = {
   REPORTS:        ["REPORT_ID", "SUBMISSION_ID", "EVENT_ID", "DATE", "EVENT_TITLE", "STATUS", "SUBMITTER_ID", "SUBMITTER", "SUBMITTED_AT",
                    "SUBMIT_PIN_CHECK", "COUNTERSIGNER_ID", "COUNTERSIGNER", "COUNTERSIGNED_AT", "COUNTERSIGN_AUTH_ID", "VERIFIED_AT",
                    "MALE", "FEMALE", "CHILDREN", "ATTENDANCE_TOTAL", "OFFERING_TOTAL", "NOTES", "VERSION", "UPDATED_AT"],
-  ATTENDANCE:     ["REPORT_ID", "EVENT_ID", "DATE", "EVENT_TITLE", "MALE", "FEMALE", "CHILDREN", "TOTAL", "RECORDED_AT"],
-  OFFERING:       ["OFFERING_ID", "REPORT_ID", "EVENT_ID", "DATE", "LINE", "CATEGORY", "CURRENCY", "DENOMINATION", "QUANTITY", "AMOUNT", "RECORDED_AT"],
+  /* One row per report VERSION. CURRENT is "No" on a version an amendment
+     replaced: filter CURRENT = Yes before adding anything up. */
+  ATTENDANCE:     ["ATTENDANCE_ID", "REPORT_ID", "VERSION", "CURRENT", "EVENT_ID", "DATE", "EVENT_TITLE", "MALE", "FEMALE", "CHILDREN", "TOTAL", "RECORDED_AT"],
+  MINISTRATION:   ["MINISTRATION_ID", "REPORT_ID", "VERSION", "CURRENT", "EVENT_ID", "DATE", "EVENT_TITLE", "FIELD", "VALUE", "RECORDED_AT"],
+  OFFERING:       ["OFFERING_ID", "REPORT_ID", "VERSION", "CURRENT", "EVENT_ID", "DATE", "LINE", "CATEGORY", "CURRENCY", "DENOMINATION", "QUANTITY", "AMOUNT", "RECORDED_AT"],
+  REPORT_VERSIONS:["VERSION_ID", "REPORT_ID", "VERSION", "EVENT_ID", "DATE", "EVENT_TITLE", "STATUS_WHEN_REPLACED", "SUBMITTER", "COUNTERSIGNER",
+                   "ATTENDANCE_TOTAL", "OFFERING_TOTAL", "REPLACED_BY", "REPLACED_BY_ID", "REPLACED_AT", "REASON", "NEW_VERSION"],
   AUTHORISATIONS: ["AUTH_ID", "KIND", "SUBJECT_ID", "SUBJECT", "TARGET_TYPE", "TARGET_ID", "REQUESTED_BY", "REQUESTED_BY_NAME", "REASON",
                    "STATUS", "DECIDED_BY", "DECIDED_AT", "NOTE", "CONSUMED_AT", "CREATED_AT"],
   DUES:           ["PAYMENT_ID", "USHER_ID", "FULL_NAME", "YEAR", "PAID_ON", "AMOUNT", "METHOD", "NOTE", "RECORDED_BY", "RECORDED_AT", "STATUS", "VOID_REASON"],
