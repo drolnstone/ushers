@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.5";
+const SERVER_VERSION = "w0.3.6";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -2486,19 +2486,66 @@ async function aPushUnsubscribe(env, cfg, b, me) {
    something showable (a push that shows nothing is held against the site). */
 async function aPushWhat(env, cfg, b) {
   const plain = { ok: true, title: cfg.church_name ? "Ushering" : "Ushering", body: "Open the app for the latest.", tag: "ushers", url: "./#notes" };
-  const sub = await env.DB.prepare("SELECT * FROM push_subs WHERE endpoint=?").bind(String(b.endpoint || "")).first();
+  const endpoint = String(b.endpoint || "");
+  const sub = await env.DB.prepare("SELECT * FROM push_subs WHERE endpoint=?").bind(endpoint).first();
   if (!sub) return plain;
+  const more = await env.DB.prepare("SELECT count(*) AS n FROM notifications WHERE usher_id=? AND read_at IS NULL").bind(sub.usher_id).first();
+  const unread = more ? Number(more.n) || 0 : 0;
+  /* A test asked for from the bell, answered before anything else (as the
+     Driver App's testpush): the push carries nothing, so without this the
+     test would be shown as the newest real notification and could not be
+     told apart from it. Cleared as it is read; five minutes at most. */
+  const tkey = "pushtest:" + endpoint;
+  const test = await setting(env, tkey);
+  if (test) {
+    await env.DB.prepare("DELETE FROM settings WHERE k=?").bind(tkey).run();
+    if (Date.now() - (Number(test) || 0) < 5 * 60000) {
+      return { ok: true, title: "Alerts are working", body: "This phone will be told the moment anything new arrives.", tag: "test", url: "./#notes", unread };
+    }
+  }
   const n = await env.DB.prepare(
     "SELECT * FROM notifications WHERE usher_id=? AND read_at IS NULL ORDER BY created_at DESC LIMIT 1").bind(sub.usher_id).first();
-  if (!n) return plain;
-  const more = await env.DB.prepare("SELECT count(*) AS n FROM notifications WHERE usher_id=? AND read_at IS NULL").bind(sub.usher_id).first();
-  const extra = more && more.n > 1 ? " (" + (more.n - 1) + " more in the app)" : "";
+  if (!n) return Object.assign(plain, { unread });
+  const extra = unread > 1 ? " (" + (unread - 1) + " more in the app)" : "";
   let url = "./#notes";
   if (n.ref_type === "report" && n.type === "report_filed" && permissionsFor(cfg, await rolesOf(env, sub.usher_id)).has("admin.app")) url = "./admin/#report/" + n.ref_id;
   else if (n.ref_type === "report") url = "./#rep/" + n.ref_id;
   else if (n.ref_type === "authorisation") url = "./admin/#approvals";
   else if (n.ref_type === "event") url = "./#report/" + n.ref_id;
-  return { ok: true, title: n.title, body: (n.body || "") + extra, tag: "n|" + n.id, url };
+  return { ok: true, title: n.title, body: (n.body || "") + extra, tag: "n|" + n.id, url, unread };
+}
+
+/* The bell's test, from the Driver App's testpush: one push to this phone,
+   the caller's own, and the push service's answer handed back, so "alerts
+   are on" is proved rather than assumed. One at a time per phone. */
+async function aPushTest(env, cfg, b, me, selfOrigin) {
+  const endpoint = okEndpoint(b.endpoint);
+  if (!endpoint) fail(400, "endpoint", "This phone did not give a push address.");
+  const sub = await env.DB.prepare("SELECT * FROM push_subs WHERE endpoint=? AND usher_id=?").bind(endpoint, me.usher.id).first();
+  if (!sub) fail(404, "not_subscribed", "Alerts are not on for this phone. Turn them on first.");
+  const tkey = "pushtest:" + endpoint;
+  const pending = Number(await setting(env, tkey)) || 0;
+  if (pending && Date.now() - pending < 20000) fail(429, "busy", "A test is already on its way.");
+  await env.DB.prepare("INSERT INTO settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(tkey, String(Date.now())).run();
+  const sent = await pushOne(env, sub, await vapidKeys(env), selfOrigin);
+  if (!sent) {
+    await env.DB.prepare("DELETE FROM settings WHERE k=?").bind(tkey).run();
+    const still = await env.DB.prepare("SELECT 1 AS n FROM push_subs WHERE id=?").bind(sub.id).first();
+    return { ok: false, error: still ? "push_failed" : "gone",
+             message: still ? "The phone's push service did not take the test. Try again in a minute."
+                            : "This phone's alerts had lapsed. Turn them on again." };
+  }
+  return { ok: true };
+}
+
+/* What the bell polls: how many are unread and the newest, small enough to
+   ask every half minute without reading the whole list. */
+async function aNotificationsCount(env, cfg, b, me) {
+  const c = await env.DB.prepare("SELECT count(*) AS n FROM notifications WHERE usher_id=? AND read_at IS NULL").bind(me.usher.id).first();
+  const n = await env.DB.prepare("SELECT * FROM notifications WHERE usher_id=? ORDER BY created_at DESC LIMIT 1").bind(me.usher.id).first();
+  const alerts = await env.DB.prepare("SELECT count(*) AS n FROM push_subs WHERE usher_id=?").bind(me.usher.id).first();
+  return { ok: true, unread: c ? Number(c.n) || 0 : 0, alertPhones: alerts ? Number(alerts.n) || 0 : 0,
+           latest: n ? { id: n.id, type: n.type, title: n.title, body: n.body, refType: n.ref_type, refId: n.ref_id, at: n.created_at, read: !!n.read_at } : null };
 }
 
 /* ==========================================================================
@@ -2662,7 +2709,9 @@ const ACTIONS = {
   "audit.list":             { fn: aAuditList },
   "push.subscribe":         { fn: aPushSubscribe },
   "push.unsubscribe":       { fn: aPushUnsubscribe },
-  "push.what":              { auth: false, fn: aPushWhat }
+  "push.what":              { auth: false, fn: aPushWhat },
+  "push.test":              { fn: aPushTest },
+  "notifications.count":    { fn: aNotificationsCount }
 };
 
 async function handle(request, env, ctx) {
@@ -2698,7 +2747,7 @@ async function handle(request, env, ctx) {
         fail(403, "pin_question", "Say whether you wish to keep your default PIN first.");
       }
     }
-    const out = await spec.fn(env, cfg, b, me);
+    const out = await spec.fn(env, cfg, b, me, url.origin);
     if (out && typeof out === "object" && out.sheet === undefined) out.sheet = await setting(env, "sheet_version");
     if (spec.write && ctx && typeof ctx.waitUntil === "function") {
       ctx.waitUntil(knockSheet(env));

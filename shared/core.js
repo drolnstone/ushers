@@ -10,7 +10,7 @@
    duplicates is made on the phone. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.8";
+  var APP_VERSION = "v0.3.9";
   var CFG = window.USHERS_CONFIG || {};
   var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:" };
 
@@ -259,6 +259,153 @@
     });
   }
 
+  /* Asks the server for one push to this phone, the caller's own, to prove
+     the whole chain. The alert that arrives says "Alerts are working". */
+  function alertsTest() {
+    return swReg().then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (s) {
+      if (!s) throw new Error("Alerts are not on for this phone.");
+      return api("push.test", { endpoint: s.endpoint }).then(function (j) { if (!j.ok) throw new Error(j.message || "The test could not be sent."); return j; });
+    });
+  }
+
+  /* ---- the bell, from the Driver App's coordinator bar ------------------
+     One bell in the banner of both apps, once signed in. Hollow while alerts
+     are off on this phone, filled once they are on; a red count of unread
+     notifications on it, on the Notifications tab and (where the phone
+     allows) on the home-screen icon. Tapped while off, it turns alerts on;
+     tapped while on, it opens Notifications.
+
+     It keeps listening while the app is open: the count is asked for every
+     refreshSeconds while the page is in view, at once when the app comes
+     back into view, and at once when a phone alert lands (the service
+     worker says so). Something new while the app is open is shown as a
+     strip at the foot of the screen, so nothing waits for a reload. */
+  var BELL = { on: false, key: "", notes: "#notes", onNew: null, timer: null, state: "", busy: false,
+               unread: 0, latestId: null, primed: false, synced: false };
+
+  function appBadge(n) {
+    try {
+      if (n > 0 && navigator.setAppBadge) navigator.setAppBadge(n).catch(function () {});
+      else if (!n && navigator.clearAppBadge) navigator.clearAppBadge().catch(function () {});
+    } catch (e) {}
+  }
+  function bellPaint() {
+    var b = document.getElementById("bell"), c = document.getElementById("bellCount"), tab = document.getElementById("unread");
+    var n = BELL.on ? BELL.unread : 0;
+    if (tab) { tab.hidden = !n; tab.textContent = n || ""; }
+    if (!b) return;
+    b.hidden = !BELL.on;
+    b.disabled = BELL.busy;
+    b.classList.toggle("on", BELL.state === "on");
+    b.setAttribute("aria-pressed", BELL.state === "on" ? "true" : "false");
+    var say = BELL.state === "on" ? "Notifications. Alerts are on for this phone" :
+              BELL.state === "off" ? "Notifications. Tap to turn on alerts on this phone" : "Notifications";
+    if (n) say += ". " + n + " unread";
+    b.setAttribute("aria-label", say); b.title = say;
+    if (c) { c.hidden = !n; c.textContent = n > 99 ? "99+" : String(n); }
+  }
+
+  var toastTimer = null;
+  function toast(text, onTap) {
+    var t = document.getElementById("toast");
+    if (!t) { t = h("div", { id: "toast", class: "toast", role: "status", "aria-live": "polite" }); document.body.appendChild(t); }
+    clear(t);
+    t.appendChild(h("span", {}, text));
+    t.onclick = function () { t.classList.remove("on"); if (onTap) onTap(); };
+    t.classList.toggle("tap", !!onTap);
+    t.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove("on"); }, onTap ? 9000 : 5000);
+  }
+
+  function openNotes() {
+    if (location.hash === BELL.notes) { if (BELL.onNew) BELL.onNew(true); }
+    else location.hash = BELL.notes;
+  }
+
+  function bellSet(n) { BELL.unread = Math.max(0, Number(n) || 0); bellPaint(); appBadge(BELL.on ? BELL.unread : 0); }
+
+  function bellCheck() {
+    if (!BELL.on || !token()) return Promise.resolve();
+    return api("notifications.count").then(function (j) {
+      if (!j.ok) return;
+      bellSet(j.unread);
+      var l = j.latest;
+      if (BELL.primed && l && l.id !== BELL.latestId && !l.read) {
+        toast("New: " + l.title, openNotes);
+        if (BELL.onNew) BELL.onNew(false);
+      }
+      BELL.latestId = l ? l.id : null;
+      BELL.primed = true;
+    }, function () { /* no signal: the next tick asks again */ });
+  }
+
+  function bellState() {
+    return alertsState().then(function (s) {
+      if (s === "unsupported" && iPhoneNotInstalled()) s = "install";
+      if (s === "on" && !BELL.key) s = "unsupported";
+      /* Already on here: told to the server again, once per sign-in, so the
+         phone is under whoever is signed in now (a shared phone, a removed
+         row) and keeps being woken. As the Driver App does on every tap. */
+      if (s === "on" && !BELL.synced) {
+        BELL.synced = true;
+        swReg().then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
+          if (sub) return api("push.subscribe", { endpoint: sub.endpoint });
+        }).catch(function () {});
+      }
+      BELL.state = s; bellPaint();
+      return s;
+    }, function () { BELL.state = "unsupported"; bellPaint(); return "unsupported"; });
+  }
+
+  function bellTap() {
+    if (BELL.busy) return;
+    var s = BELL.state;
+    if (s === "off") {
+      BELL.busy = true; bellPaint();
+      alertsOn(BELL.key).then(function () {
+        BELL.busy = false; BELL.state = "on"; BELL.synced = true; bellPaint();
+        toast("Alerts are on for this phone. Tap the bell to see your notifications.");
+        if (location.hash === BELL.notes && BELL.onNew) BELL.onNew(true);
+      }, function (e) {
+        BELL.busy = false; bellPaint();
+        toast(e && e.network ? "No connection. Try again when you have signal." : (e && e.message) || "Could not turn alerts on.");
+      });
+      return;
+    }
+    if (s === "install") toast("On iPhone, alerts need Ushers on the Home Screen: tap Share, then Add to Home Screen, and open it from there.");
+    else if (s === "blocked") toast("Alerts are blocked for this app in the phone's settings. Allow notifications there to get them.");
+    openNotes();
+  }
+
+  /* Called once signed in. opts.key is the server's public key ("me"),
+     opts.notes the Notifications screen's address, opts.onNew(opened) is
+     told when something new arrives or the bell opens the screen it is on. */
+  function bellStart(opts) {
+    opts = opts || {};
+    BELL.key = opts.key || ""; BELL.notes = opts.notes || "#notes"; BELL.onNew = opts.onNew || null;
+    BELL.on = true; BELL.primed = false; BELL.latestId = null; BELL.synced = false;
+    var b = document.getElementById("bell");
+    if (b && !b._wired) { b._wired = true; b.addEventListener("click", bellTap); }
+    bellPaint();
+    bellState();
+    bellCheck();
+    if (BELL.timer) clearInterval(BELL.timer);
+    BELL.timer = setInterval(function () { if (!document.hidden) bellCheck(); }, Math.max(15, Number(CFG.refreshSeconds) || 30) * 1000);
+  }
+  function bellStop() {
+    BELL.on = false; BELL.unread = 0; BELL.state = "";
+    if (BELL.timer) { clearInterval(BELL.timer); BELL.timer = null; }
+    bellPaint(); appBadge(0);
+  }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) { bellCheck(); if (BELL.on) bellState(); } });
+  if ("serviceWorker" in navigator) {
+    try {
+      navigator.serviceWorker.addEventListener("message", function (e) { if (e.data && e.data.type === "ushers:notified") bellCheck(); });
+      if (navigator.serviceWorker.startMessages) navigator.serviceWorker.startMessages();
+    } catch (e) {}
+  }
+
   /* ---- PDFs: the library is loaded only when a PDF is made -------------- */
 
   var pdfLoading = null;
@@ -306,7 +453,8 @@
     queue: queue, queueAdd: queueAdd, queueRemove: queueRemove, flush: flush, newId: newId,
     money: money, denomLabel: denomLabel, dateLabel: dateLabel, timeLabel: timeLabel, londonToday: londonToday,
     h: h, clear: clear, foot: foot, onSignedOut: null, onQueueChange: null,
-    alertsSupported: alertsSupported, alertsState: alertsState, alertsOn: alertsOn, alertsOff: alertsOff, iPhoneNotInstalled: iPhoneNotInstalled,
+    alertsSupported: alertsSupported, alertsState: alertsState, alertsOn: alertsOn, alertsOff: alertsOff, alertsTest: alertsTest, iPhoneNotInstalled: iPhoneNotInstalled,
+    bellStart: bellStart, bellStop: bellStop, bellCheck: bellCheck, bellSet: bellSet, bellState: bellState, toast: toast,
     loadPdf: loadPdf
   };
 })();
