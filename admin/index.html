@@ -13,7 +13,6 @@
 <meta name="apple-mobile-web-app-title" content="Ushers Admin">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="../shared/style.css">
-<style>header.bar { background: #2d1544; color: #fff; } header.bar a, header.bar button { color: #fff; }</style>
 <script src="../config.js"></script>
 <script src="../shared/core.js"></script>
 <script src="../shared/reports.js"></script>
@@ -23,7 +22,7 @@
 <!-- No service worker: every screen is read from the server as it opens,
      as the Driver App's coordinator app. -->
 <header class="bar">
-  <span class="title" id="title">Ushers Admin</span>
+  <span class="brand"><img src="../shared/logo.png" alt=""><span><b>RCCG Dominion Assembly</b><small>Liverpool · Ushering Admin</small><em id="title"></em></span></span>
   <a href="../">Open Ushers App</a>
   <button id="signOut" hidden>Sign out</button>
 </header>
@@ -66,7 +65,7 @@
       if (!j.ok) return start();
       ME = j.me; CONF = j.config;
       if (!can("admin.app")) return show(h("h1", {}, "Not available"), msg("Your roles do not include the Admin App."), h("a", { class: "btn", href: "../" }, "Open Ushers App"));
-      document.getElementById("title").textContent = ME.name + " · Admin";
+      document.getElementById("title").textContent = ME.name;
       document.getElementById("signOut").hidden = false;
       var tabs = document.getElementById("tabs");
       C.clear(tabs);
