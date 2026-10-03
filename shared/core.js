@@ -378,6 +378,37 @@
     openNotes();
   }
 
+  /* ASKED, NOT LEFT TO BE FOUND. A bell nobody taps leaves a person told of
+     nothing until they open the app. So, once signed in on a phone where
+     alerts are off, they are asked straight out (as the Driver App's
+     "Turn on" sheet), and asked again three days after a "Not now". On an
+     iPhone in Safari they are told how to add the app first. The server
+     also emails what is still unread to anyone with alerts on no phone. */
+  var ASK_KEY = "ushers.alertAsk.v1", ASK_AGAIN_MS = 3 * 24 * 3600000;
+  function askClose(not) {
+    var a = document.getElementById("alertAsk");
+    if (a) a.parentNode.removeChild(a);
+    if (not) store.set(ASK_KEY, String(Date.now()));
+  }
+  function alertAsk(s) {
+    if (document.getElementById("alertAsk")) return;
+    var last = Number(store.get(ASK_KEY)) || 0;
+    if (Date.now() - last < ASK_AGAIN_MS) return;
+    var install = s === "install";
+    var go = h("button", { type: "button", onclick: function () {
+      if (install) return askClose(true);
+      go.disabled = true;
+      askClose(false);
+      BELL.state = "off"; bellTap();
+    } }, install ? "OK" : "Turn on alerts");
+    document.body.appendChild(h("div", { id: "alertAsk", class: "ask", role: "dialog", "aria-labelledby": "alertAskTitle" },
+      h("b", { id: "alertAskTitle" }, "Turn on alerts on this phone?"),
+      h("p", {}, install
+        ? "On iPhone, alerts need Ushers on your Home Screen: tap Share, then Add to Home Screen, open it from there and tap the bell."
+        : "Without them you only find out about duties, reminders, countersignatures and approvals when you next open the app."),
+      h("div", { class: "row" }, go, install ? null : h("button", { type: "button", class: "ghost", onclick: function () { askClose(true); } }, "Not now"))));
+  }
+
   /* Called once signed in. opts.key is the server's public key ("me"),
      opts.notes the Notifications screen's address, opts.onNew(opened) is
      told when something new arrives or the bell opens the screen it is on. */
@@ -388,12 +419,13 @@
     var b = document.getElementById("bell");
     if (b && !b._wired) { b._wired = true; b.addEventListener("click", bellTap); }
     bellPaint();
-    bellState();
+    bellState().then(function (s) { if (BELL.on && (s === "off" || s === "install")) alertAsk(s); });
     bellCheck();
     if (BELL.timer) clearInterval(BELL.timer);
     BELL.timer = setInterval(function () { if (!document.hidden) bellCheck(); }, Math.max(15, Number(CFG.refreshSeconds) || 30) * 1000);
   }
   function bellStop() {
+    askClose(false);
     BELL.on = false; BELL.unread = 0; BELL.state = "";
     if (BELL.timer) { clearInterval(BELL.timer); BELL.timer = null; }
     bellPaint(); appBadge(0);

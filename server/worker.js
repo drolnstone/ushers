@@ -89,6 +89,7 @@ const DEFAULT_CONFIG = {
   report_reminder_hour: 15,           // on the event day
   rota_weeks_ahead: 8,
   push_types: null,                   // null = every notification also goes to phones with alerts on
+  unalerted_email_minutes: 60,       // someone with alerts on no phone is emailed what is still unread after this long (0 = never)
   email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "report_filed", "dues_reminder", "admin_message"],
   report_notify_roles: ["head_usher", "assistant_head_usher"]  // told of every report once it is filed
 };
@@ -2017,10 +2018,11 @@ async function aDashboard(env, cfg, b, me) {
 async function aUshersList(env, cfg, b, me) {
   need(me, "ushers.view");
   const rows = ((await env.DB.prepare(
-    "SELECT u.*, group_concat(r.role) AS roles FROM ushers u LEFT JOIN user_roles r ON r.usher_id=u.id GROUP BY u.id ORDER BY u.full_name COLLATE NOCASE"
+    "SELECT u.*, group_concat(r.role) AS roles, (SELECT count(*) FROM push_subs p WHERE p.usher_id=u.id) AS alerts " +
+    "FROM ushers u LEFT JOIN user_roles r ON r.usher_id=u.id GROUP BY u.id ORDER BY u.full_name COLLATE NOCASE"
   ).all()).results) || [];
   return { ok: true, ushers: rows.map((u) => ({
-    usherId: u.id, name: u.full_name, email: u.email, phone: u.phone, active: !!u.active, hasPin: !!u.pin_hash,
+    usherId: u.id, name: u.full_name, email: u.email, phone: u.phone, active: !!u.active, hasPin: !!u.pin_hash, alerts: Number(u.alerts) || 0,
     roles: String(u.roles || "").split(",").filter(Boolean) })),
     canManage: me.perms.has("ushers.manage"), canGrantAny: me.perms.has("roles.grant_any") };
 }
@@ -2324,8 +2326,44 @@ async function clockTick(env, now) {
         "The report for " + x.title + " on " + ukDate(x.date) + " has not been submitted.", "event", x.eid, "report:" + x.eid + ":" + x.id)) sent++;
     }
   }
+  try { await emailUnalerted(env, cfg, at.getTime()); } catch (e) { console.log("unalerted", e && e.message); }
   await env.DB.prepare("INSERT INTO settings (k, v) VALUES ('clock_tick', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(String(Date.now())).run();
   return sent;
+}
+
+/* NOBODY LEFT IN THE DARK. A person who has never turned alerts on, on any
+   phone, is woken by nothing: a duty reminder or a "report not yet
+   submitted" that was not one of the emailed types would sit in the app
+   until they happened to open it. So anything still unread after
+   unalerted_email_minutes, and not already emailed, goes to them by email,
+   one email per person per tick listing what is waiting. Two days back at
+   most, so switching this on never sends a pile of old news. Turning
+   alerts on, or reading it in the app, stops it. */
+async function emailUnalerted(env, cfg, nowMs) {
+  const mins = Number(cfg.unalerted_email_minutes) || 0;
+  if (mins <= 0) return 0;
+  const now = nowMs || Date.now();
+  const rows = ((await env.DB.prepare(
+    "SELECT n.id, n.usher_id, n.title, n.body, n.created_at FROM notifications n JOIN ushers u ON u.id=n.usher_id " +
+    "WHERE n.emailed=0 AND n.read_at IS NULL AND n.created_at<=? AND n.created_at>? AND u.active=1 AND COALESCE(u.email,'')<>'' " +
+    "AND NOT EXISTS (SELECT 1 FROM push_subs p WHERE p.usher_id=n.usher_id) ORDER BY n.created_at LIMIT 200"
+  ).bind(now - mins * 60000, now - 48 * 3600000).all()).results) || [];
+  if (!rows.length) return 0;
+  const by = {};
+  for (const n of rows) (by[n.usher_id] = by[n.usher_id] || []).push(n);
+  const st = [];
+  for (const id of Object.keys(by)) {
+    const u = await getUsher(env, id);
+    if (!u || !u.email) continue;
+    const list = by[id];
+    const subject = list.length === 1 ? list[0].title : list.length + " new notifications in the Ushers App";
+    const body = list.map((n) => "• " + n.title + (n.body ? "\n  " + n.body : "")).join("\n\n") +
+      "\n\nOpen the Ushers App to see them. To be told on your phone instead, tap the bell at the top of the app and turn alerts on.";
+    st.push(stOutbox(env, "@email", { to: u.email, subject: text(subject, 140), body: body.slice(0, 3000) }));
+    for (const n of list) st.push(env.DB.prepare("UPDATE notifications SET emailed=2 WHERE id=? AND emailed=0").bind(n.id));
+  }
+  await run(env, st);
+  return Object.keys(by).length;
 }
 
 /* ==========================================================================

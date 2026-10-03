@@ -63,5 +63,24 @@ export default async function ({ root }) {
     a.eq(w2.unread, 1);
   });
 
+  s.test("someone with alerts on no phone is emailed what is still unread, once, and nobody else is", async (a) => {
+    const emails = () => env.DB._rows("SELECT row_json FROM outbox WHERE tab='@email'").map((x) => JSON.parse(x.row_json));
+    const ushers = (await call("ushers.list", {}, T.admin)).ushers;
+    a.eq(ushers.find((u) => u.usherId === ID.A).alerts, 1, "John has alerts on");
+    a.eq(ushers.find((u) => u.usherId === ID.hu).alerts, 0, "Grace does not: the Admin App says Alerts off");
+    a.ok((await call("notify.send", { title: "Prayer meeting moved", body: "Now at 7pm", usherIds: [ID.hu, ID.A] }, T.hu)).ok);
+    /* A type that is not emailed anyway, as a duty reminder is. */
+    env.DB._exec("UPDATE notifications SET type='duty_reminder', emailed=0 WHERE title='Prayer meeting moved'");
+    const before = emails().length;
+    a.eq(await mod.emailUnalerted(env, await mod.loadConfig(env), Date.now()), 0, "not before the hour is up");
+    a.eq(await mod.emailUnalerted(env, await mod.loadConfig(env), Date.now() + 61 * 60000), 1, "one person emailed");
+    const sent = emails().slice(before);
+    a.eq(sent.length, 1);
+    a.eq(sent[0].to, "hu@example.org", "only the person with no phone alerts");
+    a.has(sent[0].body, "Prayer meeting moved");
+    a.has(sent[0].body, "tap the bell");
+    a.eq(await mod.emailUnalerted(env, await mod.loadConfig(env), Date.now() + 120 * 60000), 0, "and only once");
+  });
+
   return s;
 }

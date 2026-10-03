@@ -421,7 +421,8 @@
       on.concat(off).forEach(function (u, i) {
         if (i === on.length) parts.push(h("h2", {}, "Removed"), h("p", { class: "muted" }, "They cannot sign in. To bring someone back, tap Edit details and roles and tick Active."));
         parts.push(h("div", { class: "card" }, h("div", { class: "row" }, h("b", { class: "grow" }, u.name), u.active ? null : h("span", { class: "chip bad" }, "Removed"),
-            u.hasPin ? null : h("span", { class: "chip warn" }, "No PIN")),
+            u.hasPin ? null : h("span", { class: "chip warn" }, "No PIN"),
+            u.active && !u.alerts ? h("span", { class: "chip warn", title: "No phone has alerts on: they are emailed instead" }, "Alerts off") : null),
           h("div", {}, u.roles.map(function (r) { return h("span", { class: "chip" }, labelOf(r)); })),
           h("div", { class: "muted" }, [u.email, u.phone].filter(Boolean).join(" · ")),
           canEdit(u, j) ? h("a", { class: "btn ghost", href: "#ushers/" + encodeURIComponent(u.usherId) }, "Edit details and roles")

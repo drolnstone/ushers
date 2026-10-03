@@ -105,6 +105,13 @@ notified → Coordinator dashboard.
   the app comes back into view, and at once when a phone alert lands.
   Anything new is shown in a strip at the foot of the screen. Notifications
   → Send a test alert (`push.test`) proves the chain end to end.
+- **Nobody left unalerted.** Once signed in on a phone where alerts are off,
+  the person is asked straight out to turn them on (again three days after
+  "Not now"; on an iPhone in Safari, told to add the app to the Home Screen
+  first). Anyone with alerts on no phone is emailed whatever is still unread
+  after `unalerted_email_minutes` (60; 0 turns it off), one email listing
+  them, at most two days back and once each. Admin → Ushers marks them
+  "Alerts off".
 - **PDFs.** Any report has a PDF button (both apps). Admin → Reports makes a
   summary PDF for any period of up to 400 days.
 - **Signing** is typing your full name, ticking to confirm, and your PIN.

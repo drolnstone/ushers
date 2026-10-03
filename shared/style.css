@@ -115,3 +115,9 @@ header.bar button.bell .bell-count { position: absolute; top: -6px; right: -6px;
 .toast.on { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
 .toast.tap { cursor: pointer; font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+/* Asked once signed in while alerts are off: a sheet at the foot. */
+.ask { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 8;
+  width: min(520px, calc(100vw - 32px)); background: var(--card); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 14px; padding: 16px; box-shadow: 0 6px 24px rgba(0,0,0,.28); }
+.ask b { display: block; font-size: 17px; margin-bottom: 4px; }
+.ask p { margin: 0 0 12px; color: var(--muted); font-size: 15px; }
