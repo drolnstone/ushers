@@ -2086,6 +2086,50 @@ async function aUsherRoles(env, cfg, b, me) {
   return { ok: true, changed: true };
 }
 
+/* Removing someone takes them out of the department: they can no longer
+   sign in, every role but Usher is taken away (so an admin stops being
+   one), their phone alerts stop and they come off every duty from today
+   on. Nothing they did is deleted: reports, dues and the record keep
+   their name, and ticking Active again brings them back as an Usher. */
+async function aUsherRemove(env, cfg, b, me) {
+  need(me, "ushers.manage");
+  const u = await getUsher(env, text(b.usherId, 20));
+  if (!u) fail(404, "no_usher", "Not found.");
+  if (u.id === me.usher.id) fail(400, "self", "You cannot remove yourself.");
+  const have = await rolesOf(env, u.id);
+  const drop = have.filter((r) => r !== "usher");
+  if (!me.perms.has("roles.grant_any")) {
+    for (const r of drop) if (ROLES_GRANTABLE.indexOf(r) === -1) {
+      fail(403, "forbidden", "Only a System Administrator can remove someone who is " + ROLE_LABELS[r] + ".");
+    }
+  }
+  const now = Date.now(), today = londonKey(new Date());
+  const names = await namesMap(env);
+  const appts = ((await env.DB.prepare(
+    "SELECT a.* FROM appointments a JOIN events e ON e.id=a.event_id " +
+    "WHERE a.usher_id=? AND a.status='active' AND e.date>=?").bind(u.id, today).all()).results) || [];
+  const after = Object.assign({}, u, { active: 0, updated_at: now });
+  const st = [
+    env.DB.prepare("UPDATE ushers SET active=0, updated_at=? WHERE id=?").bind(now, u.id),
+    env.DB.prepare("DELETE FROM user_roles WHERE usher_id=? AND role<>'usher'").bind(u.id),
+    env.DB.prepare("UPDATE sessions SET revoked_at=? WHERE usher_id=? AND revoked_at IS NULL").bind(now, u.id),
+    env.DB.prepare("DELETE FROM push_subs WHERE usher_id=?").bind(u.id)
+  ];
+  if (have.indexOf("usher") === -1) {
+    st.push(env.DB.prepare("INSERT INTO user_roles (usher_id, role, granted_by, granted_at) VALUES (?,?,?,?)").bind(u.id, "usher", me.usher.id, now));
+  }
+  for (const a of appts) {
+    const e = await env.DB.prepare("SELECT * FROM events WHERE id=?").bind(a.event_id).first();
+    st.push(env.DB.prepare("UPDATE appointments SET status='removed', removed_by=?, removed_at=? WHERE id=?").bind(me.usher.id, now, a.id));
+    st.push(stAudit(env, me.usher.id, "appointment.remove", "appointment", a.id, { event: a.event_id, usher: u.id, duty: a.duty }, null, "Usher removed"));
+    st.push(stOutbox(env, "APPOINTMENTS", apptRow(Object.assign({}, a, { status: "removed" }), e, names[u.id] || "", me.usher.id), "APPOINTMENT_ID"));
+  }
+  st.push(stAudit(env, me.usher.id, "usher.remove", "usher", u.id, { active: u.active, roles: have }, { active: 0, roles: ["usher"] }, text(b.reason, 200)));
+  st.push(stOutbox(env, "USHERS", usherRow(after, ["usher"]), "USHER_ID"));
+  await run(env, st);
+  return { ok: true, duties: appts.length };
+}
+
 async function aUsherResetPin(env, cfg, b, me) {
   need(me, "ushers.manage");
   const u = await getUsher(env, text(b.usherId, 20));
@@ -2606,6 +2650,7 @@ const ACTIONS = {
   "usher.save":             { fn: aUsherSave, write: true },
   "usher.roles":            { fn: aUsherRoles, write: true },
   "usher.resetPin":         { fn: aUsherResetPin, write: true },
+  "usher.remove":           { fn: aUsherRemove, write: true },
   "config.get":             { fn: aConfigGet },
   "config.set":             { fn: aConfigSet, write: true },
   "audit.list":             { fn: aAuditList },
