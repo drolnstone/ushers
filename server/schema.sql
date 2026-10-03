@@ -302,3 +302,14 @@ CREATE TABLE IF NOT EXISTS settings (
   k  TEXT PRIMARY KEY,
   v  TEXT
 );
+
+-- Changes a phone made with no signal and sent later, by the phone's own id,
+-- so one sent twice (the answer lost on the way back) is done once.
+CREATE TABLE IF NOT EXISTS queued_done (
+  id        TEXT PRIMARY KEY,
+  usher_id  TEXT NOT NULL,
+  action    TEXT NOT NULL,
+  at        INTEGER NOT NULL,
+  answer    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS queued_done_at ON queued_done(at);

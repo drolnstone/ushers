@@ -1,10 +1,20 @@
-/* Ushers App offline shell and phone alerts. Bump CACHE when a shell file
-   changes. Only the files below are served from the cache, and only when
-   the network fails; everything else (the Admin App, the server) passes
-   straight through. Same idea as the Driver App's sw.js. */
-const CACHE = "ushers-v0.3.10";
+/* The offline shell for both apps, and phone alerts. Bump CACHE when a shell
+   file changes. Only the files below are kept, and the server is never
+   touched (it is on another origin). One worker at the root covers the
+   Admin App under admin/ too, so opening either app once with signal is
+   enough for both to open with none. Same idea as the Driver App's sw.js. */
+const CACHE = "ushers-v0.3.11";
 const SHELL = ["./", "./index.html", "./config.js", "./shared/core.js", "./shared/reports.js", "./shared/style.css", "./shared/logo.png",
-  "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
+  "./shared/pdf.js", "./shared/vendor/jspdf.umd.min.js",
+  "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png",
+  "./admin/", "./admin/index.html", "./admin/testing.js", "./admin/manifest.webmanifest",
+  "./admin/icon-192.png", "./admin/icon-512.png", "./admin/apple-touch-icon.png"];
+
+/* As the Driver App: the network first, but a phone on a signal too weak
+   to answer is handed the kept copy after this long rather than a blank
+   screen for a minute. The fetch runs on and keeps the fresh copy for next
+   time. */
+const SHELL_WAIT = 3000;
 
 /* config.js says where the server is. It is written for a page, so it is
    given a window to write to. */
@@ -22,6 +32,12 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
+/* The kept copy of this file (the PDF files are asked for with ?v=), or for
+   a page, the right app's page. */
+function kept(req, page) {
+  return caches.match(req, { ignoreSearch: true }).then((hit) => hit || (page ? caches.match(page) : null));
+}
+
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
@@ -30,11 +46,21 @@ self.addEventListener("fetch", (e) => {
   const scope = new URL(self.registration.scope);
   const rel = "./" + url.pathname.slice(scope.pathname.length);
   if (SHELL.indexOf(rel) === -1) return;
-  e.respondWith(fetch(req).then((res) => {
-    const copy = res.clone();
-    if (res.ok) caches.open(CACHE).then((c) => c.put(req, copy));
-    return res;
-  }).catch(() => caches.match(req).then((m) => m || caches.match("./index.html"))));
+  const page = req.mode === "navigate" ? (rel.indexOf("./admin/") === 0 ? "./admin/index.html" : "./index.html") : null;
+  /* Only a good answer is kept, and a bad one (a 404 while a deploy
+     settles) is treated as no answer: the kept copy is better. */
+  const net = fetch(req).then((res) => {
+    if (res.ok) {
+      const copy = res.clone();
+      caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+      return res;
+    }
+    return kept(req, page).then((hit) => hit || res);
+  }).catch(() => kept(req, page).then((hit) => hit || Response.error()));
+  const slow = new Promise((resolve) => {
+    setTimeout(() => { kept(req, page).then((hit) => { if (hit) resolve(hit); }).catch(() => {}); }, SHELL_WAIT);
+  });
+  e.respondWith(Promise.race([net, slow]));
 });
 
 /* A push carries nothing (as the Driver App's): the phone asks the server
