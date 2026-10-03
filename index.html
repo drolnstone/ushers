@@ -6,9 +6,16 @@
 <title>Ushers</title>
 <meta name="theme-color" content="#5b2a86">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ushers">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="shared/style.css">
 <script src="config.js"></script>
 <script src="shared/core.js"></script>
+<script src="shared/reports.js"></script>
 </head>
 <body>
 <header class="bar">
@@ -30,8 +37,8 @@
 <script>
 (function () {
   "use strict";
-  var C = window.UshersCore, h = C.h, main = document.getElementById("main");
-  var ME = null, CONF = null;
+  var C = window.UshersCore, R = window.UshersReports, h = C.h, main = document.getElementById("main");
+  var ME = null, CONF = null, PUSH_KEY = "";
 
   function msg(text, kind) { return h("div", { class: "msg " + (kind || "") }, text); }
   function show() { C.clear(main); main.appendChild(h.apply(null, ["div", {}].concat(Array.prototype.slice.call(arguments)))); C.foot(document.getElementById("foot")); }
@@ -88,7 +95,7 @@
     loading();
     C.api("me").then(function (j) {
       if (!j.ok) return signIn();
-      ME = j.me; CONF = j.config;
+      ME = j.me; CONF = j.config; PUSH_KEY = j.pushKey || "";
       document.getElementById("title").textContent = ME.name;
       document.getElementById("tabs").hidden = false;
       document.getElementById("signOut").hidden = false;
@@ -217,25 +224,37 @@
     return { by: by, total: total };
   }
 
-  function editReport(j) {
+  /* Filling in a report, or (amend set) amending a submitted one. An
+     amendment starts from the current version, needs a reason and a signal,
+     and goes to a countersigner again. */
+  function editReport(j, amend) {
     var ev = j.event, cur = CONF.currencies[CONF.defaultCurrency];
-    var saved = C.draftGet(ev.id) || {};
-    var server = j.report && j.report.status === "draft" ? j.report : null;
+    var fields = j.ministrationFields || CONF.ministrationFields || [];
+    var saved = amend ? {} : (C.draftGet(ev.id) || {});
+    var server = amend || (j.report && j.report.status === "draft" ? j.report : null);
     var state = {
-      attendance: saved.attendance || (server ? server.attendance : { male: "", female: "", children: "" }),
-      entries: saved.entries || (server ? server.entries : []),
-      notes: saved.notes || (server ? server.notes : ""),
+      attendance: saved.attendance || (server ? Object.assign({}, server.attendance) : { male: "", female: "", children: "" }),
+      ministration: saved.ministration || (server && server.ministration ? Object.assign({}, server.ministration) : {}),
+      entries: saved.entries || (server ? server.entries.map(function (x) { return { category: x.category, currency: x.currency, denomination: x.denomination, quantity: x.quantity }; }) : []),
+      notes: saved.notes || (server ? server.notes || "" : ""),
       countersignerId: saved.countersignerId || ""
     };
-    function keep() { C.draftSave(ev.id, { event: ev, title: ev.title, date: ev.date, attendance: state.attendance, entries: state.entries, notes: state.notes, countersignerId: state.countersignerId }); }
+    function keep() {
+      if (amend) return;
+      C.draftSave(ev.id, { event: ev, title: ev.title, date: ev.date, attendance: state.attendance, ministration: state.ministration, entries: state.entries, notes: state.notes, countersignerId: state.countersignerId });
+    }
 
-    var parts = [h("h1", {}, ev.title), h("p", { class: "muted" }, C.dateLabel(ev.date) + (ev.thanksgiving ? " · Thanksgiving Sunday" : ""))];
+    var parts = [h("h1", {}, (amend ? "Amend: " : "") + ev.title), h("p", { class: "muted" }, C.dateLabel(ev.date) + (ev.thanksgiving ? " · Thanksgiving Sunday" : ""))];
     if (j.offline) parts.push(msg("No connection. Your report is saved on this phone as you type.", ""));
-    if (!j.canSubmit) {
+    if (!amend && !j.canSubmit) {
       parts.push(askApproval(j));
       return show.apply(null, parts);
     }
-    parts.push(h("p", { class: "muted" }, "Saved on this phone as you type."));
+    var why = h("textarea", { id: "why-amend", rows: "2", placeholder: "e.g. Ten more men were counted after the service" });
+    if (amend) {
+      parts.push(msg("This makes version " + (amend.version + 1) + ". Version " + amend.version + " is kept as it was. The amended report is countersigned again.", ""));
+      parts.push(h("div", { class: "card" }, h("label", { for: "why-amend" }, "Why is the report being amended?"), why));
+    } else parts.push(h("p", { class: "muted" }, "Saved on this phone as you type."));
 
     /* Attendance: the total is worked out, never typed. */
     var tot = h("span", { class: "total" });
@@ -249,6 +268,8 @@
         })), h("p", {}, "Total: ", tot)));
       paintTotal();
     }
+
+    if (ev.ministration) parts.push(R.ministrationEdit(fields, state.ministration, keep));
 
     /* Offering: one line per denomination. */
     var lines = h("div"), totals = h("div");
@@ -285,6 +306,7 @@
 
     parts.push(h("div", { class: "card" }, h("label", { for: "notes" }, "Notes"),
       h("textarea", { id: "notes", rows: "2", placeholder: "e.g. Doors opened late", oninput: function (e) { state.notes = e.target.value; keep(); } }, state.notes)));
+    if (amend) parts.push(h("p", {}, h("a", { class: "btn ghost", href: "#rep/" + amend.id, onclick: function () { setTimeout(route, 0); } }, "Cancel amendment")));
 
     /* Sign and send. */
     var cs = h("select", { id: "cs" }, h("option", { value: "" }, "Choose who will countersign"));
@@ -300,7 +322,7 @@
       });
       cs.addEventListener("change", function () { state.countersignerId = cs.value; saved.countersignerName = cs.options[cs.selectedIndex].text; keep(); });
     }
-    var send = h("button", { onclick: function () { submit(); } }, "Sign and submit");
+    var send = h("button", { onclick: function () { if (amend) sendAmendment(); else submit(); } }, amend ? "Sign and submit amendment" : "Sign and submit");
     parts.push(h("div", { class: "card" }, h("h2", {}, "Sign"),
       ev.countersign ? [h("label", { for: "cs" }, "Countersigner"), cs] : null,
       h("label", { for: "sig" }, "Type your full name to sign"), sig,
@@ -314,7 +336,7 @@
       if (!agree.checked) return out.appendChild(msg("Tick to confirm the report is correct.", "bad"));
       if (!sig.value.trim()) return out.appendChild(msg("Type your full name to sign.", "bad"));
       if (!pin.value) return out.appendChild(msg("Enter your PIN.", "bad"));
-      var body = { eventId: ev.id, submissionId: saved.submissionId || C.newId("sub"), attendance: state.attendance,
+      var body = { eventId: ev.id, submissionId: saved.submissionId || C.newId("sub"), attendance: state.attendance, ministration: state.ministration,
         entries: state.entries, notes: state.notes, countersignerId: cs.value, signature: sig.value.trim() };
       saved.submissionId = body.submissionId;
       C.draftSave(ev.id, Object.assign(C.draftGet(ev.id) || {}, { submissionId: body.submissionId }));
@@ -338,6 +360,46 @@
         });
       });
     }
+
+    var amendmentId = C.newId("amend");
+    function sendAmendment() {
+      C.clear(out);
+      if (why.value.trim().length < 3) { why.focus(); return out.appendChild(msg("Say why the report is being amended.", "bad")); }
+      if (ev.countersign && !cs.value) return out.appendChild(msg("Choose who will countersign.", "bad"));
+      if (!agree.checked) return out.appendChild(msg("Tick to confirm the report is correct.", "bad"));
+      if (!sig.value.trim()) return out.appendChild(msg("Type your full name to sign.", "bad"));
+      if (!pin.value) return out.appendChild(msg("Enter your PIN.", "bad"));
+      send.disabled = true;
+      C.api("report.amend", { reportId: amend.id, amendmentId: amendmentId, version: amend.version, reason: why.value.trim(),
+        attendance: state.attendance, ministration: state.ministration, entries: state.entries, notes: state.notes,
+        countersignerId: cs.value, signature: sig.value.trim(), pin: pin.value }).then(function (r) {
+        send.disabled = false;
+        if (r.error === "needs_authorisation") { out.appendChild(msg(r.message, "")); return; }
+        if (!r.ok) { out.appendChild(msg(r.message + (r.left !== undefined ? " " + r.left + " tries left." : ""), "bad")); return; }
+        location.hash = "#rep/" + amend.id;
+        route();
+      }, function () { send.disabled = false; out.appendChild(msg("No connection. An amendment needs a signal so your PIN can be checked.", "bad")); });
+    }
+  }
+
+  /* Amend: approvers go straight on; anybody else asks first. */
+  function amendBox(j) {
+    var r = j.report, a = r.amend, out = h("div");
+    if (!a || !a.possible) return null;
+    if (a.approver || a.approval === "approved") {
+      return h("div", { class: "card" }, h("h3", {}, "Amend this report"),
+        h("p", { class: "muted" }, a.approver ? "As an approver you can amend it straight away. It will still need countersigning." : "Your request to amend this report was approved."),
+        h("button", { class: "ghost", onclick: function () { editReport(j, r); } }, "Amend report"));
+    }
+    if (a.approval === "pending") return h("div", { class: "card" }, h("h3", {}, "Amend this report"), msg("You have asked to amend it. You will be told when it is decided."));
+    var reason = h("input", { id: "amend-why", placeholder: "e.g. The Tithe was counted twice" });
+    return h("div", { class: "card" }, h("h3", {}, "Something wrong?"),
+      h("label", { for: "amend-why" }, "Ask to amend this report: what needs changing?"), reason, h("p"),
+      h("button", { class: "ghost", onclick: function () {
+        C.api("authorisation.request", { kind: "report_amendment", reportId: r.id, reason: reason.value }).then(function (x) {
+          C.clear(out).appendChild(msg(x.ok ? "Asked. You will be told when it is decided." : x.message, x.ok ? "ok" : "bad"));
+        }, function () { C.clear(out).appendChild(msg("No connection.", "bad")); });
+      } }, "Ask to amend"), out);
   }
 
   function askApproval(j) {
@@ -357,7 +419,8 @@
   function viewReport(j) {
     var r = j.report, cur = CONF.currencies[CONF.defaultCurrency];
     var parts = [h("h1", {}, j.event.title), h("p", { class: "muted" }, C.dateLabel(j.event.date)),
-      h("div", { class: "row" }, statusChip(r.status, r.statusLabel))];
+      h("div", { class: "row" }, statusChip(r.status, r.statusLabel), r.version > 1 ? h("span", { class: "chip" }, "Amended · version " + r.version) : null,
+        r.restricted ? null : R.pdfButton("PDF", function (pdf, opt) { return pdf.service(r, j.event, CONF, opt); }, ME.name))];
     if (r.restricted) { parts.push(msg("This report has been submitted.")); return show.apply(null, parts); }
     parts.push(h("div", { class: "card" }, h("div", {}, "Submitted by ", h("b", {}, r.submitter), " · " + C.timeLabel(r.submittedAt)),
       r.countersignRequired ? h("div", {}, "Countersigner: ", h("b", {}, r.countersigner || "—"), r.countersignedAt ? " · " + C.timeLabel(r.countersignedAt) : "") : null,
@@ -368,6 +431,7 @@
         [["Male", r.attendance.male], ["Female", r.attendance.female], ["Children", r.attendance.children], ["Total", r.attendance.total]]
           .map(function (x) { return h("div", { class: "stat" }, h("b", {}, x[1]), h("span", {}, x[0])); }))));
     }
+    if (j.event.ministration) parts.push(R.ministrationView(r.ministrationFields, r.ministration));
     if (j.event.offering) {
       parts.push(h("div", { class: "card" }, h("h2", {}, "Offering"),
         h("table", {}, h("tr", {}, h("th", {}, "Category"), h("th", { class: "num" }, "Note/coin"), h("th", { class: "num" }, "Qty"), h("th", { class: "num" }, "Amount")),
@@ -381,9 +445,11 @@
       parts.push(changeCountersigner(r));
     }
     if (r.canCountersign) parts.push(countersignBox(r, j));
+    parts.push(amendBox(j));
     parts.push(h("div", { class: "card" }, h("h3", {}, "History"), r.history.map(function (x) {
       return h("div", { class: "muted" }, C.timeLabel(x.at) + " · " + (x.from ? x.from + " → " : "") + x.to + (x.who ? " · " + x.who : "") + (x.note ? " · " + x.note : ""));
     })));
+    parts.push(R.versionsView(r.versions));
     show.apply(null, parts);
   }
 
@@ -409,7 +475,7 @@
       C.clear(out);
       if (!agree.checked) return out.appendChild(msg("Tick to confirm you have reviewed the report.", "bad"));
       if (!sig.value.trim() || !pin.value) return out.appendChild(msg("Type your full name and enter your PIN.", "bad"));
-      var body = { reportId: r.id, submissionId: sid, signature: sig.value.trim() };
+      var body = { reportId: r.id, submissionId: sid, signature: sig.value.trim(), version: r.version };
       btn.disabled = true;
       C.api("report.countersign", Object.assign({ pin: pin.value }, body)).then(function (x) {
         btn.disabled = false;
@@ -438,6 +504,7 @@
     C.api("notifications.list").then(function (j) {
       var parts = [h("div", { class: "row" }, h("h1", { class: "grow" }, "Notifications"),
         h("button", { class: "ghost", onclick: function () { C.api("notifications.read", { all: true }).then(notes); } }, "Mark all read"))];
+      parts.push(alertsCard());
       if (!j.notifications.length) parts.push(h("p", { class: "muted" }, "Nothing yet."));
       j.notifications.forEach(function (n) {
         var link = n.refType === "report" ? "#rep/" + n.refId : n.refType === "event" ? "#report/" + n.refId :
@@ -450,6 +517,33 @@
       });
       show.apply(null, parts);
     }, offline);
+  }
+
+  /* Alerts on this phone: the same notifications, as a phone alert. */
+  function alertsCard() {
+    var box = h("div", { class: "card" }, h("p", { class: "muted" }, "Checking alerts on this phone…"));
+    function paint(state, note) {
+      C.clear(box);
+      box.appendChild(h("h3", {}, "Alerts on this phone"));
+      if (state === "unsupported" || !PUSH_KEY) {
+        box.appendChild(h("p", { class: "muted" }, C.iPhoneNotInstalled()
+          ? "On iPhone: tap Share, then Add to Home Screen, and open Ushers from the Home Screen. Then turn alerts on here."
+          : "This browser cannot show alerts. Notifications still appear here."));
+      } else if (state === "blocked") {
+        box.appendChild(h("p", { class: "muted" }, "Alerts are blocked for this app in the phone's settings. Allow notifications for it there, then come back."));
+      } else if (state === "on") {
+        box.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, "On. New notifications also arrive as phone alerts."),
+          h("button", { class: "ghost", onclick: function () { C.alertsOff().then(function () { paint("off"); }, function (e) { paint("on", e.message); }); } }, "Turn off")));
+      } else {
+        box.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, "Get an alert when you are asked to countersign, a request is decided, or a reminder is due."),
+          h("button", { onclick: function () {
+            C.alertsOn(PUSH_KEY).then(function () { paint("on"); }, function (e) { paint("off", e && e.message || "Could not turn alerts on."); });
+          } }, "Turn on alerts on this phone")));
+      }
+      if (note) box.appendChild(msg(note, "bad"));
+    }
+    C.alertsState().then(function (s) { paint(s); }, function () { paint("unsupported"); });
+    return box;
   }
 
   /* ---- dues ------------------------------------------------------------- */

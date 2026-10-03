@@ -12,7 +12,9 @@ for what was reused, adapted, replaced and added.
 |---|---|---|
 | Ushers App | `index.html`, `sw.js`, `manifest.webmanifest` | For every usher. Home answers "What am I doing?" |
 | Admin App | `admin/` | Head Usher, Assistant Head Usher, System Administrator, and the Treasurer's screen. No service worker |
-| Shared page code | `shared/core.js`, `shared/style.css`, `config.js` | Session, server calls, offline queue, drafts, look |
+| Shared page code | `shared/core.js`, `shared/reports.js`, `shared/style.css`, `config.js` | Session, server calls, offline queue, drafts, phone alerts, report parts, look |
+| PDFs | `shared/pdf.js`, `shared/vendor/jspdf.umd.min.js` (MIT) | Service report and period summary PDFs, made on the phone. Loaded only when a PDF is made |
+| Icons | `apple-touch-icon.png`, `icon-*.png` (and the same in `admin/`) | Home-screen icons. Remade by `node tools/make-icons.mjs` from `shared/logo.png` |
 | Server | `server/worker.js`, `server/schema.sql` | Cloudflare Worker + D1. The authority on sessions, PINs and permissions |
 | Historical record | `Code.gs` | Apps Script bound to the Google Sheet. Pulls from the server and writes the tabs |
 | Tests | `tests/` | `node tests/run-tests.mjs` (ends READY or NOT READY) |
@@ -36,12 +38,16 @@ required → Google Sheets record → Coordinator dashboard.
 
 - **Rota.** A Sunday is two events, First Service (ushering, any number) and
   Second Service (offering counting, exactly `second_service_counters`, 2).
+  Both services have the same whole report.
   Being on both is not a conflict. The first Sunday of each month is
   Thanksgiving Sunday.
-- **Report.** One per event, one submitter. Attendance (male, female,
-  children) with the total worked out; offering as denomination lines
-  (category, currency, denomination, quantity) with category totals and a
-  grand total worked out on the server.
+- **Report.** One per event, one submitter, and everything about the
+  service: attendance (male, female, children) with the total worked out;
+  the ministration record (minister, sermon title, Bible text, praise and
+  worship leader, special ministration, first-timers, new converts: the list
+  is `ministration_fields` in configuration); and offering as denomination
+  lines (category, currency, denomination, quantity) with category totals
+  and a grand total worked out on the server.
 - **Status.** Draft → Submitted → Pending Countersignature → Verified, or
   Draft → Submitted → Verified when the event type needs no countersignature.
   Every change is kept in `report_history` and on the AUDIT tab.
@@ -52,8 +58,28 @@ required → Google Sheets record → Coordinator dashboard.
   approval lets that person countersign that report once; their roles never
   change.
 - **One authorisation engine** also covers submitting for an event you were
-  not rostered on, and duty takeovers (B did A's duty: the duty moves to B,
-  A's stays on the record as removed).
+  not rostered on, amending a submitted report, and duty takeovers (B did
+  A's duty: the duty moves to B, A's stays on the record as removed).
+- **Approvers need no request.** Anyone holding `exceptions.approve` (Head
+  Usher, Assistant Head Usher, System Administrator) who does something that
+  would need approval has it approved at once, by themselves, on the record
+  (`AUTHORISATIONS`, `AUDIT`). Deciding someone else's request still needs
+  the approver's PIN. **Every report is still countersigned by somebody
+  else**, whoever submits or amends it.
+- **Amendments.** A submitted report is never overwritten. Amending needs a
+  reason, the signature and the PIN; the version it replaces is kept whole
+  (`report_versions`, the `REPORT_VERSIONS` tab), the report gets the next
+  version number and goes back to Pending Countersignature. An usher needs
+  an approved request first; an approver does not. On the sheet,
+  ATTENDANCE, MINISTRATION and OFFERING have a row per version with
+  `CURRENT` = Yes or No: filter on Yes before adding up. A countersignature
+  made for an older version is refused.
+- **Phone alerts.** Notifications → Turn on alerts on this phone. Every new
+  notification then also wakes the phone. As in the Driver App, the push
+  carries nothing: the phone asks the server what it is for. On iPhone it
+  works once Ushers is added to the Home Screen and opened from there.
+- **PDFs.** Any report has a PDF button (both apps). Admin → Reports makes a
+  summary PDF for any period of up to 400 days.
 - **Signing** is typing your full name, ticking to confirm, and your PIN.
 - **Offline.** Reports are saved on the phone as they are typed. A report
   signed with no signal is kept as "Saved on device — waiting for
@@ -73,7 +99,7 @@ System Administrator. Permissions are the union of a person's roles
 - Treasurer: dues, payments, balances, reminders. **Head Usher has no dues
   permission**; someone with both roles gets both.
 - System Administrator: ushers, roles (including Treasurer and System
-  Administrator), settings, audit.
+  Administrator), settings, audit, and approvals (an approver, as above).
 
 ## Sign-in, sessions and app switching
 
@@ -100,7 +126,8 @@ Rules live in the server's `config` table, with defaults in
 `DEFAULT_CONFIG` (`server/worker.js`), and a System Administrator changes
 them on the Admin App's Settings screen. They include dues (£5 a month, £60 a
 year), the number of Second Service counters, the Thanksgiving rule, event
-types (and whether each needs attendance, offering and a countersignature),
+types (and whether each has attendance, ministration, offering and a
+countersignature), the ministration lines,
 offering categories, currencies and denominations, countersigning roles,
 session and PIN limits, reminder timings, and which notifications are
 emailed. Every change is audited and written to the CONFIG tab.
@@ -112,7 +139,8 @@ This repository is public. No secret is in any file:
 | Where | Key |
 |---|---|
 | Worker variables (Secrets) | `PIN_PEPPER`, `SHEET_TOKEN`, `BOOTSTRAP_TOKEN` (only until the first administrator exists) |
-| Worker variables | `SHEET_WEBAPP_URL`, `ALLOWED_ORIGINS`, `PIN_ITERATIONS` (optional) |
+| Worker variables | `SHEET_WEBAPP_URL`, `ALLOWED_ORIGINS`, `PIN_ITERATIONS`, `PUSH_CONTACT` (all optional) |
+| D1 `settings` table | the phone-alert key pair, made by the Worker on first use (never in code) |
 | Apps Script Script Properties | `WORKER_URL`, `SHEET_TOKEN`, `SENDER_NAME`, `REPLY_TO`, `UNLOCK_MAX_MINUTES` |
 
 `config.js` holds only the server's address. A test fails if a shipped file
@@ -135,9 +163,7 @@ in Chromium at phone width and photographs each step; run it by hand.
 
 ## Left for later (designed for, not built)
 
-Web Push (the Driver App's can be lifted), PDF reports, the full audit
-viewer, report amendments and versions UI, rolling rota engine, analytics,
-advanced dues carry-forward, notification preferences, phone icons in PNG
-for iOS home screens.
+The full audit viewer, rolling rota engine, analytics, advanced dues
+carry-forward, notification preferences.
 
 See [DEPLOY.md](DEPLOY.md) to set it up.

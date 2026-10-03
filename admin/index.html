@@ -6,10 +6,17 @@
 <title>Ushers Admin</title>
 <meta name="theme-color" content="#2d1544">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ushers Admin">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="../shared/style.css">
 <style>header.bar { background: #2d1544; color: #fff; } header.bar a, header.bar button { color: #fff; }</style>
 <script src="../config.js"></script>
 <script src="../shared/core.js"></script>
+<script src="../shared/reports.js"></script>
 </head>
 <body>
 <!-- No service worker: every screen is read from the server as it opens,
@@ -25,7 +32,7 @@
 <script>
 (function () {
   "use strict";
-  var C = window.UshersCore, h = C.h, main = document.getElementById("main");
+  var C = window.UshersCore, R = window.UshersReports, h = C.h, main = document.getElementById("main");
   var ME = null, CONF = null, timer = null;
   /* Each screen and the permission the server needs for it. The server
      refuses anyway; this only decides what is offered. */
@@ -116,9 +123,12 @@
           rep.approvalRequests && can("exceptions.approve") ? h("p", {}, h("a", { class: "btn", href: "#approvals" }, "Review approvals")) : null));
         parts.push(h("div", { class: "card" }, h("h2", {}, "Attendance"), attendanceStats(cur.totals.attendance)));
         parts.push(h("div", { class: "card" }, h("h2", {}, "Offering"), offeringTable(cur.totals.offering, cur.totals.offeringTotal)));
+        var mf = (cur.ministrationFields || [])[0];
         parts.push(h("div", { class: "card" }, h("h2", {}, "Services"), cur.services.map(function (s) {
-          return h("div", { class: "row" }, h("span", { class: "grow" }, s.title), chip(s.reportStatus, s.reportStatusLabel),
-            s.reportId ? h("a", { class: "btn ghost", href: "#report/" + s.reportId }, "View") : null);
+          return h("div", {}, h("div", { class: "row" }, h("span", { class: "grow" }, s.title), chip(s.reportStatus, s.reportStatusLabel),
+              s.version > 1 ? h("span", { class: "chip" }, "Amended") : null,
+              s.reportId ? h("a", { class: "btn ghost", href: "#report/" + s.reportId }, "View") : null),
+            s.ministration && mf && s.ministration[mf.key] ? h("div", { class: "muted" }, mf.label + ": " + s.ministration[mf.key]) : null);
         })));
         parts.push(rotaCard(d.next, "Next Sunday"));
         if (d.olderOutstanding.length) {
@@ -242,7 +252,7 @@
         [["", "All"], ["pending_countersignature", "Pending Countersignature"], ["verified", "Verified"], ["draft", "Draft"]].map(function (x) {
           return h("option", { value: x[0], selected: (status || "") === x[0] }, x[1]);
         }));
-      show(h("h1", {}, "Reports"), sel, h("div", { class: "card" }, j.reports.length ? h("table", {},
+      show(h("h1", {}, "Reports"), periodCard(), sel, h("div", { class: "card" }, j.reports.length ? h("table", {},
         h("tr", {}, h("th", {}, "Date"), h("th", {}, "Event"), h("th", {}, "Status"), h("th", { class: "num" }, "People"), h("th", { class: "num" }, "Offering")),
         j.reports.map(function (r) {
           return h("tr", {}, h("td", {}, C.dateLabel(r.date)), h("td", {}, r.status === "draft" ? r.title : h("a", { href: "#report/" + r.id }, r.title)),
@@ -251,22 +261,43 @@
     }, failed);
   }
 
+  /* A PDF of every service in a period, from the server's summary. */
+  function periodCard() {
+    var today = C.londonToday();
+    var from = h("input", { id: "pfrom", type: "date", value: today.slice(0, 8) + "01" });
+    var to = h("input", { id: "pto", type: "date", value: today });
+    var out = h("div");
+    var make = R.pdfButton("Make PDF summary", function (pdf, opt, p) { return pdf.period(p, CONF, opt); }, ME.name, function () {
+      return C.api("reports.period", { from: from.value, to: to.value }).then(function (p) { if (!p.ok) throw new Error(p.message); return p; });
+    });
+    return h("div", { class: "card" }, h("h2", {}, "Summary for a period"),
+      h("div", { class: "grid3" }, h("div", {}, h("label", { for: "pfrom" }, "From"), from), h("div", {}, h("label", { for: "pto" }, "To"), to)),
+      h("p"), make, out);
+  }
+
   function reportView(id) {
     loading();
     C.api("report.open", { reportId: id }).then(function (j) {
       if (!j.ok) return show(msg(j.message, "bad"));
       var r = j.report;
-      show(h("h1", {}, j.event.title), h("p", { class: "muted" }, C.dateLabel(j.event.date)), chip(r.status, r.statusLabel),
+      show(h("h1", {}, j.event.title), h("p", { class: "muted" }, C.dateLabel(j.event.date)),
+        h("div", { class: "row" }, chip(r.status, r.statusLabel), r.version > 1 ? h("span", { class: "chip" }, "Amended · version " + r.version) : null,
+          R.pdfButton("PDF", function (pdf, opt) { return pdf.service(r, j.event, CONF, opt); }, ME.name)),
         h("div", { class: "card" }, h("div", {}, "Submitted by " + r.submitter + " · " + C.timeLabel(r.submittedAt)),
           r.countersignRequired ? h("div", {}, "Countersigner: " + (r.countersigner || "—") + (r.countersignedAt ? " · " + C.timeLabel(r.countersignedAt) : "")) : null),
         j.event.attendance ? h("div", { class: "card" }, h("h2", {}, "Attendance"), attendanceStats(r.attendance)) : null,
+        j.event.ministration ? R.ministrationView(r.ministrationFields, r.ministration) : null,
         j.event.offering ? h("div", { class: "card" }, h("h2", {}, "Offering"),
           h("table", {}, r.entries.map(function (x) { return h("tr", {}, h("td", {}, x.category), h("td", { class: "num" }, C.denomLabel(x.denomination)), h("td", { class: "num" }, "× " + x.quantity), h("td", { class: "num" }, money(x.amount))); })),
           h("h3", {}, "Totals"), offeringTable(r.byCategory, r.offeringTotal)) : null,
         r.notes ? h("div", { class: "card" }, h("b", {}, "Notes"), h("div", {}, r.notes)) : null,
+        r.amend && r.amend.possible ? h("div", { class: "card" }, h("h3", {}, "Amend this report"),
+          h("p", { class: "muted" }, "Amending makes a new version and keeps this one. The amended report is countersigned again."),
+          h("a", { class: "btn ghost", href: "../#rep/" + r.id }, "Amend in the Ushers App")) : null,
         h("div", { class: "card" }, h("h3", {}, "History"), r.history.map(function (x) {
           return h("div", { class: "muted" }, C.timeLabel(x.at) + " · " + (x.from ? x.from + " → " : "") + x.to + (x.who ? " · " + x.who : "") + (x.note ? " · " + x.note : ""));
-        })));
+        })),
+        R.versionsView(r.versions));
     }, failed);
   }
 

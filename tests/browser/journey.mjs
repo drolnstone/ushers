@@ -29,7 +29,7 @@ await api("usher.roles", { usherId: ids.T, roles: ["usher", "treasurer"] }, admi
 const today = mod.londonKey(new Date());
 const focus = mod.sundayOnOrBefore(today);
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
-const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, acceptDownloads: true });
 const page = await context.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
@@ -81,6 +81,7 @@ await shot("a-home");
 await page.click(`a[href="#report/S${focus.replace(/-/g, "")}-1"]`);
 await page.waitForSelector("#att-male");
 await page.fill("#att-male", "10"); await page.fill("#att-female", "12"); await page.fill("#att-children", "5");
+await page.fill("#min-minister", "Pastor Ade"); await page.fill("#min-sermon_title", "Faithful in little"); await page.fill("#min-first_timers", "3");
 await page.selectOption("#cat", "General Offering"); await page.selectOption("#den", "2000"); await page.fill("#qty", "10"); await page.click("text=Add line");
 await page.selectOption("#cat", "Tithe"); await page.selectOption("#den", "500"); await page.fill("#qty", "3"); await page.click("text=Add line");
 const total = await page.textContent(".total");
@@ -91,12 +92,15 @@ await page.fill("#sig", "John Smith"); await page.check("#agree"); await page.fi
 await shot("a-report-filled");
 await page.click("text=Sign and submit");
 await page.waitForSelector("text=Pending Countersignature");
+await page.waitForSelector("text=Faithful in little");
 await noUcodes("report");
 await shot("a-report-pending");
 
 // Offline: the Second Service report signed with no signal, sent later.
 await page.goto(BASE + "/#report/S" + focus.replace(/-/g, "") + "-2");
 await page.waitForSelector("#cat");
+await page.fill("#att-male", "20"); await page.fill("#att-female", "25"); await page.fill("#att-children", "9");
+await page.fill("#min-minister", "Pastor Bisi");
 await page.selectOption("#cat", "Vow"); await page.selectOption("#den", "5000"); await page.fill("#qty", "2"); await page.click("text=Add line");
 await page.waitForSelector("#cs option:nth-child(3)", { state: "attached" });
 await page.selectOption("#cs", { label: "Mary Jones" });
@@ -132,12 +136,66 @@ await shot("b-review");
 await page.click("button:has-text('Countersign')");
 await page.waitForSelector(".chip.status-verified");
 await shot("b-verified");
+const [pdf1] = await Promise.all([page.waitForEvent("download"), page.click("button:has-text('PDF')")]);
+if (!/^Ushering - Sunday First Service.* - \d{4}-\d\d-\d\d\.pdf$/.test(pdf1.suggestedFilename())) throw new Error("PDF name " + pdf1.suggestedFilename());
+await pdf1.saveAs(SHOTS + "/service-report.pdf");
+
+// Alerts card on the Notifications screen.
+await page.goto(BASE + "/#notes");
+await page.waitForSelector("text=Alerts on this phone");
+await page.waitForSelector("button:has-text('Turn on alerts on this phone')");
+await shot("b-alerts");
+
+// John asks to amend; the Head Usher approves; John amends; Peter countersigns.
+await signIn("John Smith");
+await page.goto(BASE + "/#report/S" + focus.replace(/-/g, "") + "-1");
+await page.waitForSelector("#amend-why");
+await page.fill("#amend-why", "Ten more men were counted late");
+await page.click("button:has-text('Ask to amend')");
+await page.waitForSelector("text=Asked.");
+await signIn("Grace Okafor");
+await page.goto(BASE + "/admin/#approvals");
+const amendCard = page.locator(".card", { hasText: "Amend a report" }).first();
+await amendCard.waitFor();
+await amendCard.locator("input[type=password]").fill("1234");
+await amendCard.locator("button", { hasText: "Approve" }).click();
+await page.waitForTimeout(400);
+await signIn("John Smith");
+await page.goto(BASE + "/#report/S" + focus.replace(/-/g, "") + "-1");
+await page.click("button:has-text('Amend report')");
+await page.waitForSelector("#why-amend");
+if (await page.inputValue("#min-minister") !== "Pastor Ade") throw new Error("amend form does not start from the current version");
+await page.fill("#why-amend", "Ten more men were counted late");
+await page.fill("#att-male", "20");
+await page.waitForSelector("#cs option:nth-child(3)", { state: "attached" });
+await page.selectOption("#cs", { label: "Peter Brown" });
+await page.fill("#sig", "John Smith"); await page.check("#agree"); await page.fill("#spin", "1234");
+await shot("a-amend-form");
+await page.click("button:has-text('Sign and submit amendment')");
+await page.waitForSelector("text=Amended · version 2");
+await page.waitForSelector("text=Earlier versions");
+await shot("a-amended");
+await signIn("Peter Brown");
+await page.click("text=Review and countersign");
+await page.waitForSelector("#csig");
+await page.check(".card:has(#csig) input[type=checkbox]");
+await page.fill("#csig", "Peter Brown"); await page.fill("#cpin", "1234");
+await page.click("button:has-text('Countersign')");
+await page.waitForSelector(".chip.status-verified");
+if (env.DB._one("SELECT version, attendance_total FROM reports WHERE event_id=?", "S" + focus.replace(/-/g, "") + "-1").attendance_total !== 37) throw new Error("amendment not saved");
 
 // Dashboard; Treasurer boundary.
 await signIn("Grace Okafor");
 await page.goto(BASE + "/admin/#dashboard");
 await page.waitForSelector("text=Next Sunday");
 await shot("admin-dashboard");
+await page.goto(BASE + "/admin/#reports");
+await page.waitForSelector("text=Summary for a period");
+await page.fill("#pfrom", focus);
+const [pdf2] = await Promise.all([page.waitForEvent("download"), page.click("button:has-text('Make PDF summary')")]);
+if (!/^Ushering - Summary - /.test(pdf2.suggestedFilename())) throw new Error("summary PDF name " + pdf2.suggestedFilename());
+await pdf2.saveAs(SHOTS + "/summary.pdf");
+await shot("admin-reports");
 if (await page.locator("nav.tabs a", { hasText: "Treasurer" }).count()) throw new Error("Head Usher sees Treasurer");
 await signIn("Ruth Adeyemi");
 await page.goto(BASE + "/admin/#treasurer/" + ids.A);

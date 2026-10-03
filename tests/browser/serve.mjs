@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { loadWorker, makeEnv } from "../lib/worker.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "..", ".."));
-const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json" };
+const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json", ".png": "image/png", ".txt": "text/plain" };
 
 export async function start(port) {
   const { mod } = await loadWorker(ROOT);

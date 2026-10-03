@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS reports (
   attendance_total        INTEGER DEFAULT 0,
   offering_total          INTEGER DEFAULT 0,  -- pence
   notes                   TEXT DEFAULT '',
+  ministration_json       TEXT DEFAULT '{}',  -- the ministration record, by config key
   submission_id           TEXT UNIQUE,
   submit_signature        TEXT DEFAULT '',
   submitted_at            INTEGER,
@@ -173,6 +174,20 @@ CREATE TABLE IF NOT EXISTS report_history (
 );
 CREATE INDEX IF NOT EXISTS report_history_report ON report_history(report_id);
 
+-- An amendment never overwrites: the version it replaces is kept here whole
+-- (the report row, its offering lines and its ministration record).
+CREATE TABLE IF NOT EXISTS report_versions (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_id            TEXT NOT NULL,
+  version              INTEGER NOT NULL,
+  snapshot_json        TEXT NOT NULL,
+  replaced_at          INTEGER NOT NULL,
+  replaced_by          TEXT NOT NULL,
+  reason               TEXT DEFAULT '',
+  amend_submission_id  TEXT UNIQUE      -- made on the phone; a retry is filed once
+);
+CREATE UNIQUE INDEX IF NOT EXISTS report_versions_once ON report_versions(report_id, version);
+
 -- ---- one authorisation engine --------------------------------------------
 
 -- A request for ONE transaction: countersign this report, submit for this
@@ -209,9 +224,23 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at  INTEGER NOT NULL,
   read_at     INTEGER,
   emailed     INTEGER DEFAULT 0,
-  dedupe      TEXT UNIQUE          -- stops a reminder going twice
+  dedupe      TEXT UNIQUE,         -- stops a reminder going twice
+  pushed_at   INTEGER              -- sent to the person's phones
 );
 CREATE INDEX IF NOT EXISTS notifications_usher ON notifications(usher_id, read_at);
+
+-- Phones with alerts switched on. The push carries nothing; the phone asks
+-- what it is for (push.what) with its endpoint. 404/410 from the push
+-- service removes the row.
+CREATE TABLE IF NOT EXISTS push_subs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  usher_id    TEXT NOT NULL,
+  endpoint    TEXT NOT NULL UNIQUE,
+  created_at  INTEGER,
+  seen        INTEGER,
+  fails       INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS push_subs_usher ON push_subs(usher_id);
 
 -- ---- dues (Treasurer) ----------------------------------------------------
 

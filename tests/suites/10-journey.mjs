@@ -15,6 +15,7 @@ export default async function ({ root }) {
   const next = mod.keyDow(today) === 0 ? mod.keyAddDays(today, 7) : mod.sundayOnOrAfter(today);
   const first = "S" + focus.replace(/-/g, "") + "-1", second = "S" + focus.replace(/-/g, "") + "-2";
   const T = {}, ID = {};
+  const keyAfter = (k, n) => mod.keyAddDays(k, n);
   const login = async (who, pin) => {
     const r = await call("login", { usherId: ID[who], pin: pin || "1234" });
     if (!r.ok) throw new Error("login " + who + ": " + JSON.stringify(r));
@@ -110,8 +111,9 @@ export default async function ({ root }) {
   const entries = [{ category: "General Offering", currency: "GBP", denomination: 2000, quantity: 10 },
                    { category: "Tithe", currency: "GBP", denomination: 500, quantity: 3 },
                    { category: "Pledge", currency: "GBP", denomination: 1000, quantity: 1 }];
+  const ministration = { minister: "Pastor Ade", sermon_title: "Faithful in little", bible_text: "Luke 16:10", first_timers: 3, new_converts: "1" };
   const body = (over) => Object.assign({ eventId: first, submissionId: "sub-a-0001", attendance: { male: 10, female: 12, children: 5 },
-    entries, countersignerId: ID.B, signature: "John Smith", pin: "1234" }, over || {});
+    ministration, entries, countersignerId: ID.B, signature: "John Smith", pin: "1234" }, over || {});
 
   s.test("a wrong PIN is refused and counts down", async (a) => {
     const r = await call("report.submit", body({ pin: "0000" }), T.A);
@@ -134,6 +136,9 @@ export default async function ({ root }) {
     a.eq(r.report.attendance.total, 27);
     a.eq(r.report.offeringTotal, 22500);
     a.same(r.report.history.map((h) => h.to), ["Draft", "Submitted", "Pending Countersignature"]);
+    a.eq(r.report.ministration.minister, "Pastor Ade", "the ministration record is part of the report");
+    a.eq(r.report.ministration.new_converts, 1, "numbers are kept as numbers");
+    a.eq(r.report.ministration.worship_leader, "", "a line left empty is kept empty");
     reportId = r.report.id;
   });
 
@@ -198,11 +203,20 @@ export default async function ({ root }) {
     a.eq(d.next.services.length, 2, "First and Second Service both shown");
   });
 
+  s.test("the Second Service report is the same whole report: attendance, ministration and offering", async (a) => {
+    const o = await call("report.open", { eventId: second }, T.B);
+    a.ok(o.event.attendance && o.event.ministration && o.event.offering, JSON.stringify(o.event));
+    a.ok(o.ministrationFields.length >= 5);
+  });
+
   s.test("20. a report signed with no signal is accepted later, once, and marked as checked on the phone", async (a) => {
     const at = Date.now() - 60000;
     const r = await call("report.submit", { eventId: second, submissionId: "offline-b-0001", entries: [{ category: "Vow", currency: "GBP", denomination: 5000, quantity: 2 }],
+      attendance: { male: 20, female: 25, children: 9 }, ministration: { minister: "Pastor Bisi", first_timers: 2 },
       countersignerId: ID.A, signature: "Mary Jones", offline: true, signedAt: at }, T.B);
     a.ok(r.ok, JSON.stringify(r));
+    a.eq(r.report.attendance.total, 54, "Second Service attendance is counted too");
+    a.eq(r.report.ministration.minister, "Pastor Bisi");
     a.eq(r.countersigner, "authorised", "A is a counter at that service, so rostered");
     a.eq(env.DB._one("SELECT submit_pin_check FROM reports WHERE event_id=?", second).submit_pin_check, "device");
     const again = await call("report.submit", { eventId: second, submissionId: "offline-b-0001", signature: "Mary Jones", offline: true, signedAt: at }, T.B);
@@ -214,7 +228,10 @@ export default async function ({ root }) {
     const p = await call("sheet.pull", { sheetToken: "test-sheet-token", max: 500 });
     a.ok(p.ok);
     const tabs = new Set(p.rows.map((r) => r.tab));
-    for (const t of ["USHERS", "EVENTS", "APPOINTMENTS", "REPORTS", "ATTENDANCE", "OFFERING", "AUTHORISATIONS", "AUDIT", "NOTIFICATIONS"]) a.ok(tabs.has(t), "has " + t);
+    for (const t of ["USHERS", "EVENTS", "APPOINTMENTS", "REPORTS", "ATTENDANCE", "MINISTRATION", "OFFERING", "AUTHORISATIONS", "AUDIT", "NOTIFICATIONS"]) a.ok(tabs.has(t), "has " + t);
+    const min = p.rows.filter((r) => r.tab === "MINISTRATION" && r.row.REPORT_ID === reportId).map((r) => r.row);
+    a.ok(min.some((x) => x.FIELD === "Sermon title" && x.VALUE === "Faithful in little" && x.VERSION === 1 && x.CURRENT === "Yes"), JSON.stringify(min));
+    a.ok(p.rows.some((r) => r.tab === "ATTENDANCE" && r.value === reportId + "-v1"), "attendance keyed by report and version");
     const rep = p.rows.filter((r) => r.tab === "REPORTS" && r.value === reportId).pop();
     a.eq(rep.mode, "upsert");
     a.eq(rep.key, "REPORT_ID");
@@ -295,10 +312,137 @@ export default async function ({ root }) {
     a.eq(env.DB._one("SELECT status FROM authorisations WHERE id=?", r.authorisationId).status, "consumed");
   });
 
-  s.test("an approver cannot decide their own request", async (a) => {
-    const ev = "S" + next.replace(/-/g, "") + "-1";
-    const r = await call("authorisation.request", { kind: "report_submission", eventId: ev, reason: "test" }, T.hu);
-    a.eq((await call("authorisation.decide", { id: r.authorisationId, decision: "approve", pin: "1234" }, T.hu)).error, "self_approval");
+  s.test("an approver needs no request: the Head Usher's own duty change happens at once, with their PIN", async (a) => {
+    const ev = "S" + next.replace(/-/g, "") + "-2";
+    const ap = env.DB._one("SELECT id FROM appointments WHERE event_id=? AND usher_id=? AND status='active'", ev, ID.B).id;
+    a.eq((await call("authorisation.request", { kind: "duty_takeover", appointmentId: ap, reason: "Mary was ill", pin: "0000" }, T.hu)).error, "bad_pin");
+    const r = await call("authorisation.request", { kind: "duty_takeover", appointmentId: ap, reason: "Mary was ill", pin: "1234" }, T.hu);
+    a.ok(r.ok, JSON.stringify(r));
+    a.eq(r.status, "consumed", "approved and used at once");
+    const row = env.DB._one("SELECT * FROM authorisations WHERE id=?", r.authorisationId);
+    a.eq(row.decided_by, ID.hu, "the record says who approved it");
+    a.ok(env.DB._one("SELECT id FROM appointments WHERE event_id=? AND usher_id=? AND status='active'", ev, ID.hu));
+    const others = env.DB._rows("SELECT * FROM notifications WHERE type='approval_request' AND ref_id=?", r.authorisationId);
+    a.eq(others.length, 0, "nobody is asked to approve it");
+  });
+
+  s.test("System Administrators are approvers too", async (a) => {
+    const ev = "S" + next.replace(/-/g, "") + "-2";
+    const ap = env.DB._one("SELECT id FROM appointments WHERE event_id=? AND usher_id=? AND status='active'", ev, ID.hu).id;
+    const r = await call("authorisation.request", { kind: "duty_takeover", appointmentId: ap, reason: "Swap back" }, T.B);
+    a.eq(r.status, "pending");
+    const l = await call("authorisations.list", { status: "pending" }, T.admin);
+    a.ok(l.authorisations.some((x) => x.id === r.authorisationId && x.canDecide), JSON.stringify(l));
+    a.ok((await call("authorisation.decide", { id: r.authorisationId, decision: "approve", pin: "9999" }, T.admin)).ok);
+  });
+
+  let adminReport;
+  s.test("an administrator's report needs no approval to submit but must still be countersigned by somebody else", async (a) => {
+    const ev = "S" + next.replace(/-/g, "") + "-2";
+    const sub = { eventId: ev, submissionId: "sub-admin-0001", attendance: { male: 4, female: 5, children: 1 }, ministration: { minister: "Pastor Ade" },
+      entries: [{ category: "General Offering", currency: "GBP", denomination: 1000, quantity: 2 }], signature: "Sam Admin", pin: "9999" };
+    a.eq((await call("report.submit", Object.assign({}, sub, { countersignerId: ID.admin }), T.admin)).error, "self_countersign");
+    const r = await call("report.submit", Object.assign({}, sub, { countersignerId: ID.D }), T.admin);
+    a.ok(r.ok, JSON.stringify(r));
+    a.eq(r.report.status, "pending_countersignature", "not verified until somebody else countersigns");
+    a.eq(r.countersigner, "authorised", "the administrator's choice of countersigner is already approved");
+    adminReport = r.report.id;
+    a.eq((await call("report.countersign", { reportId: adminReport, submissionId: "cs-admin-self1", signature: "Sam Admin", pin: "9999" }, T.admin)).error, "not_countersigner");
+    const c = await call("report.countersign", { reportId: adminReport, submissionId: "cs-d-000001", signature: "David Cole", pin: "1234" }, T.D);
+    a.ok(c.ok, JSON.stringify(c));
+    a.eq(c.report.status, "verified");
+  });
+
+  s.test("an amendment by an usher needs approval first, and keeps the old version whole", async (a) => {
+    const am = { reportId, amendmentId: "amend-a-0001", reason: "Ten more men were counted late", attendance: { male: 20, female: 12, children: 5 },
+      ministration, entries, countersignerId: ID.C, signature: "John Smith", pin: "1234", version: 1 };
+    const r = await call("report.amend", am, T.A);
+    a.eq(r.error, "needs_authorisation", JSON.stringify(r));
+    a.eq((await call("report.amend", Object.assign({}, am, { reason: "" }), T.A)).error, "reason");
+    a.ok((await call("authorisation.decide", { id: r.authorisationId, decision: "approve", pin: "1234" }, T.hu)).ok);
+    const ok = await call("report.amend", am, T.A);
+    a.ok(ok.ok, JSON.stringify(ok));
+    a.eq(ok.version, 2);
+    a.eq(ok.report.status, "pending_countersignature", "an amended report is countersigned again");
+    a.eq(ok.report.attendance.total, 37);
+    a.eq(ok.report.versions.length, 1);
+    a.eq(ok.report.versions[0].attendance.total, 27, "version 1 is kept as it was");
+    a.eq(ok.report.versions[0].countersigner, "Mary Jones");
+    a.eq(env.DB._one("SELECT status FROM authorisations WHERE id=?", r.authorisationId).status, "consumed");
+    a.ok((await call("report.amend", am, T.A)).duplicate, "the same amendment sent twice is filed once");
+    a.eq(env.DB._one("SELECT count(*) AS n FROM report_versions WHERE report_id=?", reportId).n, 1);
+  });
+
+  s.test("a countersignature made for the old version is refused; the new one verifies the amendment", async (a) => {
+    a.eq((await call("report.countersign", { reportId, submissionId: "cs-c-old-01", signature: "Peter Brown", pin: "1234", version: 1 }, T.C)).error, "changed");
+    const r = await call("report.countersign", { reportId, submissionId: "cs-c-0001", signature: "Peter Brown", pin: "1234", version: 2 }, T.C);
+    a.ok(r.ok, JSON.stringify(r));
+    a.eq(r.report.status, "verified");
+    a.eq(r.report.version, 2);
+  });
+
+  s.test("an approver amends with no request, but the amendment is still countersigned", async (a) => {
+    const r = await call("report.amend", { reportId, amendmentId: "amend-hu-0001", reason: "Pledge was a vow", attendance: { male: 20, female: 12, children: 5 },
+      ministration, entries: entries.map((x) => x.category === "Pledge" ? Object.assign({}, x, { category: "Vow" }) : x),
+      countersignerId: ID.A, signature: "Grace Okafor", pin: "1234" }, T.hu);
+    a.ok(r.ok, JSON.stringify(r));
+    a.eq(r.version, 3);
+    a.eq(r.report.status, "pending_countersignature");
+    a.eq(r.report.byCategory.Vow, 1000);
+  });
+
+  s.test("the sheet keeps every version: old rows are marked not current", async (a) => {
+    const p = await call("sheet.pull", { sheetToken: "test-sheet-token", max: 2000 });
+    const att = p.rows.filter((r) => r.tab === "ATTENDANCE" && r.row.REPORT_ID === reportId);
+    const last = {};
+    for (const r of att) last[r.value] = r.row;
+    a.eq(last[reportId + "-v1"].CURRENT, "No");
+    a.eq(last[reportId + "-v2"].CURRENT, "No");
+    a.eq(last[reportId + "-v3"].CURRENT, "Yes");
+    a.eq(last[reportId + "-v3"].TOTAL, 37);
+    const ver = p.rows.filter((r) => r.tab === "REPORT_VERSIONS").map((r) => r.row);
+    a.ok(ver.some((v) => v.VERSION_ID === reportId + "-v1" && v.REASON === "Ten more men were counted late" && v.ATTENDANCE_TOTAL === 27), JSON.stringify(ver));
+    a.ok(p.rows.some((r) => r.tab === "AUDIT" && r.row.ACTION === "report.amend"));
+    await call("sheet.ack", { sheetToken: "test-sheet-token", claim: p.claim, ids: p.rows.map((r) => r.id) });
+  });
+
+  s.test("the period summary adds up the reports for the coordinator's PDF; ushers cannot have it", async (a) => {
+    a.eq((await call("reports.period", { from: focus, to: next }, T.A))._status, 403);
+    const p = await call("reports.period", { from: focus, to: keyAfter(next, 6) }, T.hu);
+    a.ok(p.ok, JSON.stringify(p));
+    const one = p.rows.find((x) => x.eventId === first);
+    a.eq(one.attendance.total, 37);
+    a.eq(one.ministration.minister, "Pastor Ade");
+    a.ok(p.totals.attendance >= 37 + 54);
+    a.ok(p.totals.ministration.first_timers >= 5);
+    a.eq(p.rows.length, 4, "every service in the period is listed");
+    a.eq(p.totals.verified + p.totals.waiting + p.totals.missing, 4);
+    a.eq((await call("reports.period", { from: next, to: focus }, T.hu)).error, "dates");
+  });
+
+  s.test("phones with alerts on are woken for new notifications, and the phone is told what for", async (a) => {
+    const { outbound } = await import("../lib/worker.mjs");
+    const me = await call("me", {}, T.A);
+    a.ok(/^[A-Za-z0-9_-]{80,}$/.test(me.pushKey), "a public key the phone can subscribe with");
+    const ep = "https://push.example/send/abc123";
+    a.eq((await call("push.subscribe", { endpoint: "http://insecure" }, T.A)).error, "endpoint");
+    a.ok((await call("push.subscribe", { endpoint: ep }, T.A)).ok);
+    a.eq((await call("me", {}, T.A)).alertPhones, 1);
+    await call.settle();
+    outbound.length = 0;
+    a.ok((await call("notify.send", { title: "Meeting on Tuesday", body: "All ushers please", usherIds: [ID.A] }, T.hu)).ok);
+    await call.settle();
+    const sent = outbound.find((o) => o.url === ep);
+    a.ok(sent, "the push service was called");
+    a.ok(/^vapid t=.+, k=/.test(sent.opts.headers.Authorization));
+    a.eq(sent.opts.headers["Content-Length"], "0", "nothing personal goes through the push service");
+    const w = await call("push.what", { endpoint: ep });
+    a.eq(w.title, "Meeting on Tuesday");
+    a.eq((await call("push.what", { endpoint: "https://push.example/unknown" })).body, "Open the app for the latest.");
+    outbound.length = 0;
+    a.ok((await call("notify.send", { title: "Again", body: "x", usherIds: [ID.A] }, T.hu)).ok);
+    await call.settle();
+    a.eq(outbound.filter((o) => o.url === ep).length, 1, "pushed once, not again for older notifications");
   });
 
   s.test("three wrong PINs lock the name for a while", async (a) => {

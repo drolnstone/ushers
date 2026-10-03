@@ -10,7 +10,7 @@
    duplicates is made on the phone. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.1.0";
+  var APP_VERSION = "v0.2.0";
   var CFG = window.USHERS_CONFIG || {};
   var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:" };
 
@@ -184,12 +184,85 @@
                      (versions.sheet ? " · sheet " + versions.sheet : "");
   }
 
+  /* ---- alerts on this phone (push) -------------------------------------
+     The server's public key comes from "me". The push itself carries
+     nothing; sw.js asks the server what it is for. On iPhone this works
+     only once the app is added to the Home Screen and opened from there. */
+
+  function keyBytes(b64) {
+    var pad = "=".repeat((4 - b64.length % 4) % 4);
+    var raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function alertsSupported() { return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; }
+  function iPhoneNotInstalled() {
+    var ios = /iphone|ipad|ipod/i.test(navigator.userAgent || "");
+    var standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || navigator.standalone;
+    return ios && !standalone;
+  }
+  function swReg() {
+    var base = String(location.pathname).indexOf("/admin/") !== -1 ? "../" : "./";
+    return navigator.serviceWorker.getRegistration(base).then(function (r) {
+      return r || navigator.serviceWorker.register(base + "sw.js", { scope: base });
+    }).then(function () { return navigator.serviceWorker.ready; });
+  }
+  /* Resolves "on", "off", "blocked" or "unsupported". */
+  function alertsState() {
+    if (!alertsSupported()) return Promise.resolve("unsupported");
+    if (Notification.permission === "denied") return Promise.resolve("blocked");
+    return swReg().then(function (reg) { return reg.pushManager.getSubscription(); })
+      .then(function (s) { return s ? "on" : "off"; }, function () { return "unsupported"; });
+  }
+  function alertsOn(publicKey) {
+    return Notification.requestPermission().then(function (p) {
+      if (p !== "granted") throw new Error("Alerts were not allowed on this phone.");
+      return swReg();
+    }).then(function (reg) {
+      return reg.pushManager.getSubscription().then(function (s) {
+        return s || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
+      });
+    }).then(function (sub) {
+      return api("push.subscribe", { endpoint: sub.endpoint }).then(function (j) { if (!j.ok) throw new Error(j.message); return j; });
+    });
+  }
+  function alertsOff() {
+    return swReg().then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (s) {
+      if (!s) return;
+      return api("push.unsubscribe", { endpoint: s.endpoint }).catch(function () {}).then(function () { return s.unsubscribe(); });
+    });
+  }
+
+  /* ---- PDFs: the library is loaded only when a PDF is made -------------- */
+
+  var pdfLoading = null;
+  function script(src) {
+    return new Promise(function (ok, no) {
+      var s = document.createElement("script");
+      s.src = src; s.onload = ok; s.onerror = function () { no(new Error("Could not load " + src)); };
+      document.head.appendChild(s);
+    });
+  }
+  function loadPdf() {
+    if (window.UshersPdf && window.jspdf) return Promise.resolve(window.UshersPdf);
+    var base = String(location.pathname).indexOf("/admin/") !== -1 ? "../shared/" : "shared/";
+    if (!pdfLoading) {
+      pdfLoading = script(base + "vendor/jspdf.umd.min.js?v=" + APP_VERSION)
+        .then(function () { return script(base + "pdf.js?v=" + APP_VERSION); })
+        .then(function () { return window.UshersPdf; }, function (e) { pdfLoading = null; throw e; });
+    }
+    return pdfLoading;
+  }
+
   var core = window.UshersCore = {
     APP_VERSION: APP_VERSION, CFG: CFG, store: store, api: api, token: token, setToken: setToken, versions: versions,
     rememberPin: rememberPin, checkPinOnDevice: checkPinOnDevice,
     draftGet: draftGet, draftSave: draftSave, draftClear: draftClear, drafts: drafts,
     queue: queue, queueAdd: queueAdd, queueRemove: queueRemove, flush: flush, newId: newId,
     money: money, denomLabel: denomLabel, dateLabel: dateLabel, timeLabel: timeLabel, londonToday: londonToday,
-    h: h, clear: clear, foot: foot, onSignedOut: null, onQueueChange: null
+    h: h, clear: clear, foot: foot, onSignedOut: null, onQueueChange: null,
+    alertsSupported: alertsSupported, alertsState: alertsState, alertsOn: alertsOn, alertsOff: alertsOff, iPhoneNotInstalled: iPhoneNotInstalled,
+    loadPdf: loadPdf
   };
 })();

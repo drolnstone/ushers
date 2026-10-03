@@ -57,7 +57,7 @@ Open Admin App → Ushers to add everyone and give roles.
 
 ## Afterwards, check
 
-A. The foot of both apps reads app v0.1.0 · server w0.1.0 · sheet v0.1.0
+A. The foot of both apps reads app v0.2.0 · server w0.2.0 · sheet v0.2.0
    (the sheet number appears after the first drain).
 B. A Head Usher signed in on the Ushers App sees Open Admin App, and it opens
    without asking for the PIN again.
@@ -66,3 +66,21 @@ D. An usher on the rota opens the report, the attendance total adds itself
    up, signs, and the report shows Pending Countersignature.
 E. Within a minute the REPORTS, ATTENDANCE, OFFERING and AUDIT tabs have the
    rows, and every tab is still protected.
+F. A report has Ministration between Attendance and Offering, on the First
+   and Second Service alike, and its PDF button downloads the report.
+G. On an iPhone: Share → Add to Home Screen shows the Ushers icon; open it
+   from there, Notifications → Turn on alerts on this phone, and ask somebody
+   to send you a message (Admin → Message): the alert arrives.
+H. Admin → Reports → Make PDF summary downloads the month so far.
+
+## Updating from v0.1.0
+
+1. Paste the new `server/worker.js` into the Worker and deploy. The new
+   tables and columns are added by the Worker itself on its first call (or
+   run `server/schema.sql` again; it is safe to repeat).
+2. Paste the new `Code.gs` into Apps Script, then Ushering → Set up the
+   sheet: it adds the MINISTRATION and REPORT_VERSIONS tabs and the VERSION
+   and CURRENT columns.
+3. Optional Worker variable `PUSH_CONTACT`: an address push services may
+   write to about this Worker (e.g. `mailto:` the church office). Without it
+   the Worker's own address is used.

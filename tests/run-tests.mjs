@@ -20,12 +20,15 @@ const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(join(here, ".."));
 const only = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 
-const PARSE_JS = ["server/worker.js", "Code.gs", "config.js", "shared/core.js", "sw.js"];
+const PARSE_JS = ["server/worker.js", "Code.gs", "config.js", "shared/core.js", "shared/reports.js", "shared/pdf.js", "sw.js"];
 const PAGES = ["index.html", "admin/index.html"];
 
 function parseCheck() {
   const s = new Suite("every file parses");
-  for (const f of [...PARSE_JS, ...PAGES, "server/schema.sql", "manifest.webmanifest", "admin/manifest.webmanifest"]) {
+  for (const f of [...PARSE_JS, ...PAGES, "server/schema.sql", "manifest.webmanifest", "admin/manifest.webmanifest",
+                   "shared/vendor/jspdf.umd.min.js", "shared/vendor/jspdf.LICENSE.txt", "shared/logo.png",
+                   "apple-touch-icon.png", "icon-192.png", "icon-512.png", "icon-512-maskable.png",
+                   "admin/apple-touch-icon.png", "admin/icon-192.png", "admin/icon-512.png", "admin/icon-512-maskable.png"]) {
     s.test(f + " is present", (a) => a.ok(existsSync(join(ROOT, f)), f + " is missing"));
   }
   for (const f of PARSE_JS) {
