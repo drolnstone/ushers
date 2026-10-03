@@ -17,7 +17,21 @@ async function api(action, body, token) {
   const r = await realFetch(BASE + "/api/" + action, { method: "POST", headers: Object.assign({ "content-type": "application/json" }, token ? { authorization: "Bearer " + token } : {}), body: JSON.stringify(body || {}) });
   return r.json();
 }
-await api("bootstrap", { token: "test-bootstrap", fullName: "Sam Admin", pin: "9999" });
+const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
+const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, acceptDownloads: true });
+const page = await context.newPage();
+const errors = [];
+page.on("pageerror", (e) => errors.push(String(e)));
+let n = 0;
+const shot = async (name) => { await page.waitForTimeout(250); await page.screenshot({ path: `${SHOTS}/${String(++n).padStart(2, "0")}-${name}.png`, fullPage: true }); };
+
+// First-time setup, on the sign-in screen.
+await page.goto(BASE + "/");
+await page.waitForSelector("text=First-time setup");
+await page.fill("#bt", "test-bootstrap"); await page.fill("#bn", "Sam Admin"); await page.fill("#bp1", "9999"); await page.fill("#bp2", "9999");
+await shot("first-time-setup");
+await page.click("text=Create the System Administrator");
+await page.waitForSelector("text=You are the System Administrator");
 const admin = (await api("login", { usherId: "U001", pin: "9999" })).token;
 const ids = {};
 for (const [k, n] of [["hu", "Grace Okafor"], ["A", "John Smith"], ["B", "Mary Jones"], ["C", "Peter Brown"], ["T", "Ruth Adeyemi"]]) {
@@ -28,13 +42,6 @@ await api("usher.roles", { usherId: ids.T, roles: ["usher", "treasurer"] }, admi
 
 const today = mod.londonKey(new Date());
 const focus = mod.sundayOnOrBefore(today);
-const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
-const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, acceptDownloads: true });
-const page = await context.newPage();
-const errors = [];
-page.on("pageerror", (e) => errors.push(String(e)));
-let n = 0;
-const shot = async (name) => { await page.waitForTimeout(250); await page.screenshot({ path: `${SHOTS}/${String(++n).padStart(2, "0")}-${name}.png`, fullPage: true }); };
 const noUcodes = async (where) => {
   const t = await page.evaluate(() => document.body.innerText);
   if (/\bU\d{3}\b/.test(t)) throw new Error("U-code visible on " + where);
@@ -206,6 +213,51 @@ await shot("treasurer");
 await page.goto(BASE + "/#dues");
 await page.waitForSelector("text=My dues");
 await shot("treasurer-own-dues");
+
+// The System Administrator's testing tools, on a fresh database: six test
+// people and a sample week, then each role as that role sees it.
+const fresh = await start(PORT + 1);
+const B2 = "http://localhost:" + (PORT + 1);
+async function signIn2(name, pin) {
+  await page.goto(B2 + "/");
+  await page.evaluate(() => localStorage.removeItem("ushers.session.v1"));
+  await page.goto(B2 + "/");
+  await page.waitForSelector("#who option:nth-child(2)", { state: "attached" });
+  await page.selectOption("#who", { label: name });
+  await page.fill("#pin", pin);
+  await page.click("button:has-text('Sign in')");
+  await page.waitForSelector("text=What am I doing?");
+}
+await page.goto(B2 + "/");
+await page.waitForSelector("text=First-time setup");
+await page.fill("#bt", "test-bootstrap"); await page.fill("#bn", "Sam Admin"); await page.fill("#bp1", "9999"); await page.fill("#bp2", "9999");
+await page.click("text=Create the System Administrator");
+await page.waitForSelector("text=You are the System Administrator");
+await signIn2("Sam Admin", "9999");
+await page.goto(B2 + "/admin/#settings");
+await page.waitForSelector("text=Add test people and a sample week");
+if (await page.locator("nav.tabs a", { hasText: "Approvals" }).count()) throw new Error("System Administrator sees Approvals");
+await page.fill("#tpin", "2468");
+await page.click("text=Add test people and a sample week");
+await page.waitForSelector("text=Done. Sign out", { timeout: 60000 });
+await shot("admin-testing-done");
+const st = fresh.env.DB._rows("SELECT e.type, r.status FROM reports r JOIN events e ON e.id=r.event_id ORDER BY e.type");
+if (JSON.stringify(st) !== JSON.stringify([{ type: "SUN_FIRST", status: "verified" }, { type: "SUN_SECOND", status: "pending_countersignature" }])) throw new Error("sample week: " + JSON.stringify(st));
+await signIn2("Test Usher Three", "2468");
+await page.waitForSelector("text=To countersign");
+if (await page.locator("#toAdmin").isVisible()) throw new Error("a test usher sees Open Admin App");
+await shot("test-usher-three-home");
+await signIn2("Test Treasurer", "2468");
+await page.click("#toAdmin");
+await page.waitForSelector("nav.tabs a:has-text('Treasurer')");
+if (await page.locator("nav.tabs a", { hasText: "Rota" }).count()) throw new Error("Treasurer sees the rota screen");
+await shot("test-treasurer-admin");
+await signIn2("Sam Admin", "9999");
+await page.goto(B2 + "/admin/#settings");
+await page.click("text=Switch off test people");
+await page.waitForSelector("text=Their past rows stay on the sheet");
+if (fresh.env.DB._one("SELECT count(*) AS n FROM ushers WHERE full_name LIKE 'Test %' AND active=1").n !== 0) throw new Error("test people still on");
+fresh.server.close();
 
 await browser.close();
 server.close();

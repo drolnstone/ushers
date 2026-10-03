@@ -1,6 +1,6 @@
 # Setting up the Ushering App
 
-Versions: app v0.1.0 · server w0.1.0 · sheet v0.1.0. First deploy.
+Versions: app v0.3.0 · server w0.3.0 · sheet v0.3.0.
 
 ## 1. The database and server (Cloudflare)
 
@@ -32,14 +32,16 @@ Versions: app v0.1.0 · server w0.1.0 · sheet v0.1.0. First deploy.
 
 ## 3. The first System Administrator
 
-Run once, from any computer (replace the three values):
+Open the Ushers App. While nobody is a System Administrator and
+`BOOTSTRAP_TOKEN` is set, the sign-in screen shows **First-time setup**:
+enter the token, your full name and a PIN. Then delete `BOOTSTRAP_TOKEN`
+from the Worker. Sign in, Open Admin App → Ushers to add everyone and give
+roles.
 
-    curl -X POST https://ushers-api.<you>.workers.dev/api/bootstrap \
-      -H 'content-type: application/json' \
-      -d '{"token":"<BOOTSTRAP_TOKEN>","fullName":"<Your Name>","pin":"<4-6 digits>"}'
-
-Then delete `BOOTSTRAP_TOKEN` from the Worker. Sign in on the Ushers App,
-Open Admin App → Ushers to add everyone and give roles.
+To try every role yourself: Admin → Settings → Testing → choose a PIN →
+**Add test people and a sample week**, then sign in as Test Head Usher,
+Test Treasurer, Test Usher One and so on. Before going live, **Switch off
+test people**.
 
 ## 4. The Google Sheet
 
@@ -53,11 +55,12 @@ Open Admin App → Ushers to add everyone and give roles.
 4. Deploy → New deployment → Web app, execute as Me, access Anyone → copy
    the address. Put it in the Worker as the plain variable `SHEET_WEBAPP_URL`.
 5. Reload the sheet → Ushering → Set up the sheet (allow the permissions).
+   It also writes a GUIDE tab explaining every tab.
 6. Ushering → Check everything: every line should be ✓.
 
 ## Afterwards, check
 
-A. The foot of both apps reads app v0.2.0 · server w0.2.0 · sheet v0.2.0
+A. The foot of both apps reads app v0.3.0 · server w0.3.0 · sheet v0.3.0
    (the sheet number appears after the first drain).
 B. A Head Usher signed in on the Ushers App sees Open Admin App, and it opens
    without asking for the PIN again.
