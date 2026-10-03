@@ -17,6 +17,7 @@
 <script src="../config.js"></script>
 <script src="../shared/core.js"></script>
 <script src="../shared/reports.js"></script>
+<script src="testing.js"></script>
 </head>
 <body>
 <!-- No service worker: every screen is read from the server as it opens,
@@ -482,7 +483,9 @@
   function settings() {
     loading();
     C.api("config.get").then(function (j) {
-      var parts = [h("h1", {}, "Settings"), h("p", { class: "muted" }, "Each rule is stored on the server and written to the CONFIG tab. Values are JSON.")];
+      var parts = [h("h1", {}, "Settings")];
+      if (window.UshersTesting && can("ushers.manage") && can("roles.grant_any")) parts.push(window.UshersTesting.card(CONF));
+      parts.push(h("h2", {}, "Rules"), h("p", { class: "muted" }, "Each rule is stored on the server and written to the CONFIG tab. Values are JSON."));
       Object.keys(j.config).forEach(function (k) {
         var box = h("textarea", { rows: typeof j.config[k] === "object" && j.config[k] !== null ? "4" : "1" }, JSON.stringify(j.config[k], null, 1));
         var out = h("span");

@@ -83,9 +83,38 @@
     show(h("h1", {}, "Sign in"),
       h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), who, typed, h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
     C.api("people").then(function (j) {
+      if (j.firstSetup) return firstSetup();
       if (j.typeName) { who.hidden = true; typed.hidden = false; return; }
       (j.people || []).forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
     }, function () { who.hidden = true; typed.hidden = false; });
+  }
+
+  /* First-time setup: makes the first System Administrator. Shown only
+     while nobody is one, and it needs the BOOTSTRAP_TOKEN set on the
+     server, which is deleted afterwards. */
+  function firstSetup() {
+    var tok = h("input", { id: "bt", type: "password", autocomplete: "off", placeholder: "The BOOTSTRAP_TOKEN from Cloudflare" });
+    var name = h("input", { id: "bn", autocomplete: "name", placeholder: "e.g. Asim Bassey" });
+    var p1 = h("input", { id: "bp1", type: "password", inputmode: "numeric", maxlength: "6" });
+    var p2 = h("input", { id: "bp2", type: "password", inputmode: "numeric", maxlength: "6" });
+    var out = h("div");
+    var go = h("button", { onclick: function () {
+      C.clear(out);
+      if (!tok.value || !name.value.trim()) return out.appendChild(msg("Enter the setup token and your full name.", "bad"));
+      if (!p1.value || p1.value !== p2.value) return out.appendChild(msg("Enter the same PIN twice.", "bad"));
+      go.disabled = true;
+      C.api("bootstrap", { token: tok.value.trim(), fullName: name.value.trim(), pin: p1.value }).then(function (j) {
+        go.disabled = false;
+        if (!j.ok) return out.appendChild(msg(j.message || "Not allowed.", "bad"));
+        show(h("h1", {}, "You are the System Administrator"),
+          msg("Now delete BOOTSTRAP_TOKEN from the Worker in Cloudflare, then sign in with your name and PIN.", "ok"),
+          h("button", { onclick: signIn }, "Sign in"));
+      }, function () { go.disabled = false; out.appendChild(msg("No connection.", "bad")); });
+    } }, "Create the System Administrator");
+    show(h("h1", {}, "First-time setup"),
+      h("p", { class: "muted" }, "Nobody is set up yet. This makes the first System Administrator, who then adds everyone else."),
+      h("div", { class: "card" }, h("label", { for: "bt" }, "Setup token"), tok, h("label", { for: "bn" }, "Your full name"), name,
+        h("label", { for: "bp1" }, "Choose a PIN (4 to 6 digits)"), p1, h("label", { for: "bp2" }, "PIN again"), p2, h("p"), go, out));
   }
 
   /* ---- start ------------------------------------------------------------ */

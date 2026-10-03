@@ -24,11 +24,14 @@ export default async function ({ root }) {
   };
 
   s.test("the first System Administrator is made with the bootstrap token, once", async (a) => {
+    a.ok((await call("people")).firstSetup, "before anyone is set up, the sign-in screen offers First-time setup");
+    a.eq((await client(mod, makeEnv(root, { BOOTSTRAP_TOKEN: "" }))("people")).firstSetup, undefined, "not without a setup token");
     a.eq((await call("bootstrap", { token: "wrong", fullName: "Sam Admin", pin: "9999" })).error, "forbidden");
     const r = await call("bootstrap", { token: "test-bootstrap", fullName: "Sam Admin", pin: "9999" });
     a.ok(r.ok, JSON.stringify(r));
     a.eq((await call("bootstrap", { token: "test-bootstrap", fullName: "Other", pin: "9999" })).error, "already");
     const p = await call("people");
+    a.not(p.firstSetup, "and never again once there is a System Administrator");
     ID.admin = p.people.find((x) => x.name === "Sam Admin").id;
     await login("admin", "9999");
   });

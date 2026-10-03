@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.2.0";
+const SERVER_VERSION = "w0.3.0";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -502,6 +502,11 @@ function meView(me) {
    ========================================================================== */
 
 async function aPeople(env, cfg) {
+  /* Before anybody is a System Administrator, the sign-in screen offers
+     First-time setup (it still needs BOOTSTRAP_TOKEN). */
+  const firstSetup = !!env.BOOTSTRAP_TOKEN &&
+    !(await env.DB.prepare("SELECT 1 AS n FROM user_roles WHERE role='system_admin' LIMIT 1").first());
+  if (firstSetup) return { ok: true, people: [], firstSetup: true };
   if (!cfg.public_name_list) return { ok: true, people: [], typeName: true };
   const r = await env.DB.prepare(
     "SELECT id, full_name FROM ushers WHERE active=1 AND pin_hash IS NOT NULL ORDER BY full_name COLLATE NOCASE"

@@ -25,6 +25,11 @@ export default async function ({ root }) {
       a.not(p.domain);
     }
     a.same(gas.triggers.map((t) => t.fn).sort(), ["drain", "relockOverdue"]);
+    const g = gas.ss.getSheetByName("GUIDE");
+    a.ok(g, "a GUIDE tab explains the others");
+    a.same(ctx.headerRow(g), ["TAB", "WHAT IT HOLDS", "ONE ROW IS", "GOOD TO KNOW"]);
+    for (const tab of Object.keys(ctx.TABS)) a.ok(ctx.GUIDE.some((r) => r[0] === tab), "GUIDE explains " + tab);
+    a.eq(g.protections.length, 1, "GUIDE is protected too");
   });
 
   s.test("rows are written by header: moving a column breaks nothing, and an added column is kept", (a) => {
