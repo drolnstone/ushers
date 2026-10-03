@@ -11,7 +11,7 @@ for what was reused, adapted, replaced and added.
 | Part | Where | What it is |
 |---|---|---|
 | Ushers App | `index.html`, `sw.js`, `manifest.webmanifest` | For every usher. Home answers "What am I doing?" |
-| Admin App | `admin/` | Head Usher, Assistant Head Usher and System Administrator only; its sign-in lists only them. Has its own Notifications tab. No service worker of its own |
+| Admin App | `admin/` | Head Usher, Assistant Head Usher and System Administrator only; its sign-in lists only them. Has its own Notifications tab. Opens with no signal through the Ushers App's `sw.js` |
 | Shared page code | `shared/core.js`, `shared/reports.js`, `shared/style.css`, `config.js` | Session, server calls, offline queue, drafts, phone alerts, report parts, look |
 | PDFs | `shared/pdf.js`, `shared/vendor/jspdf.umd.min.js` (MIT) | Service report and period summary PDFs, made on the phone. Loaded only when a PDF is made |
 | Icons | `apple-touch-icon.png`, `icon-*.png` (and the same in `admin/`) | Home-screen icons. Remade by `node tools/make-icons.mjs` from `shared/logo.png` |
@@ -121,6 +121,16 @@ notified → Coordinator dashboard.
   against a salted hash kept from the last sign-in, and the record says so
   (`SUBMIT_PIN_CHECK = device`). `offline_signing` turns this off.
   The Submission ID is made on the phone, so a retry is filed once.
+- **Opening with no signal.** After one visit with signal, both apps open
+  with none: `sw.js` keeps both apps' files, and each screen's last good
+  answer is kept on the device, shown under "No signal. Showing what this
+  device saved on …". A report can be started offline for any duty Home
+  showed. Other changes (rota, events, ushers and roles, messages,
+  settings, dues, approval requests) wait in the same queue with their own
+  id, which the server remembers (`queued_done`), so each is done once.
+  Signing in, resetting a PIN, deciding an approval and amending a report
+  still need a signal. Signing out clears the saved screens. The very first
+  open of all needs a signal: until then the device has nothing to show.
 
 ## Roles and permissions
 
