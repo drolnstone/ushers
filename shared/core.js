@@ -10,7 +10,7 @@
    duplicates is made on the phone. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.5";
+  var APP_VERSION = "v0.3.6";
   var CFG = window.USHERS_CONFIG || {};
   var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:" };
 
@@ -254,6 +254,25 @@
     }
     return pdfLoading;
   }
+
+  /* Back to top, the Driver App's button: both apps, every screen after
+     sign-in (the tabs are showing), once the page is well down. A tab change
+     starts the new screen at the top, under the tabs that stay put. */
+  function stillMotion() { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); }
+  function syncToTop() {
+    var b = document.getElementById("toTop"), tabs = document.getElementById("tabs");
+    if (b) b.classList.toggle("on", !!tabs && !tabs.hidden && (window.pageYOffset || 0) > 460);
+  }
+  document.addEventListener("DOMContentLoaded", function () {
+    var b = document.getElementById("toTop");
+    if (!b) return;
+    window.addEventListener("scroll", syncToTop, { passive: true });
+    window.addEventListener("hashchange", function () { window.scrollTo(0, 0); syncToTop(); });
+    b.addEventListener("click", function () {
+      try { window.scrollTo(stillMotion() ? { top: 0 } : { top: 0, behavior: "smooth" }); } catch (e) { window.scrollTo(0, 0); }
+      b.classList.remove("on");
+    });
+  });
 
   var core = window.UshersCore = {
     APP_VERSION: APP_VERSION, CFG: CFG, store: store, api: api, token: token, setToken: setToken, versions: versions,
