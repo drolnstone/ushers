@@ -238,7 +238,7 @@ export default async function ({ root }) {
     for (const k of Object.keys(old)) old[k].countersign = true;
     env2.DB._exec("INSERT INTO config (k, v, updated_by, updated_at) VALUES ('event_types', '" + JSON.stringify(old).replace(/'/g, "''") + "', 'U001', 1)");
     env2.DB._exec("INSERT INTO config (k, v, updated_by, updated_at) VALUES ('email_types', '[\"countersign_request\",\"approval_request\"]', 'U001', 1)");
-    await mod.migrateSettings(env2);
+    await mod.migrateOnce(env2);
     const types = JSON.parse(env2.DB._one("SELECT v FROM config WHERE k='event_types'").v);
     a.eq(types.SUN_FIRST.countersign, true);
     a.eq(types.SUN_SECOND.countersign, true);
@@ -252,7 +252,7 @@ export default async function ({ root }) {
     /* An administrator may change it again afterwards: it is not undone. */
     types.PRAYER.countersign = true;
     env2.DB._exec("UPDATE config SET v='" + JSON.stringify(types).replace(/'/g, "''") + "' WHERE k='event_types'");
-    await mod.migrateSettings(env2);
+    await mod.migrateOnce(env2);
     a.eq(JSON.parse(env2.DB._one("SELECT v FROM config WHERE k='event_types'").v).PRAYER.countersign, true, "done once only");
     a.eq(env2.DB._rows("SELECT * FROM audit WHERE action='config.set' AND actor_id='system'").length, 2);
   });
@@ -268,6 +268,104 @@ export default async function ({ root }) {
     await c3.settle();
     a.eq(outbound.filter((o) => o.url === url).length, 1, "knocked once the gap had passed");
     a.ok(Date.now() - t0 >= 700, "after waiting out the gap");
+  });
+
+  s.test("the offering in the notice uses the configured currency symbol", async (a) => {
+    const cur = JSON.parse(JSON.stringify(mod.DEFAULT_CONFIG.currencies));
+    cur.GBP.symbol = "GBP ";
+    a.ok((await call("config.set", { key: "currencies", value: cur }, T.admin)).ok);
+    const ev = await call("event.save", { type: "FUNERAL", date: today }, T.hu);
+    a.ok((await call("rota.set", { eventId: ev.eventId, usherIds: [ID.B] }, T.hu)).ok);
+    const r = await call("report.submit", body(ev.eventId, "sub-funeral-01", { signature: "Mary Jones" }), T.B);
+    a.has(notes("hu", "report_filed", r.report.id)[0].body, "Attendance 27, offering GBP 60.00.");
+    a.ok((await call("config.set", { key: "currencies", value: mod.DEFAULT_CONFIG.currencies }, T.admin)).ok);
+  });
+
+  s.test("countersigned by somebody given authority meanwhile: the request still waiting is cancelled and stops showing as new", async (a) => {
+    const third = mod.keyAddDays(next, 7);
+    await call("rota", { from: third, weeks: 1 }, T.hu);
+    a.ok((await call("rota.set", { eventId: sun(third, 1), usherIds: [ID.A] }, T.hu)).ok);
+    const r = await call("report.submit", body(sun(third, 1), "sub-third1-01", { countersignerId: ID.C }), T.A);
+    a.eq(r.countersigner, "approval_requested");
+    const q = env.DB._one("SELECT * FROM authorisations WHERE kind='countersign' AND target_id=? AND status='pending'", r.report.id);
+    a.ok((await call("rota.set", { eventId: sun(third, 1), usherIds: [ID.A, ID.C] }, T.hu)).ok, "the Head Usher puts Peter on the rota instead");
+    const c = await call("report.countersign", { reportId: r.report.id, submissionId: "cs-third1-01", signature: "Peter Brown", pin: "1234" }, T.C);
+    a.ok(c.ok, JSON.stringify(c));
+    a.eq(env.DB._one("SELECT status, decision_note FROM authorisations WHERE id=?", q.id).status, "cancelled");
+    a.ok(env.DB._one("SELECT read_at FROM notifications WHERE usher_id=? AND type='approval_request' AND ref_id=?", ID.hu, q.id).read_at);
+    a.eq((await call("authorisation.decide", { id: q.id, decision: "approve", pin: "1234" }, T.ahu)).error, "decided", "nobody can approve it afterwards");
+  });
+
+  s.test("several writes just after a knock make one knock between them, not one each", async (a) => {
+    const { outbound } = await import("../lib/worker.mjs");
+    const url = "https://script.example/exec-burst";
+    const env4 = makeEnv(root, { SHEET_WEBAPP_URL: url });
+    const c4 = client(mod, env4);
+    a.ok((await c4("bootstrap", { token: "test-bootstrap", fullName: "X Y", pin: "1234" })).ok);
+    await c4.settle();
+    const tok = (await c4("login", { usherId: "U001", pin: "1234" })).token;
+    env4.DB._exec("UPDATE settings SET v='" + (Date.now() - mod.KNOCK_GAP_MS + 700) + "' WHERE k='last_knock'");
+    /* As on D1, a read answers a moment later, so the requests overlap. */
+    const prep = env4.DB.prepare;
+    env4.DB.prepare = (sql) => {
+      const st = prep(sql), first = st.first;
+      st.first = async () => { const r = await first(); await new Promise((d) => setTimeout(d, 5)); return r; };
+      return st;
+    };
+    const before = outbound.filter((o) => o.url === url).length;
+    await Promise.all([c4("rota", { from: focus, weeks: 1 }, tok), c4("rota", { from: focus, weeks: 1 }, tok), c4("rota", { from: next, weeks: 1 }, tok)]);
+    await c4.settle();
+    a.eq(outbound.filter((o) => o.url === url).length - before, 1);
+  });
+
+  s.test("a report left waiting for a countersignature its event no longer needs is filed once, and everyone concerned is told", async (a) => {
+    const env5 = makeEnv(root);
+    const c5 = client(mod, env5);
+    const id = {}, tk = {};
+    a.ok((await c5("bootstrap", { token: "test-bootstrap", fullName: "Sam Admin", pin: "9999" })).ok);
+    tk.admin = (await c5("login", { usherId: "U001", pin: "9999" })).token;
+    for (const [k, name] of [["hu", "Grace Okafor"], ["A", "John Smith"], ["B", "Mary Jones"]]) {
+      id[k] = (await c5("usher.save", { name, email: k.toLowerCase() + "@example.org", pin: "1234", mustChange: false }, tk.admin)).usherId;
+    }
+    await c5("usher.roles", { usherId: id.hu, roles: ["usher", "head_usher"] }, tk.admin);
+    for (const k of ["hu", "A", "B"]) tk[k] = (await c5("login", { usherId: id[k], pin: "1234" })).token;
+    /* As it was before: a saved copy of the event types with every one countersigned. */
+    const old = JSON.parse(JSON.stringify(mod.DEFAULT_CONFIG.event_types));
+    for (const k of Object.keys(old)) old[k].countersign = true;
+    a.ok((await c5("config.set", { key: "event_types", value: old }, tk.admin)).ok);
+    const ev = await c5("event.save", { type: "WEDDING", date: today }, tk.hu);
+    a.ok((await c5("rota.set", { eventId: ev.eventId, usherIds: [id.A, id.B] }, tk.hu)).ok);
+    const r = await c5("report.submit", body(ev.eventId, "sub-wedding-01", { countersignerId: id.B }), tk.A);
+    a.eq(r.report.status, "pending_countersignature", JSON.stringify(r));
+    /* The new server starts: its once-only changes have not run on this database yet. */
+    env5.DB._exec("DELETE FROM settings WHERE k LIKE 'migrated_%'");
+    a.ok(await mod.migrateOnce(env5));
+    const rep = env5.DB._one("SELECT * FROM reports WHERE id=?", r.report.id);
+    a.eq(rep.status, "verified");
+    a.eq(rep.countersign_required, 0);
+    a.eq(rep.countersigner_id, null);
+    a.has(env5.DB._one("SELECT note FROM report_history WHERE report_id=? ORDER BY id DESC LIMIT 1", r.report.id).note, "no longer needed");
+    a.ok(env5.DB._one("SELECT 1 AS n FROM audit WHERE action='report.file' AND target_id=?", r.report.id));
+    const hu = env5.DB._rows("SELECT * FROM notifications WHERE usher_id=? AND type='report_filed' AND ref_id=?", id.hu, r.report.id);
+    a.eq(hu.length, 1);
+    a.has(hu[0].body, "John Smith signed the report. This event no longer needs a countersignature.");
+    a.eq(env5.DB._rows("SELECT * FROM notifications WHERE usher_id=? AND type='report_status' AND ref_id=?", id.A, r.report.id).length, 1, "the submitter is told");
+    a.ok(env5.DB._one("SELECT read_at FROM notifications WHERE usher_id=? AND type='countersign_request' AND ref_id=?", id.B, r.report.id).read_at, "Mary's request to countersign is done with");
+    a.eq((await c5("home", {}, tk.B)).toCountersign.length, 0);
+    a.ok(await mod.migrateOnce(env5));
+    a.eq(env5.DB._rows("SELECT * FROM notifications WHERE type='report_filed' AND ref_id=?", r.report.id).length, 1, "once only");
+  });
+
+  s.test("a once-only change that fails is tried again, and the database is not marked up to date until it works", async (a) => {
+    const env6 = makeEnv(root);
+    env6.DB._exec("INSERT INTO config (k, v, updated_by, updated_at) VALUES ('email_types', '[\"approval_request\"]', 'U001', 1)");
+    const prepare = env6.DB.prepare.bind(env6.DB);
+    env6.DB.prepare = (sql) => { if (/^SELECT v FROM config/.test(sql)) throw new Error("D1 hiccup"); return prepare(sql); };
+    a.eq(await mod.migrateOnce(env6), false);
+    a.eq(env6.DB._rows("SELECT * FROM settings WHERE k='migrated_email_report_filed'").length, 0);
+    env6.DB.prepare = prepare;
+    a.eq(await mod.migrateOnce(env6), true);
+    a.has(env6.DB._one("SELECT v FROM config WHERE k='email_types'").v, "report_filed");
   });
 
   return s;
