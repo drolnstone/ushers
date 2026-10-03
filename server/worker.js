@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.5";
+const SERVER_VERSION = "w0.3.6";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -1740,7 +1740,7 @@ async function aHome(env, cfg, b, me) {
     "LEFT JOIN reports r ON r.event_id=e.id WHERE a.usher_id=? AND a.status='active' AND e.date>=? AND e.date<=? ORDER BY e.date, e.start_time, e.id"
   ).bind(me.usher.id, keyAddDays(today, -6), until).all()).results) || [];
   const duty = (x) => ({
-    eventId: x.id, title: x.title, date: x.date, start: x.start_time, duty: x.duty, thanksgiving: !!x.thanksgiving,
+    eventId: x.id, title: x.title, date: x.date, start: x.start_time, duty: x.duty, thanksgiving: !!x.thanksgiving, type: x.type,
     cancelled: x.status === "cancelled", reportStatus: x.report_status || "", reportStatusLabel: STATUS_LABELS[x.report_status] || "Not started",
     reportDue: !!(cfg.event_types[x.type] || {}).attendance || !!(cfg.event_types[x.type] || {}).offering
   });
@@ -2513,7 +2513,9 @@ const MIGRATIONS = [
   "CREATE UNIQUE INDEX IF NOT EXISTS report_versions_once ON report_versions(report_id, version)",
   "CREATE TABLE IF NOT EXISTS push_subs (id INTEGER PRIMARY KEY AUTOINCREMENT, usher_id TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, created_at INTEGER, seen INTEGER, fails INTEGER DEFAULT 0)",
   "CREATE INDEX IF NOT EXISTS push_subs_usher ON push_subs(usher_id)",
-  "ALTER TABLE ushers ADD COLUMN pin_must_change INTEGER DEFAULT 0"
+  "ALTER TABLE ushers ADD COLUMN pin_must_change INTEGER DEFAULT 0",
+  "CREATE TABLE IF NOT EXISTS queued_done (id TEXT PRIMARY KEY, usher_id TEXT NOT NULL, action TEXT NOT NULL, at INTEGER NOT NULL, answer TEXT NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS queued_done_at ON queued_done(at)"
 ];
 /* Changes made once, each remembered by name, on the audit like any other.
    A setting saved in Admin -> Settings replaces the whole default, so a rule
@@ -2698,7 +2700,28 @@ async function handle(request, env, ctx) {
         fail(403, "pin_question", "Say whether you wish to keep your default PIN first.");
       }
     }
+    /* A change made with no signal waits on the phone with its own id and is
+       sent until the server has it. When the server did it but the answer
+       was lost on the way back, the phone sends it again: the same id gets
+       the first answer, and the change is not made twice. */
+    const queueId = spec.write && me && b.queueId ? text(b.queueId, 80) : "";
+    if (queueId) {
+      const seen = await env.DB.prepare("SELECT answer FROM queued_done WHERE id=? AND usher_id=?").bind(queueId, me.usher.id).first();
+      if (seen) {
+        let was = { ok: true };
+        try { was = JSON.parse(seen.answer); } catch (e) {}
+        return json(Object.assign(was, { duplicate: true }), 200, cors);
+      }
+    }
     const out = await spec.fn(env, cfg, b, me);
+    if (queueId && out && out.ok) {
+      const now = Date.now();
+      let answer = JSON.stringify(out);
+      if (answer.length > 20000) answer = JSON.stringify({ ok: true });
+      await env.DB.prepare("INSERT OR IGNORE INTO queued_done (id, usher_id, action, at, answer) VALUES (?, ?, ?, ?, ?)")
+        .bind(queueId, me.usher.id, m[1], now, answer).run();
+      if (Math.random() < 0.02) await env.DB.prepare("DELETE FROM queued_done WHERE at < ?").bind(now - 60 * 86400000).run();
+    }
     if (out && typeof out === "object" && out.sheet === undefined) out.sheet = await setting(env, "sheet_version");
     if (spec.write && ctx && typeof ctx.waitUntil === "function") {
       ctx.waitUntil(knockSheet(env));

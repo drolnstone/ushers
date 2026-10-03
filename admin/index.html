@@ -29,8 +29,9 @@
 <script src="testing.js"></script>
 </head>
 <body>
-<!-- No service worker: every screen is read from the server as it opens,
-     as the Driver App's coordinator app. -->
+<!-- Every screen is read from the server as it opens. With no signal the
+     page comes from the service worker at the root (../sw.js) and each
+     screen from what this device saved, as the Ushers App. -->
 <div class="top">
 <header class="bar">
   <span class="brand"><img src="../shared/logo.png" alt=""><span><b>RCCG Dominion Assembly</b><small>Liverpool · Ushering Admin</small><em id="title"></em></span></span>
@@ -38,6 +39,8 @@
   <button id="signOut" hidden>Sign out</button>
 </header>
 <nav class="tabs" id="tabs" hidden></nav>
+<div class="banner" id="queueBanner" hidden></div>
+<div class="banner" id="linkBar" hidden></div>
 </div>
 <main id="main"></main>
 <footer class="foot" id="foot"></footer>
@@ -63,14 +66,38 @@
   ];
   function can(p) { return ME && ME.permissions.indexOf(p) !== -1; }
   function msg(text, kind) { return h("div", { class: "msg " + (kind || "") }, text); }
-  function show() { C.clear(main); main.appendChild(h.apply(null, ["div", {}].concat(Array.prototype.slice.call(arguments)))); C.foot(document.getElementById("foot")); }
+  function show() {
+    C.clear(main);
+    main.appendChild(h.apply(null, ["div", {}, queueCard()].concat(Array.prototype.slice.call(arguments))));
+    C.foot(document.getElementById("foot"));
+  }
   function loading() { show(h("p", { class: "muted" }, "Loading…")); }
-  function failed(e) { show(msg(e && e.network ? "No connection to the server." : String(e && e.message || e), "bad")); }
+  function failed(e) { show(msg(e && e.network ? "No connection, and this screen has not been opened on this device before. It shows once the signal is back." : String(e && e.message || e), "bad")); }
   function money(p) { return C.money(p); }
   function chip(code, label) { return h("span", { class: "chip status-" + (code || "") }, label || "Not started"); }
   function pinInput(id) { return h("input", { id: id, type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" }); }
 
   C.onSignedOut = function () { C.setToken(""); signIn(); };
+  C.onQueueChange = paintQueue;
+
+  /* Changes made with no signal, waiting on this device, as the Ushers
+     App's Home: one refused by the server stays, with why, until removed. */
+  function paintQueue() {
+    var q = C.queue(), b = document.getElementById("queueBanner");
+    b.hidden = !q.length;
+    b.textContent = q.length ? q.length + " saved on this device, waiting for connection" +
+      (q.some(function (x) { return x.lastError; }) ? ". One was refused: see why at the top of the page." : "") : "";
+  }
+  function queueCard() {
+    var q = C.queue();
+    if (!q.length) return null;
+    return h("div", { class: "card" }, h("b", {}, "Saved on this device, waiting for connection"),
+      q.map(function (x) {
+        return h("div", { class: "row" }, h("span", { class: "grow" }, x.label),
+          x.lastError ? h("span", { class: "chip bad" }, x.lastError) : h("span", { class: "chip warn" }, "Waiting"),
+          x.lastError ? h("button", { class: "ghost", onclick: function () { C.queueRemove(x.id); paintQueue(); route(); } }, "Remove") : null);
+      }), h("button", { class: "ghost", onclick: function () { C.flush().then(function () { paintQueue(); route(); }); } }, "Try again now"));
+  }
 
   /* Sign in here as well as on the Ushers App: the same people, PINs and
      session, so signing in on either app signs you in on both. */
@@ -122,6 +149,8 @@
         tabs.appendChild(h("a", { href: "#" + s[0], "data-r": s[0] }, s[1], s[0] === "notes" ? h("span", { class: "badge", id: "unread", hidden: true }) : null));
       });
       tabs.hidden = false;
+      paintQueue();
+      C.flush();
       unread();
       route();
     }, failed);
@@ -194,7 +223,7 @@
             return h("div", {}, C.dateLabel(e.date) + " · " + e.title + " · " + e.people.length + " on duty");
           })));
         }
-        parts.push(h("p", { class: "muted" }, "Updated " + new Date().toLocaleTimeString("en-GB", { timeZone: "Europe/London" })));
+        parts.push(h("p", { class: "muted" }, d._savedAt ? "Saved on this device " + C.timeLabel(d._savedAt) : "Updated " + new Date().toLocaleTimeString("en-GB", { timeZone: "Europe/London" })));
         show.apply(null, parts);
       }, failed);
     }
@@ -224,8 +253,8 @@
       h("p"), h("button", { onclick: function () {
         var ids = Object.keys(chosen).filter(function (k) { return chosen[k]; });
         C.clear(out);
-        C.api("rota.set", { eventId: sv.eventId, usherIds: ids }).then(function (j) {
-          out.appendChild(j.ok ? msg("Saved.", "ok") : msg(j.message, "bad"));
+        C.send("rota.set", { eventId: sv.eventId, usherIds: ids }, "Rota for " + sv.title + (sv.date ? " · " + C.dateLabel(sv.date) : "")).then(function (j) {
+          out.appendChild(j.queued ? msg(j.message, "ok") : j.ok ? msg("Saved.", "ok") : msg(j.message, "bad"));
         }, function () { out.appendChild(msg("No connection.", "bad")); });
       } }, "Save"), out);
     paint();
@@ -275,8 +304,9 @@
         h("label", { for: "enotes" }, "Notes"), notes, h("p"),
         h("button", { onclick: function () {
           C.clear(out);
-          C.api("event.save", { type: type.value, title: title.value, date: date.value, start: time.value, notes: notes.value }).then(function (x) {
+          C.send("event.save", { type: type.value, title: title.value, date: date.value, start: time.value, notes: notes.value }, "New event: " + title.value).then(function (x) {
             if (!x.ok) return out.appendChild(msg(x.message, "bad"));
+            if (x.queued) return out.appendChild(msg(x.message + " Choose who is on duty once it is in the list.", "ok"));
             location.hash = "#events/" + x.eventId;
           });
         } }, "Create"), out)];
@@ -287,7 +317,7 @@
           h("div", { class: "muted" }, C.dateLabel(e.date) + (e.start ? " · " + e.start : "") + (e.status === "cancelled" ? " · cancelled" : "")),
           h("div", {}, e.people.map(function (p) { return p.name; }).join(", ") || "Nobody on duty yet"),
           h("div", { class: "row" }, h("a", { class: "btn ghost", href: "#events/" + e.eventId }, "Choose who is on duty"),
-            h("button", { class: "ghost", onclick: function () { C.api("event.cancel", { eventId: e.eventId, restore: e.status === "cancelled" }).then(function () { events(); }); } },
+            h("button", { class: "ghost", onclick: function () { C.send("event.cancel", { eventId: e.eventId, restore: e.status === "cancelled" }, (e.status === "cancelled" ? "Restore " : "Cancel ") + e.title).then(function () { events(); }); } },
               e.status === "cancelled" ? "Restore" : "Cancel event")));
         parts.push(card);
         if (eventId === e.eventId) parts.push(picker(e, people, 0));
@@ -370,7 +400,7 @@
           C.api("authorisation.decide", { id: a.id, decision: decision, note: note.value, pin: pin.value }).then(function (x) {
             if (!x.ok) return out.appendChild(msg(x.message + (x.left !== undefined ? " " + x.left + " tries left." : ""), "bad"));
             approvals();
-          }, function () { out.appendChild(msg("No connection.", "bad")); });
+          }, function () { out.appendChild(msg("No connection. Deciding needs a signal, so your PIN can be checked.", "bad")); });
         }
         parts.push(h("div", { class: "card" }, h("b", {}, a.kindLabel), h("div", {}, a.about.title ? a.about.title + " · " + C.dateLabel(a.about.date) : ""),
           h("div", {}, "For: " + a.subject + (a.requestedBy && a.requestedBy !== a.subject ? " · asked by " + a.requestedBy : "")),
@@ -461,15 +491,23 @@
         C.clear(out);
         var body = { usherId: u ? u.usherId : undefined, name: name.value, email: email.value, phone: phone.value, active: active.checked };
         if (!u && pin.value) body.pin = pin.value;
-        C.api("usher.save", body).then(function (x) {
+        var queued = false, rolesLater = false;
+        C.send("usher.save", body, (u ? "Changes to " : "Add ") + (name.value || "an usher")).then(function (x) {
           if (!x.ok) throw new Error(x.message);
+          queued = !!x.queued;
           var want = Object.keys(roles).filter(function (k) { return roles[k]; });
-          /* Someone new starts as Usher; any other role ticked is given now. */
+          /* Someone new starts as Usher; any other role ticked is given now.
+             Added with no signal, they have no id yet, so the rest waits. */
           if (!u && !want.some(function (k) { return k !== "usher"; })) return [];
-          return Promise.all([C.api("usher.roles", { usherId: u ? u.usherId : x.usherId, roles: want })]);
+          if (!u && queued) { rolesLater = true; return []; }
+          return Promise.all([C.send("usher.roles", { usherId: u ? u.usherId : x.usherId, roles: want }, "Roles for " + name.value)]);
         }).then(function (rs) {
           var bad = (rs || []).filter(function (x) { return !x.ok; })[0];
           if (bad) throw new Error(bad.message);
+          if (queued || (rs || []).some(function (x) { return x.queued; })) {
+            return out.appendChild(msg("No signal. Saved on this device; it is sent when the signal is back." +
+              (rolesLater ? " They are added as an Usher: give the other roles once they appear in the list." : ""), "ok"));
+          }
           location.hash = "#ushers"; ushers();
         }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
       } }, u ? "Save" : "Add"), " ",
@@ -484,14 +522,15 @@
           out.appendChild(msg(x.pinFrom === "default"
             ? "PIN reset to their default PIN. They are asked whether to keep it when they next sign in."
             : "PIN reset to the one you typed. They are asked whether to keep it when they next sign in.", "ok"));
-        }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
+        }).catch(function (e) { out.appendChild(msg(e.network ? "No connection. Resetting a PIN needs a signal." : e.message, "bad")); });
       } }, "Reset PIN") : null, " ",
       u && u.active ? h("button", { class: "danger", onclick: function () {
         C.clear(out);
         if (!confirm("Remove " + u.name + "?\n\nThey will no longer be able to sign in, every role but Usher is taken away and they come off every duty from today. " +
           "Their reports and dues stay on the record. You can bring them back by ticking Active.")) return;
-        C.api("usher.remove", { usherId: u.usherId }).then(function (x) {
+        C.send("usher.remove", { usherId: u.usherId }, "Remove " + u.name).then(function (x) {
           if (!x.ok) throw new Error(x.message);
+          if (x.queued) return out.appendChild(msg(x.message, "ok"));
           location.hash = "#ushers";
         }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
       } }, "Remove " + u.name) : null, out);
@@ -517,7 +556,7 @@
       if (!j.ok) return show(msg(j.message, "bad"));
       paintUnread(j.notifications);
       var parts = [h("div", { class: "row" }, h("h1", { class: "grow" }, "Notifications"),
-        h("button", { class: "ghost", onclick: function () { C.api("notifications.read", { all: true }).then(notes, failed); } }, "Mark all read"))];
+        h("button", { class: "ghost", onclick: function () { C.send("notifications.read", { all: true }, "Mark notifications read").then(notes, failed); } }, "Mark all read"))];
       parts.push(alertsCard());
       if (!j.notifications.length) parts.push(h("p", { class: "muted" }, "Nothing yet."));
       j.notifications.forEach(function (n) {
@@ -526,8 +565,8 @@
         parts.push(h("div", { class: "card", style: n.read ? "opacity:.7" : "" },
           h("div", { class: "row" }, h("b", { class: "grow" }, n.title), n.read ? null : h("span", { class: "chip warn" }, "New")),
           n.body ? h("div", {}, n.body) : null, h("div", { class: "muted" }, C.timeLabel(n.at)),
-          h("div", { class: "row" }, link ? h("a", { class: "btn ghost", href: link, onclick: function () { C.api("notifications.read", { ids: [n.id] }).then(unread, function () {}); } }, "Open") : null,
-            n.read ? null : h("button", { class: "ghost", onclick: function () { C.api("notifications.read", { ids: [n.id] }).then(notes, failed); } }, "Mark read"))));
+          h("div", { class: "row" }, link ? h("a", { class: "btn ghost", href: link, onclick: function () { C.send("notifications.read", { ids: [n.id] }, "Mark a notification read").then(unread, function () {}); } }, "Open") : null,
+            n.read ? null : h("button", { class: "ghost", onclick: function () { C.send("notifications.read", { ids: [n.id] }, "Mark a notification read").then(notes, failed); } }, "Mark read"))));
       });
       show.apply(null, parts);
     }, failed);
@@ -569,8 +608,8 @@
     show(h("h1", {}, "Message the ushers"), h("div", { class: "card" }, h("label", {}, "Title"), title, h("label", {}, "Message"), body, h("p"),
       h("button", { onclick: function () {
         C.clear(out);
-        C.api("notify.send", { all: true, title: title.value, body: body.value }).then(function (x) {
-          out.appendChild(x.ok ? msg("Sent to " + x.sent + ".", "ok") : msg(x.message, "bad"));
+        C.send("notify.send", { all: true, title: title.value, body: body.value }, "Message: " + (title.value || "to all ushers")).then(function (x) {
+          out.appendChild(x.queued ? msg(x.message, "ok") : x.ok ? msg("Sent to " + x.sent + ".", "ok") : msg(x.message, "bad"));
         });
       } }, "Send to all active ushers"), out));
   }
@@ -598,7 +637,7 @@
         parts.push(h("div", { class: "card" }, h("b", {}, k), box, h("p"), h("button", { class: "ghost", onclick: function () {
           var v;
           try { v = JSON.parse(box.value); } catch (e) { out.textContent = " Not valid JSON."; return; }
-          C.api("config.set", { key: k, value: v }).then(function (x) { out.textContent = x.ok ? " Saved." : " " + x.message; });
+          C.send("config.set", { key: k, value: v }, "Setting: " + k).then(function (x) { out.textContent = x.queued ? " Saved on this device; sent when the signal is back." : x.ok ? " Saved." : " " + x.message; });
         } }, "Save"), out));
       });
       show.apply(null, parts);
@@ -606,6 +645,8 @@
   }
 
   start();
+  /* The worker at the root, so this app opens with no signal next time. */
+  if ("serviceWorker" in navigator) { navigator.serviceWorker.register("../sw.js", { scope: "../" }).catch(function () {}); }
 })();
 </script>
 </body>

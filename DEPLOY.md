@@ -1,6 +1,6 @@
 # Setting up the Ushering App
 
-Versions: app v0.3.8 · server w0.3.5 · sheet v0.3.0.
+Versions: app v0.3.9 · server w0.3.6 · sheet v0.3.0.
 
 Already done once (skip if so): the D1 database exists with `server/schema.sql`
 run in its Console, the Worker exists, and `config.js` points at it
@@ -32,7 +32,7 @@ run in its Console, the Worker exists, and `config.js` points at it
 5. Settings → Triggers → Cron Triggers → add `*/5 * * * *` (reminders and
    the sheet knock).
 6. Open `https://<worker address>/api/health`. It should show
-   `"server":"w0.3.5"`, and `pinPepper` and `sheetToken` true.
+   `"server":"w0.3.6"`, and `pinPepper` and `sheetToken` true.
 
 ## 2. The pages (GitHub Pages)
 
@@ -89,7 +89,7 @@ test people**.
 
 A. `/api/health` shows `pinPepper`, `sheetToken` and `sheetKnock` true, and
    after five minutes `clockLastTick` is no longer 0.
-B. The foot of both apps reads app v0.3.8 · server w0.3.5 · sheet v0.3.0
+B. The foot of both apps reads app v0.3.9 · server w0.3.6 · sheet v0.3.0
    (the sheet number appears after the first drain).
 C. The Admin App's sign-in lists only Head Ushers, Assistant Head Ushers and
    System Administrators. A Head Usher moves between the apps with Open
@@ -115,6 +115,11 @@ K. Admin → Events: add a Prayer Meeting for today and choose an usher on duty.
 L. The Ushers App's banner is bright purple and the Admin App's is deep
    aubergine, as their home-screen icons. Auto, Light and Dark at the foot of
    either app change both; Auto follows the phone.
+M. Open both apps once with signal and look at a few screens. Turn on
+   airplane mode and open each again: both open, the screens seen before
+   show with "No signal. Showing what this device saved on …", and a rota
+   saved in Admin says "Saved on this device". Turn airplane mode off: within
+   half a minute the change is on the server and the banner is gone.
 
 ## Updating later
 
