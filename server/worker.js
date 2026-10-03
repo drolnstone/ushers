@@ -120,6 +120,15 @@ const ROLE_PERMISSIONS = {
 /* Without roles.grant_any a person may grant only these. Treasurer and
    System Administrator need a System Administrator. */
 const ROLES_GRANTABLE = ["usher", "head_usher", "assistant_head_usher"];
+/* Someone holding a role outside ROLES_GRANTABLE (Treasurer, System
+   Administrator) can be changed only by a System Administrator: their
+   details, Active, PIN and removal alike. Otherwise a Head Usher could
+   reset a System Administrator's PIN to the default and sign in as them. */
+async function guardProtected(env, me, u, doing) {
+  if (me.perms.has("roles.grant_any")) return;
+  const held = (await rolesOf(env, u.id)).filter((r) => ROLES_GRANTABLE.indexOf(r) === -1);
+  if (held.length) fail(403, "forbidden", "Only a System Administrator can " + doing + " someone who is " + ROLE_LABELS[held[0]] + ".");
+}
 
 /* ==========================================================================
    EUROPE/LONDON TIME — copied from the Driver App's worker.js. Workers run
@@ -2027,6 +2036,7 @@ async function aUsherSave(env, cfg, b, me) {
   if (b.usherId) {
     const before = await getUsher(env, text(b.usherId, 20));
     if (!before) fail(404, "no_usher", "Not found.");
+    await guardProtected(env, me, before, "change");
     const active = b.active === undefined ? before.active : (b.active ? 1 : 0);
     if (!active && before.id === me.usher.id) fail(400, "self", "You cannot deactivate yourself.");
     const after = Object.assign({}, before, { full_name: name, email, phone, active, updated_at: now });
@@ -2096,13 +2106,8 @@ async function aUsherRemove(env, cfg, b, me) {
   const u = await getUsher(env, text(b.usherId, 20));
   if (!u) fail(404, "no_usher", "Not found.");
   if (u.id === me.usher.id) fail(400, "self", "You cannot remove yourself.");
+  await guardProtected(env, me, u, "remove");
   const have = await rolesOf(env, u.id);
-  const drop = have.filter((r) => r !== "usher");
-  if (!me.perms.has("roles.grant_any")) {
-    for (const r of drop) if (ROLES_GRANTABLE.indexOf(r) === -1) {
-      fail(403, "forbidden", "Only a System Administrator can remove someone who is " + ROLE_LABELS[r] + ".");
-    }
-  }
   const now = Date.now(), today = londonKey(new Date());
   const names = await namesMap(env);
   const appts = ((await env.DB.prepare(
@@ -2134,6 +2139,7 @@ async function aUsherResetPin(env, cfg, b, me) {
   need(me, "ushers.manage");
   const u = await getUsher(env, text(b.usherId, 20));
   if (!u) fail(404, "no_usher", "Not found.");
+  await guardProtected(env, me, u, "reset the PIN of");
   /* A reset drops back to the default PIN. A typed PIN is only for
      someone with no phone number on file. */
   const start = phoneDefaultPin(u.phone) || (b.pin ? String(b.pin) : "");

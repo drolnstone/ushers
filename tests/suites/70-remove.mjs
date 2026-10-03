@@ -49,5 +49,39 @@ export default async function ({ root }) {
     a.ok(row.active); a.eq(row.roles.join(","), "usher");
   });
 
+  s.test("only a System Administrator can make, change or reset a System Administrator or Treasurer", async (a) => {
+    const env = makeEnv(root);
+    const call = client(mod, env);
+    await call("bootstrap", { token: "test-bootstrap", fullName: "Sam Admin", pin: "9999" });
+    const adminId = (await call("people")).people[0].id;
+    const admin = (await call("login", { usherId: adminId, pin: "9999" })).token;
+    const add = async (name, roles) => {
+      const id = (await call("usher.save", { name, pin: "1234", mustChange: false }, admin)).usherId;
+      if (roles) await call("usher.roles", { usherId: id, roles }, admin);
+      return id;
+    };
+    const grace = await add("Grace Okafor", ["usher", "head_usher"]);
+    const john = await add("John Smith", ["usher", "assistant_head_usher"]);
+    const ruth = await add("Ruth Adeyemi", ["usher", "treasurer"]);
+    const mary = await add("Mary Jones");
+    const hu = (await call("login", { usherId: grace, pin: "1234" })).token;
+    const ahu = (await call("login", { usherId: john, pin: "1234" })).token;
+
+    for (const [tok, self] of [[hu, grace], [ahu, john]]) {
+      a.eq((await call("usher.roles", { usherId: mary, roles: ["usher", "system_admin"] }, tok))._status, 403, "cannot make a System Administrator");
+      a.eq((await call("usher.roles", { usherId: self, roles: ["usher", "head_usher", "system_admin"] }, tok))._status, 403, "not even themselves");
+      a.eq((await call("usher.roles", { usherId: adminId, roles: ["usher"] }, tok))._status, 403, "cannot take it away");
+      a.eq((await call("usher.resetPin", { usherId: adminId }, tok))._status, 403, "cannot reset a System Administrator's PIN");
+      a.eq((await call("usher.resetPin", { usherId: ruth }, tok))._status, 403, "nor a Treasurer's");
+      a.eq((await call("usher.save", { usherId: adminId, name: "Sam Admin", phone: "07700 900123" }, tok))._status, 403, "cannot change their details");
+      a.eq((await call("usher.save", { usherId: adminId, name: "Sam Admin", active: false }, tok))._status, 403, "cannot switch them off");
+      a.eq((await call("config.get", {}, tok))._status, 403, "no Settings");
+      a.eq((await call("config.set", { key: "dues_monthly", value: 1 }, tok))._status, 403, "cannot change Settings");
+    }
+    a.ok((await call("usher.resetPin", { usherId: mary, pin: "4321" }, hu)).ok, "an usher's PIN can still be reset");
+    a.ok((await call("usher.roles", { usherId: mary, roles: ["usher", "system_admin"] }, admin)).ok, "a System Administrator can");
+    a.ok((await call("config.get", {}, admin)).ok);
+  });
+
   return s;
 }
