@@ -114,6 +114,13 @@ System Administrator. Permissions are the union of a person's roles
 
 - Head Usher and Assistant Head Usher: rota, events, reports, approvals,
   dashboard (operational offering totals), messages, ushers.
+
+Roles are given on Admin → Ushers: tick them when adding someone, or tap
+**Edit details and roles** under a name (it opens at the top of the screen).
+The System Administrator can give any role. The Head Usher and Assistant Head
+Usher can add people and give or take away Usher, Head Usher and Assistant
+Head Usher; Treasurer and System Administrator need a System Administrator
+(`ROLES_GRANTABLE`, checked on the server).
 - Treasurer: dues, payments, balances, reminders, on a Treasurer tab inside the
   Ushers App; no Admin App. **Head Usher has no dues
   permission**; someone with both roles gets both.

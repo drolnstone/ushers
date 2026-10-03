@@ -385,16 +385,24 @@
     loading();
     USHERS = null;
     C.api("ushers.list").then(function (j) {
+      /* Editing someone (their details and roles) is a screen of its own,
+         opened at the top, so the form is never hidden down the list. */
+      var one = j.canManage && editing ? j.ushers.filter(function (u) { return u.usherId === editing; })[0] : null;
+      if (one) {
+        show(h("a", { class: "btn ghost", href: "#ushers" }, "← All ushers"), usherForm(one, j));
+        window.scrollTo(0, 0);
+        return;
+      }
       var parts = [h("h1", {}, "Ushers")];
+      if (j.canManage) parts.push(h("p", { class: "muted" }, "To make someone Head Usher, Assistant Head Usher" +
+        (j.canGrantAny ? ", Treasurer or System Administrator" : "") + ", tap Edit details and roles under their name."));
       if (j.canManage) parts.push(usherForm(null, j));
-      j.ushers.forEach(function (u, i) {
-        var key = String(i);
+      j.ushers.forEach(function (u) {
         parts.push(h("div", { class: "card" }, h("div", { class: "row" }, h("b", { class: "grow" }, u.name), u.active ? null : h("span", { class: "chip bad" }, "Inactive"),
             u.hasPin ? null : h("span", { class: "chip warn" }, "No PIN")),
           h("div", {}, u.roles.map(function (r) { return h("span", { class: "chip" }, labelOf(r)); })),
           h("div", { class: "muted" }, [u.email, u.phone].filter(Boolean).join(" · ")),
-          j.canManage ? h("a", { class: "btn ghost", href: "#ushers/" + key }, "Edit") : null,
-          editing === key ? usherForm(u, j) : null));
+          j.canManage ? h("a", { class: "btn ghost", href: "#ushers/" + encodeURIComponent(u.usherId) }, "Edit details and roles") : null));
       });
       show.apply(null, parts);
     }, failed);
@@ -410,11 +418,16 @@
     var out = h("div");
     var roles = {};
     (u ? u.roles : ["usher"]).forEach(function (r) { roles[r] = true; });
-    var roleBoxes = u ? h("div", {}, h("label", {}, "Roles"), CONF.roles.map(function (r) {
+    /* Roles can be given when someone is added, and changed later. Without
+       roles.grant_any (the Head Usher and Assistant Head Usher) only Usher,
+       Head Usher and Assistant Head Usher can be ticked; the server checks
+       the same. */
+    var roleBoxes = h("div", {}, h("label", {}, "Roles"), CONF.roles.map(function (r) {
       var allowed = j.canGrantAny || ["usher", "head_usher", "assistant_head_usher"].indexOf(r.key) !== -1;
       return h("label", { class: "check" }, h("input", { type: "checkbox", checked: !!roles[r.key], disabled: !allowed,
         onchange: function (e) { roles[r.key] = e.target.checked; } }), r.label);
-    })) : null;
+    }), h("p", { class: "muted" }, "Head Usher and Assistant Head Usher open the Admin App and approve. " +
+      (j.canGrantAny ? "" : "Only a System Administrator can give or take away Treasurer and System Administrator.")));
     return h("div", { class: "card" }, h("h2", {}, u ? "Edit " + u.name : "Add an usher"),
       h("label", {}, "Full name"), name, h("label", {}, "Email"), email, h("label", {}, "Phone"), phone,
       u ? h("label", { class: "check" }, active, "Active") : null, roleBoxes,
@@ -428,9 +441,10 @@
         if (!u && pin.value) body.pin = pin.value;
         C.api("usher.save", body).then(function (x) {
           if (!x.ok) throw new Error(x.message);
-          var steps = [];
-          if (u) steps.push(C.api("usher.roles", { usherId: u.usherId, roles: Object.keys(roles).filter(function (k) { return roles[k]; }) }));
-          return Promise.all(steps);
+          var want = Object.keys(roles).filter(function (k) { return roles[k]; });
+          /* Someone new starts as Usher; any other role ticked is given now. */
+          if (!u && !want.some(function (k) { return k !== "usher"; })) return [];
+          return Promise.all([C.api("usher.roles", { usherId: u ? u.usherId : x.usherId, roles: want })]);
         }).then(function (rs) {
           var bad = (rs || []).filter(function (x) { return !x.ok; })[0];
           if (bad) throw new Error(bad.message);
