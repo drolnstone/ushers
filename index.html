@@ -260,7 +260,7 @@
 
   /* Filling in a report, or (amend set) amending a submitted one. An
      amendment starts from the current version, needs a reason and a signal,
-     and goes to a countersigner again. */
+     and goes to a countersigner again when the event has one. */
   function editReport(j, amend) {
     var ev = j.event, cur = CONF.currencies[CONF.defaultCurrency];
     var fields = j.ministrationFields || CONF.ministrationFields || [];
@@ -286,7 +286,7 @@
     }
     var why = h("textarea", { id: "why-amend", rows: "2", placeholder: "e.g. Ten more men were counted after the service" });
     if (amend) {
-      parts.push(msg("This makes version " + (amend.version + 1) + ". Version " + amend.version + " is kept as it was. The amended report is countersigned again.", ""));
+      parts.push(msg("This makes version " + (amend.version + 1) + ". Version " + amend.version + " is kept as it was." + (ev.countersign ? " The amended report is countersigned again." : ""), ""));
       parts.push(h("div", { class: "card" }, h("label", { for: "why-amend" }, "Why is the report being amended?"), why));
     } else parts.push(h("p", { class: "muted" }, "Saved on this phone as you type."));
 
@@ -422,7 +422,7 @@
     if (!a || !a.possible) return null;
     if (a.approver || a.approval === "approved") {
       return h("div", { class: "card" }, h("h3", {}, "Amend this report"),
-        h("p", { class: "muted" }, a.approver ? "As an approver you can amend it straight away. It will still need countersigning." : "Your request to amend this report was approved."),
+        h("p", { class: "muted" }, a.approver ? "As an approver you can amend it straight away." + (r.parts && r.parts.countersign ? " It will still need countersigning." : "") : "Your request to amend this report was approved."),
         h("button", { class: "ghost", onclick: function () { editReport(j, r); } }, "Amend report"));
     }
     if (a.approval === "pending") return h("div", { class: "card" }, h("h3", {}, "Amend this report"), msg("You have asked to amend it. You will be told when it is decided."));
@@ -569,7 +569,7 @@
         box.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, "On. New notifications also arrive as phone alerts."),
           h("button", { class: "ghost", onclick: function () { C.alertsOff().then(function () { paint("off"); }, function (e) { paint("on", e.message); }); } }, "Turn off")));
       } else {
-        box.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, "Get an alert when you are asked to countersign, a request is decided, or a reminder is due."),
+        box.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, "Get an alert on this phone whenever something new arrives here: a countersignature, a request or its answer, a filed report, or a reminder."),
           h("button", { onclick: function () {
             C.alertsOn(PUSH_KEY).then(function () { paint("on"); }, function (e) { paint("off", e && e.message || "Could not turn alerts on."); });
           } }, "Turn on alerts on this phone")));

@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.3";
+const SERVER_VERSION = "w0.3.4";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -37,18 +37,20 @@ const DEFAULT_CONFIG = {
   thanksgiving_rule: "first_sunday",  // first_sunday | none
   /* Every report is the whole record of the service: attendance,
      ministration and offering. A church that wants less can switch a part
-     off here. */
+     off here. Only First and Second Service are countersigned: the second
+     person confirms the report is true. Any other event's report is filed
+     as soon as it is signed. */
   event_types: {
     SUN_FIRST:   { label: "Sunday First Service",  sunday: 1, start: "09:00", duty: "ushering", attendance: true, ministration: true, offering: true, countersign: true },
     SUN_SECOND:  { label: "Sunday Second Service", sunday: 2, start: "11:30", duty: "counting", attendance: true, ministration: true, offering: true, countersign: true, exact: "second_service_counters" },
-    NAMING:      { label: "Naming Ceremony", duty: "ushering", attendance: true, ministration: true, offering: true, countersign: true },
-    PRAYER:      { label: "Prayer Meeting",  duty: "ushering", attendance: true, ministration: true, offering: true, countersign: true },
-    VIGIL:       { label: "Vigil",           duty: "ushering", attendance: true, ministration: true, offering: true, countersign: true },
-    THANKSGIVING:{ label: "Thanksgiving",    duty: "ushering", attendance: true, ministration: true, offering: true, countersign: true },
-    WEDDING:     { label: "Wedding",         duty: "ushering", attendance: true, ministration: true, offering: true, countersign: true },
-    FUNERAL:     { label: "Funeral",         duty: "ushering", attendance: true, ministration: true, offering: true, countersign: true },
-    SPECIAL:     { label: "Special Service", duty: "ushering", attendance: true, ministration: true, offering: true, countersign: true },
-    OTHER:       { label: "Other",           duty: "ushering", attendance: true, ministration: true, offering: true, countersign: true }
+    NAMING:      { label: "Naming Ceremony", duty: "ushering", attendance: true, ministration: true, offering: true, countersign: false },
+    PRAYER:      { label: "Prayer Meeting",  duty: "ushering", attendance: true, ministration: true, offering: true, countersign: false },
+    VIGIL:       { label: "Vigil",           duty: "ushering", attendance: true, ministration: true, offering: true, countersign: false },
+    THANKSGIVING:{ label: "Thanksgiving",    duty: "ushering", attendance: true, ministration: true, offering: true, countersign: false },
+    WEDDING:     { label: "Wedding",         duty: "ushering", attendance: true, ministration: true, offering: true, countersign: false },
+    FUNERAL:     { label: "Funeral",         duty: "ushering", attendance: true, ministration: true, offering: true, countersign: false },
+    SPECIAL:     { label: "Special Service", duty: "ushering", attendance: true, ministration: true, offering: true, countersign: false },
+    OTHER:       { label: "Other",           duty: "ushering", attendance: true, ministration: true, offering: true, countersign: false }
   },
   /* The ministration record: who ministered and what happened. kind is
      text or number. Add, rename or remove lines here; the key is what is
@@ -87,7 +89,8 @@ const DEFAULT_CONFIG = {
   report_reminder_hour: 15,           // on the event day
   rota_weeks_ahead: 8,
   push_types: null,                   // null = every notification also goes to phones with alerts on
-  email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "dues_reminder", "admin_message"]
+  email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "report_filed", "dues_reminder", "admin_message"],
+  report_notify_roles: ["head_usher", "assistant_head_usher"]  // told of every report once it is filed
 };
 
 /* Roles are additive: a person's permissions are the union of their roles'.
@@ -394,6 +397,31 @@ async function holders(env, cfg, perm) {
     "SELECT u.*, group_concat(r.role) AS roles FROM ushers u JOIN user_roles r ON r.usher_id=u.id WHERE u.active=1 GROUP BY u.id"
   ).all();
   return (r.results || []).filter((u) => permissionsFor(cfg, String(u.roles || "").split(",")).has(perm));
+}
+
+/* The Head Usher and Assistant Head Usher (report_notify_roles) are told of
+   every report once it is filed: as soon as it is signed when the event
+   needs no countersignature, or when it is countersigned. Each one is kept
+   in their notifications, on the NOTIFICATIONS tab, and emailed. Whoever
+   did it, and anyone in skip (a submitter who is told already), are left
+   out. */
+async function stReportFiled(env, cfg, rec, e, title, lead, skip) {
+  const roles = (Array.isArray(cfg.report_notify_roles) ? cfg.report_notify_roles : []).filter((x) => ROLES.indexOf(x) !== -1);
+  if (!roles.length) return [];
+  const r = await env.DB.prepare(
+    "SELECT DISTINCT u.* FROM ushers u JOIN user_roles r ON r.usher_id=u.id WHERE u.active=1 AND r.role IN (" + roles.map(() => "?").join(",") + ") ORDER BY u.full_name"
+  ).bind(...roles).all();
+  const t = typeOf(cfg, e.type), facts = [];
+  if (t.attendance) facts.push("attendance " + (rec.attendance_total || 0));
+  if (t.offering) facts.push("offering £" + pounds(rec.offering_total).toFixed(2));
+  const f = facts.join(", ");
+  const body = lead + (f ? " " + f.charAt(0).toUpperCase() + f.slice(1) + "." : "");
+  const st = [];
+  for (const u of (r.results || [])) {
+    if ((skip || []).indexOf(u.id) !== -1) continue;
+    st.push(stNotify(env, cfg, u, "report_filed", title + ": " + e.title + " " + ukDate(e.date), body, "report", rec.id));
+  }
+  return st;
 }
 
 /* ==========================================================================
@@ -874,13 +902,14 @@ async function findAuth(env, kind, subjectId, targetType, targetId, statuses) {
 }
 
 /* Returns { id, statements, status }. An identical pending request is
-   reused. An approver needs no request: when the person asking may approve,
+   reused, unless o.fresh (the old one is being cancelled in the same
+   batch). An approver needs no request: when the person asking may approve,
    the authorisation is made already approved, by them, on the record, and
    its effect happens at once. A report is still countersigned by somebody
    else whoever submits it; that rule is in the report code, not here. */
 async function authRequest(env, cfg, o) {
   const approver = !!(o.me && o.me.perms.has("exceptions.approve") && o.me.usher.id === o.requestedBy);
-  if (!approver) {
+  if (!approver && !o.fresh) {
     const existing = await findAuth(env, o.kind, o.subjectId, o.targetType, o.targetId, ["pending"]);
     if (existing) return { id: existing.id, statements: [], reused: true, status: "pending" };
   }
@@ -947,6 +976,21 @@ async function authEffects(env, cfg, a, decider, names, opt) {
     after.status = "consumed"; after.consumed_at = now;
   }
   return { statements: st, after };
+}
+
+/* A request that no longer applies. The approvers' "Approval needed" for it
+   is marked read, so it stops showing as new. */
+function stCancelAuth(env, a, note, names, now) {
+  return [
+    env.DB.prepare("UPDATE authorisations SET status='cancelled', decided_at=?, decision_note=? WHERE id=?").bind(now, note, a.id),
+    stOutbox(env, "AUTHORISATIONS", authRow(Object.assign({}, a, { status: "cancelled", decided_at: now, decision_note: note }), names), "AUTH_ID"),
+    stAskedRead(env, a.id, now)
+  ];
+}
+
+function stAskedRead(env, authId, now) {
+  return env.DB.prepare("UPDATE notifications SET read_at=? WHERE type='approval_request' AND ref_type='authorisation' AND ref_id=? AND read_at IS NULL")
+    .bind(now, String(authId));
 }
 
 function stConsume(env, a, names) {
@@ -1062,15 +1106,21 @@ async function aAuthDecide(env, cfg, b, me) {
     stAudit(env, me.usher.id, approve ? "authorisation.approve" : "authorisation.reject", "authorisation", a.id,
       { status: "pending" }, { status: after.status }, after.decision_note)
   ];
+  /* Decided by one approver: the others' "Approval needed" is done with. */
+  st.push(stAskedRead(env, a.id, now));
   const subject = await getUsher(env, a.subject_id);
   const requester = a.requested_by === a.subject_id ? null : await getUsher(env, a.requested_by);
   const about = await authAbout(env, a, names);
   const what = (AUTH_KIND_LABELS[a.kind] || a.kind) + (about.title ? ": " + about.title + " " + ukDate(about.date) : "");
-  st.push(stNotify(env, cfg, subject, "approval_decision", (approve ? "Approved: " : "Not approved: ") + what,
-    approve ? "You can go ahead." : "Reason: " + (after.decision_note || "none given"), a.target_type, a.target_id));
+  /* A chosen countersigner hears once: "Please countersign" when approved
+     (from authEffects). If not approved, the submitter chooses again. */
+  if (a.kind !== "countersign") {
+    st.push(stNotify(env, cfg, subject, "approval_decision", (approve ? "Approved: " : "Not approved: ") + what,
+      approve ? "You can go ahead." : "Reason: " + (after.decision_note || "none given"), a.target_type, a.target_id));
+  }
   if (requester) {
     st.push(stNotify(env, cfg, requester, "approval_decision", (approve ? "Approved: " : "Not approved: ") + what,
-      approve ? names[a.subject_id] + " has been approved." : "Choose somebody else or ask the coordinator.", a.target_type, a.target_id));
+      approve ? names[a.subject_id] + " has been approved." : "Choose somebody else or ask the coordinator." + (after.decision_note ? " Reason: " + after.decision_note : ""), a.target_type, a.target_id));
   }
   if (approve) {
     const fx = await authEffects(env, cfg, after, me.usher, names, { about });
@@ -1261,7 +1311,8 @@ async function reportView(env, cfg, r, me) {
     entries: entries.map((x) => ({ category: x.category, currency: x.currency, denomination: x.denomination, quantity: x.quantity, amount: x.amount })),
     byCategory, offeringTotal: r.offering_total, notes: r.notes,
     ministration: ministrationOf(r), ministrationFields: cfg.ministration_fields || [],
-    parts: { attendance: !!typeOf(cfg, e.type).attendance, ministration: !!typeOf(cfg, e.type).ministration, offering: !!typeOf(cfg, e.type).offering },
+    parts: { attendance: !!typeOf(cfg, e.type).attendance, ministration: !!typeOf(cfg, e.type).ministration, offering: !!typeOf(cfg, e.type).offering,
+             countersign: !!typeOf(cfg, e.type).countersign },
     version: r.version || 1,
     versions: await versionsOf(env, r.id, names),
     amend: await amendState(env, cfg, r, me),
@@ -1406,6 +1457,10 @@ async function aReportSubmit(env, cfg, b, me) {
   const rec = { id, event_id: e.id, status: finalStatus, submitter_id: me.usher.id, countersigner_id: cs ? cs.id : null,
     male: c.male, female: c.female, children: c.children, attendance_total: c.total, offering_total: c.offeringTotal, notes: c.notes,
     submission_id: sid, submitted_at: now, submit_pin_check: pinCheck, verified_at: t.countersign ? null : now, updated_at: now, version: 1 };
+  if (!t.countersign) {
+    st.push(await stReportFiled(env, cfg, rec, e, "Report filed",
+      me.usher.full_name + " signed and filed the report. This event needs no countersignature.", [me.usher.id]));
+  }
   st.push(stAudit(env, me.usher.id, "report.submit", "report", id, null,
     { status: finalStatus, attendance: c.total, offering: c.offeringTotal, countersigner: cs ? cs.id : "", pinCheck }, ""));
   st.push(stOutbox(env, "REPORTS", reportRow(rec, e, names), "REPORT_ID"));
@@ -1450,7 +1505,9 @@ async function aReportCountersign(env, cfg, b, me) {
     stAudit(env, me.usher.id, "report.countersign", "report", r.id, { status: r.status }, { status: "verified", pinCheck, authorisation: auth ? auth.id : "" }, ""),
     stOutbox(env, "REPORTS", reportRow(after, e, names), "REPORT_ID"),
     stNotify(env, cfg, await getUsher(env, r.submitter_id), "report_status", "Verified: " + e.title + " " + ukDate(e.date),
-      me.usher.full_name + " has countersigned the report.", "report", r.id)
+      me.usher.full_name + " has countersigned the report.", "report", r.id),
+    await stReportFiled(env, cfg, after, e, (r.version || 1) > 1 ? "Amended report filed" : "Report filed",
+      (names[r.submitter_id] || "The submitter") + " submitted the report and " + me.usher.full_name + " countersigned it.", [me.usher.id, r.submitter_id])
   ];
   if (auth) st.push(stConsume(env, auth, names));
   await run(env, st);
@@ -1543,9 +1600,9 @@ async function aReportAmend(env, cfg, b, me) {
     env.DB.prepare(
       "UPDATE reports SET status=?, submitter_id=?, countersigner_id=?, male=?, female=?, children=?, attendance_total=?, offering_total=?, notes=?, ministration_json=?, " +
       "submit_signature=?, submitted_at=?, submit_pin_check='server', countersign_auth_id=NULL, countersign_submission_id=NULL, countersign_signature='', " +
-      "countersigned_at=NULL, countersign_pin_check='', verified_at=?, version=?, updated_at=? WHERE id=? AND version=?"
+      "countersigned_at=NULL, countersign_pin_check='', countersign_required=?, verified_at=?, version=?, updated_at=? WHERE id=? AND version=?"
     ).bind(finalStatus, me.usher.id, cs ? cs.id : null, c.male, c.female, c.children, c.total, c.offeringTotal, c.notes, JSON.stringify(c.ministration),
-           signature, now, t.countersign ? null : now, v, now, r.id, r.version || 1),
+           signature, now, t.countersign ? 1 : 0, t.countersign ? null : now, v, now, r.id, r.version || 1),
     env.DB.prepare("DELETE FROM offering_entries WHERE report_id=?").bind(r.id)
   ];
   for (const x of c.entries) {
@@ -1557,10 +1614,7 @@ async function aReportAmend(env, cfg, b, me) {
   if (auth) st.push(stConsume(env, auth, names));
   /* Any countersign request for the old version no longer applies. */
   const open = ((await env.DB.prepare("SELECT * FROM authorisations WHERE kind='countersign' AND target_type='report' AND target_id=? AND status IN ('pending','approved')").bind(r.id).all()).results) || [];
-  for (const a of open) {
-    st.push(env.DB.prepare("UPDATE authorisations SET status='cancelled', decided_at=?, decision_note=? WHERE id=?").bind(now, "Report amended", a.id));
-    st.push(stOutbox(env, "AUTHORISATIONS", authRow(Object.assign({}, a, { status: "cancelled", decided_at: now, decision_note: "Report amended" }), names), "AUTH_ID"));
-  }
+  for (const a of open) st.push(stCancelAuth(env, a, "Report amended", names, now));
   let csState = null;
   if (cs) {
     if (await countersignAuthority(env, cfg, cs.id, e.id)) {
@@ -1568,7 +1622,7 @@ async function aReportAmend(env, cfg, b, me) {
       st.push(stNotify(env, cfg, cs, "countersign_request", "Please countersign the amended report: " + e.title + " " + ukDate(e.date),
         me.usher.full_name + " has amended the report (" + reason + ") and chosen you to countersign it.", "report", r.id));
     } else {
-      const req = await authRequest(env, cfg, { kind: "countersign", subjectId: cs.id, targetType: "report", targetId: r.id, me,
+      const req = await authRequest(env, cfg, { kind: "countersign", subjectId: cs.id, targetType: "report", targetId: r.id, me, fresh: true,
         requestedBy: me.usher.id, reason: "Chosen to countersign an amended report without countersigning authority",
         describe: me.usher.full_name + " chose " + cs.full_name + " to countersign the amended report for " + e.title + " on " + ukDate(e.date) + ". Approve?" });
       st.push(req.statements);
@@ -1582,7 +1636,11 @@ async function aReportAmend(env, cfg, b, me) {
   const rec = Object.assign({}, r, { status: finalStatus, submitter_id: me.usher.id, countersigner_id: cs ? cs.id : null,
     male: c.male, female: c.female, children: c.children, attendance_total: c.total, offering_total: c.offeringTotal, notes: c.notes,
     submitted_at: now, submit_pin_check: "server", countersign_auth_id: null, countersigned_at: null, verified_at: t.countersign ? null : now,
-    version: v, updated_at: now });
+    countersign_required: t.countersign ? 1 : 0, version: v, updated_at: now });
+  if (!t.countersign) {
+    st.push(await stReportFiled(env, cfg, rec, e, "Report amended",
+      me.usher.full_name + " amended the report (version " + v + "). Reason: " + reason.replace(/[.!?]+$/, "") + ".", [me.usher.id, r.submitter_id]));
+  }
   st.push(stAudit(env, me.usher.id, "report.amend", "report", r.id,
     { version: r.version || 1, status: r.status, attendance: r.attendance_total, offering: r.offering_total },
     { version: v, status: finalStatus, attendance: c.total, offering: c.offeringTotal, countersigner: cs ? cs.id : "" }, reason));
@@ -1613,15 +1671,17 @@ async function aReportCountersigner(env, cfg, b, me) {
   const now = Date.now();
   const st = [env.DB.prepare("UPDATE reports SET countersigner_id=?, updated_at=? WHERE id=?").bind(cs.id, now, r.id)];
   const open = ((await env.DB.prepare("SELECT * FROM authorisations WHERE kind='countersign' AND target_type='report' AND target_id=? AND status IN ('pending','approved')").bind(r.id).all()).results) || [];
-  for (const a of open) {
-    st.push(env.DB.prepare("UPDATE authorisations SET status='cancelled', decided_at=?, decision_note=? WHERE id=?").bind(now, "Countersigner changed", a.id));
-    st.push(stOutbox(env, "AUTHORISATIONS", authRow(Object.assign({}, a, { status: "cancelled", decided_at: now, decision_note: "Countersigner changed" }), names), "AUTH_ID"));
-  }
+  const authority = await countersignAuthority(env, cfg, cs.id, e.id);
+  /* Choosing the same person again keeps the request already made for them. */
+  const keep = authority ? null : open.find((a) => a.subject_id === cs.id) || null;
+  for (const a of open) if (!keep || a.id !== keep.id) st.push(stCancelAuth(env, a, "Countersigner changed", names, now));
   let state;
-  if (await countersignAuthority(env, cfg, cs.id, e.id)) {
+  if (authority || (keep && keep.status === "approved")) {
     state = "authorised";
     st.push(stNotify(env, cfg, cs, "countersign_request", "Please countersign: " + e.title + " " + ukDate(e.date),
       names[r.submitter_id] + " has chosen you to countersign the report.", "report", r.id));
+  } else if (keep) {
+    state = "approval_requested";
   } else {
     const req = await authRequest(env, cfg, { kind: "countersign", subjectId: cs.id, targetType: "report", targetId: r.id, me,
       requestedBy: me.usher.id, reason: "Chosen to countersign without countersigning authority",
@@ -2073,6 +2133,7 @@ async function aConfigSet(env, cfg, b, me) {
       seen[f.key] = 1;
     }
   }
+  if (k === "report_notify_roles" && v.some((x) => ROLES.indexOf(x) === -1)) fail(400, "type", "Each entry must be one of: " + ROLES.join(", ") + ".");
   const now = Date.now();
   await run(env, [
     env.DB.prepare("INSERT INTO config (k, v, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_by=excluded.updated_by, updated_at=excluded.updated_at")
@@ -2143,12 +2204,21 @@ async function aHealth(env, cfg) {
   };
 }
 
-/* After a write, knock on the sheet's web app so it drains now. Same idea
-   as the Driver App's pokeSheet. Never awaited by the phone. */
+/* After a write, knock on the sheet's web app so it drains now (and sends
+   any email). Same idea as the Driver App's pokeSheet. Never awaited by the
+   phone. Knocks are at least KNOCK_GAP_MS apart. A knock in that gap may
+   have drained before this write landed, so this one waits for the gap to
+   pass and knocks then, unless somebody else knocked meanwhile: an email
+   waits seconds, not until the five-minute clock. */
+const KNOCK_GAP_MS = 10000;
 async function knockSheet(env) {
   if (!env.SHEET_WEBAPP_URL || !env.SHEET_TOKEN) return false;
   const last = Number(await setting(env, "last_knock")) || 0;
-  if (Date.now() - last < 10000) return false;
+  const wait = KNOCK_GAP_MS - (Date.now() - last);
+  if (wait > 0) {
+    await new Promise((done) => setTimeout(done, Math.min(wait, KNOCK_GAP_MS)));
+    if ((Number(await setting(env, "last_knock")) || 0) !== last) return false;
+  }
   await env.DB.prepare("INSERT INTO settings (k, v) VALUES ('last_knock', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(String(Date.now())).run();
   try {
     const res = await fetch(env.SHEET_WEBAPP_URL, { method: "POST", headers: { "content-type": "text/plain" },
@@ -2367,7 +2437,8 @@ async function aPushWhat(env, cfg, b) {
   const more = await env.DB.prepare("SELECT count(*) AS n FROM notifications WHERE usher_id=? AND read_at IS NULL").bind(sub.usher_id).first();
   const extra = more && more.n > 1 ? " (" + (more.n - 1) + " more in the app)" : "";
   let url = "./#notes";
-  if (n.ref_type === "report") url = "./#rep/" + n.ref_id;
+  if (n.ref_type === "report" && n.type === "report_filed" && permissionsFor(cfg, await rolesOf(env, sub.usher_id)).has("admin.app")) url = "./admin/#report/" + n.ref_id;
+  else if (n.ref_type === "report") url = "./#rep/" + n.ref_id;
   else if (n.ref_type === "authorisation") url = "./admin/#approvals";
   else if (n.ref_type === "event") url = "./#report/" + n.ref_id;
   return { ok: true, title: n.title, body: (n.body || "") + extra, tag: "n|" + n.id, url };
@@ -2387,6 +2458,45 @@ const MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS push_subs_usher ON push_subs(usher_id)",
   "ALTER TABLE ushers ADD COLUMN pin_must_change INTEGER DEFAULT 0"
 ];
+/* A setting saved in Admin -> Settings replaces the whole default, so a rule
+   that changes later has to be written into the saved copy too. Each change
+   is made once, remembered by name, and goes on the audit like any other. */
+const SETTING_MIGRATIONS = [
+  { name: "countersign_sunday_only", key: "event_types",
+    why: "Only First and Second Service are countersigned",
+    change: (v) => {
+      let changed = false;
+      for (const k of Object.keys(v || {})) {
+        const want = !!v[k].sunday;
+        if (!!v[k].countersign !== want) { v[k].countersign = want; changed = true; }
+      }
+      return changed ? v : null;
+    } },
+  { name: "email_report_filed", key: "email_types",
+    why: "Filed reports are emailed to the Head Usher and Assistant Head Usher",
+    change: (v) => Array.isArray(v) && v.indexOf("report_filed") === -1 ? v.concat(["report_filed"]) : null }
+];
+
+async function migrateSettings(env) {
+  for (const m of SETTING_MIGRATIONS) {
+    const flag = "migrated_" + m.name;
+    if (await setting(env, flag)) continue;
+    try {
+      const row = await env.DB.prepare("SELECT v FROM config WHERE k=?").bind(m.key).first();
+      const before = row ? JSON.parse(row.v) : null;
+      const after = row ? m.change(JSON.parse(row.v)) : null;
+      const now = Date.now();
+      const st = [env.DB.prepare("INSERT INTO settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(flag, String(now))];
+      if (after) {
+        st.push(env.DB.prepare("UPDATE config SET v=?, updated_by=?, updated_at=? WHERE k=?").bind(JSON.stringify(after), "system", now, m.key));
+        st.push(stAudit(env, "system", "config.set", "config", m.key, before, after, m.why));
+        st.push(stOutbox(env, "CONFIG", { KEY: m.key, VALUE: JSON.stringify(after), UPDATED_BY: "system", UPDATED_AT: londonStamp(now) }, "KEY"));
+      }
+      await run(env, st);
+    } catch (e) { /* tried again with the next version */ }
+  }
+}
+
 let schemaChecked = false;
 async function migrate(env) {
   if (schemaChecked) return;
@@ -2394,6 +2504,7 @@ async function migrate(env) {
   for (const sql of MIGRATIONS) {
     try { await env.DB.prepare(sql).run(); } catch (e) { /* already there */ }
   }
+  await migrateSettings(env);
   try { await env.DB.prepare("INSERT INTO settings (k, v) VALUES ('schema', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(SERVER_VERSION).run(); } catch (e) {}
   schemaChecked = true;
 }

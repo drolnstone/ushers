@@ -11,7 +11,7 @@ for what was reused, adapted, replaced and added.
 | Part | Where | What it is |
 |---|---|---|
 | Ushers App | `index.html`, `sw.js`, `manifest.webmanifest` | For every usher. Home answers "What am I doing?" |
-| Admin App | `admin/` | Head Usher, Assistant Head Usher and System Administrator only; its sign-in lists only them. No service worker |
+| Admin App | `admin/` | Head Usher, Assistant Head Usher and System Administrator only; its sign-in lists only them. Has its own Notifications tab. No service worker of its own |
 | Shared page code | `shared/core.js`, `shared/reports.js`, `shared/style.css`, `config.js` | Session, server calls, offline queue, drafts, phone alerts, report parts, look |
 | PDFs | `shared/pdf.js`, `shared/vendor/jspdf.umd.min.js` (MIT) | Service report and period summary PDFs, made on the phone. Loaded only when a PDF is made |
 | Icons | `apple-touch-icon.png`, `icon-*.png` (and the same in `admin/`) | Home-screen icons. Remade by `node tools/make-icons.mjs` from `shared/logo.png` |
@@ -33,8 +33,9 @@ and a five-minute timer drains anything left.
 
 ## The journey
 
-Roster → Duty → Report → Signature → Countersignature → Authorisation if
-required → Google Sheets record → Coordinator dashboard.
+Roster → Duty → Report → Signature → Countersignature (First and Second
+Service) → Authorisation if required → Google Sheets record → Head Usher
+notified → Coordinator dashboard.
 
 - **Rota.** A Sunday is two events, First Service (ushering, any number) and
   Second Service (offering counting, exactly `second_service_counters`, 2).
@@ -48,15 +49,29 @@ required → Google Sheets record → Coordinator dashboard.
   is `ministration_fields` in configuration); and offering as denomination
   lines (category, currency, denomination, quantity) with category totals
   and a grand total worked out on the server.
-- **Status.** Draft → Submitted → Pending Countersignature → Verified, or
-  Draft → Submitted → Verified when the event type needs no countersignature.
-  Every change is kept in `report_history` and on the AUDIT tab.
+- **Countersigning** is the second person confirming the report is true; it
+  is not an approval. Only Sunday First Service and Second Service are
+  countersigned. Every other event's report is filed as soon as it is
+  signed.
+- **Status.** First and Second Service: Draft → Submitted → Pending
+  Countersignature → Verified. Any other event: Draft → Submitted →
+  Verified. Every change is kept in `report_history` and on the AUDIT tab.
+- **The Head Usher is told of every report.** The Head Usher and Assistant
+  Head Usher (`report_notify_roles`) get a "Report filed" notification as
+  soon as a report is complete: when it is signed, or for First and Second
+  Service when it is countersigned. Amendments are notified too. It arrives
+  in both apps' Notifications tab, as a phone alert and by email, and is
+  logged on the NOTIFICATIONS tab. Whoever filed it is not told about their
+  own report.
 - **Countersigner.** Anyone active can be chosen. The server then checks
   authority: the roles in `countersign_roles`, or (with
   `countersign_rostered`) anyone on duty at that event. Without it, a
-  transaction-specific authorisation is requested and approvers are told. An
-  approval lets that person countersign that report once; their roles never
-  change.
+  transaction-specific authorisation is requested and the Head Usher and
+  Assistant Head Usher are told at once, in the app, as a phone alert and by
+  email. When one of them decides, the submitter is told, the chosen person
+  is asked to countersign (if approved), and the request stops showing as new
+  for the other. An approval lets that person countersign that report once;
+  their roles never change.
 - **One authorisation engine** also covers submitting for an event you were
   not rostered on, amending a submitted report, and duty takeovers (B did
   A's duty: the duty moves to B, A's stays on the record as removed).
@@ -64,17 +79,18 @@ required → Google Sheets record → Coordinator dashboard.
   Usher and Assistant Head Usher) who does something that
   would need approval has it approved at once, by themselves, on the record
   (`AUTHORISATIONS`, `AUDIT`). Deciding someone else's request still needs
-  the approver's PIN. **Every report is still countersigned by somebody
-  else**, whoever submits or amends it.
+  the approver's PIN. A First or Second Service report is still
+  countersigned by somebody else, whoever submits or amends it.
 - **Amendments.** A submitted report is never overwritten. Amending needs a
   reason, the signature and the PIN; the version it replaces is kept whole
   (`report_versions`, the `REPORT_VERSIONS` tab), the report gets the next
-  version number and goes back to Pending Countersignature. An usher needs
+  version number and, for First and Second Service, goes back to Pending
+  Countersignature (any other event's is filed at once). An usher needs
   an approved request first; an approver does not. On the sheet,
   ATTENDANCE, MINISTRATION and OFFERING have a row per version with
   `CURRENT` = Yes or No: filter on Yes before adding up. A countersignature
   made for an older version is refused.
-- **Phone alerts.** Notifications → Turn on alerts on this phone. Every new
+- **Phone alerts.** Notifications → Turn on alerts (either app). Every new
   notification then also wakes the phone. As in the Driver App, the push
   carries nothing: the phone asks the server what it is for. On iPhone it
   works once Ushers is added to the Home Screen and opened from there.
@@ -141,8 +157,8 @@ year), the number of Second Service counters, the Thanksgiving rule, event
 types (and whether each has attendance, ministration, offering and a
 countersignature), the ministration lines,
 offering categories, currencies and denominations, countersigning roles,
-session and PIN limits, reminder timings, and which notifications are
-emailed. Every change is audited and written to the CONFIG tab.
+who is told of every filed report, session and PIN limits, reminder
+timings, and which notifications are emailed. Every change is audited and written to the CONFIG tab.
 
 ## Secrets
 

@@ -1,6 +1,6 @@
 # Setting up the Ushering App
 
-Versions: app v0.3.4 · server w0.3.3 · sheet v0.3.0.
+Versions: app v0.3.5 · server w0.3.4 · sheet v0.3.0.
 
 Already done once (skip if so): the D1 database exists with `server/schema.sql`
 run in its Console, the Worker exists, and `config.js` points at it
@@ -32,7 +32,7 @@ run in its Console, the Worker exists, and `config.js` points at it
 5. Settings → Triggers → Cron Triggers → add `*/5 * * * *` (reminders and
    the sheet knock).
 6. Open `https://<worker address>/api/health`. It should show
-   `"server":"w0.3.3"`, and `pinPepper` and `sheetToken` true.
+   `"server":"w0.3.4"`, and `pinPepper` and `sheetToken` true.
 
 ## 2. The pages (GitHub Pages)
 
@@ -89,7 +89,7 @@ test people**.
 
 A. `/api/health` shows `pinPepper`, `sheetToken` and `sheetKnock` true, and
    after five minutes `clockLastTick` is no longer 0.
-B. The foot of both apps reads app v0.3.4 · server w0.3.3 · sheet v0.3.0
+B. The foot of both apps reads app v0.3.5 · server w0.3.4 · sheet v0.3.0
    (the sheet number appears after the first drain).
 C. The Admin App's sign-in lists only Head Ushers, Assistant Head Ushers and
    System Administrators. A Head Usher moves between the apps with Open
@@ -98,14 +98,20 @@ D. The Treasurer sees a Treasurer tab in the Ushers App and no Open Admin App.
 E. A new usher signing in for the first time is asked "Do you wish to keep
    your default PIN?"; Yes keeps it, No leads to a new PIN.
 F. Admin → Rota: choosing one Second Service counter is refused; two saves.
-G. An usher on the rota opens the report, the attendance total adds itself
-   up, signs, and the report shows Pending Countersignature.
+G. An usher on the rota opens the First Service report, the attendance
+   total adds itself up, signs, and the report shows Pending
+   Countersignature. Once it is countersigned, the Head Usher has "Report
+   filed" in Notifications (both apps) and by email.
 H. Within a minute the REPORTS, ATTENDANCE, OFFERING and AUDIT tabs have the
    rows, and every tab is still protected.
 I. On an iPhone: Share → Add to Home Screen shows the church logo; open it
    from there, Notifications → Turn on alerts on this phone, and ask somebody
    to send you a message (Admin → Message): the alert arrives.
 J. Admin → Reports → Make PDF summary downloads the month so far.
+K. Admin → Events: add a Prayer Meeting for today and choose an usher on duty.
+   That usher's report has no countersigner box and shows Verified once
+   signed, and the Head Usher gets "Report filed" straight away, in the
+   app, as a phone alert (if turned on) and by email.
 
 ## Updating later
 
