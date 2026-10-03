@@ -20,7 +20,7 @@
    Menu: Ushering > Set up the sheet (once), then Check everything.
    ========================================================================== */
 
-var SHEET_VERSION = "v0.2.0";
+var SHEET_VERSION = "v0.3.0";
 
 /* The tabs and the headers each starts with. A missing header is added at
    the end; a header is never renamed or moved by this script, and a column
@@ -331,8 +331,40 @@ function onOpen() {
 }
 
 /* Makes every tab, protects every tab, and installs the two timers. */
+/* The GUIDE tab: what each tab holds, for whoever opens the sheet. The
+   app writes every other tab; typing in them changes nothing in the app. */
+var GUIDE = [
+  ["TAB", "WHAT IT HOLDS", "ONE ROW IS", "GOOD TO KNOW"],
+  ["GUIDE", "This page.", "", "Rebuilt by Ushering -> Set up the sheet."],
+  ["USHERS", "Everyone in the department and their roles.", "One person (USHER_ID U001, U002 ...)", "Add people and roles in the Admin App, not here. PINs are never stored here."],
+  ["EVENTS", "Sunday services and other events.", "One event (S20261004-1 = First Service on 4 Oct 2026; E0001 = other events)", "Sundays appear by themselves; other events are added in Admin -> Events."],
+  ["APPOINTMENTS", "Who is on duty, past and present.", "One person on one duty at one event", "STATUS removed keeps changes on the record."],
+  ["REPORTS", "One report per event, with its status and both signatures.", "One report (R0001 ...), its current version", "Draft -> Submitted -> Pending Countersignature -> Verified."],
+  ["ATTENDANCE", "Male, female, children and total for each report.", "One version of one report", "Add up only rows with CURRENT = Yes; No means an amendment replaced it."],
+  ["MINISTRATION", "Minister, sermon, Bible text, first-timers and the rest.", "One line of one version of one report", "Lines are set in Admin -> Settings (ministration_fields). Use CURRENT = Yes."],
+  ["OFFERING", "Every note and coin line of every offering.", "One denomination line of one version", "AMOUNT is in pounds. Use CURRENT = Yes."],
+  ["REPORT_VERSIONS", "Versions an amendment replaced, with who, when and why.", "One replaced version", "Never edited; amendments only add rows."],
+  ["AUTHORISATIONS", "Requests and approvals: countersigning, submitting, amending, duty changes.", "One request (A0001 ...)", "An approval is for one transaction and is used once (CONSUMED)."],
+  ["DUES", "Dues payments recorded by the Treasurer.", "One payment (P00001 ...)", "A mistake is VOIDED, never deleted."],
+  ["NOTIFICATIONS", "What the app told each person.", "One notification", ""],
+  ["AUDIT", "Every change, by whom, before and after.", "One change", ""],
+  ["AUTH_LOG", "Sign-ins, sign-outs, wrong PINs, PIN changes.", "One event", ""],
+  ["CONFIG", "Rule changes made in Admin -> Settings.", "One rule", "The rule itself lives on the server; this is its history."],
+  ["", "", "", ""],
+  ["Test rows", "Names beginning \"Test \" come from Admin -> Settings -> Testing.", "", "They stay on the record after the test people are switched off."]
+];
+
+function writeGuide(ss) {
+  var sh = ss.getSheetByName("GUIDE") || ss.insertSheet("GUIDE", 0);
+  try { sh.clear(); } catch (err) {}
+  sh.getRange(1, 1, GUIDE.length, GUIDE[0].length).setValues(GUIDE);
+  try { sh.setFrozenRows(1); sh.getRange(1, 1, 1, GUIDE[0].length).setFontWeight("bold"); } catch (err) {}
+  protectTab(sh);
+}
+
 function setUpSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  writeGuide(ss);
   Object.keys(TABS).forEach(function (n) { protectTab(ensureTab(ss, n, TABS[n])); });
   ScriptApp.getProjectTriggers().forEach(function (t) {
     var f = t.getHandlerFunction ? t.getHandlerFunction() : t.fn;

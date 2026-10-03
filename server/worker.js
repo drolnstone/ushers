@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.2.0";
+const SERVER_VERSION = "w0.3.0";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -67,7 +67,7 @@ const DEFAULT_CONFIG = {
     GBP: { symbol: "£", denominations: [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1] }
   },
   default_currency: "GBP",
-  countersign_roles: ["head_usher", "assistant_head_usher", "system_admin"],
+  countersign_roles: ["head_usher", "assistant_head_usher"],
   countersign_rostered: true,         // anyone on duty at that event may countersign
   self_approval: false,               // may an approver decide somebody else's request about themselves?
   church_name: "RCCG Dominion Assembly",
@@ -105,10 +105,12 @@ const ROLE_PERMISSIONS = {
   head_usher: COORD_PERMS,
   assistant_head_usher: COORD_PERMS,
   treasurer: ["usher.app", "admin.app", "treasurer.app", "dues.view_all", "dues.record", "dues.remind"],
-  /* Administrators are approvers: what they do needs nobody's request. */
+  /* The System Administrator builds and runs the system (people, roles,
+     settings, audit) and is not an approver: approvals stay with the Head
+     Usher and Assistant Head Usher. To test a role, sign in as a test
+     person who holds it (Admin -> Settings -> Testing). */
   system_admin: ["admin.app", "ushers.view", "ushers.manage", "roles.manage", "roles.grant_any",
-    "config.manage", "audit.view", "exceptions.approve", "reports.view_all", "reports.submit_any",
-    "reports.countersign", "dashboard.view"]
+    "config.manage", "audit.view"]
 };
 /* Without roles.grant_any a person may grant only these. Treasurer and
    System Administrator need a System Administrator. */
@@ -502,6 +504,11 @@ function meView(me) {
    ========================================================================== */
 
 async function aPeople(env, cfg) {
+  /* Before anybody is a System Administrator, the sign-in screen offers
+     First-time setup (it still needs BOOTSTRAP_TOKEN). */
+  const firstSetup = !!env.BOOTSTRAP_TOKEN &&
+    !(await env.DB.prepare("SELECT 1 AS n FROM user_roles WHERE role='system_admin' LIMIT 1").first());
+  if (firstSetup) return { ok: true, people: [], firstSetup: true };
   if (!cfg.public_name_list) return { ok: true, people: [], typeName: true };
   const r = await env.DB.prepare(
     "SELECT id, full_name FROM ushers WHERE active=1 AND pin_hash IS NOT NULL ORDER BY full_name COLLATE NOCASE"

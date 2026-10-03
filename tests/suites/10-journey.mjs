@@ -24,11 +24,14 @@ export default async function ({ root }) {
   };
 
   s.test("the first System Administrator is made with the bootstrap token, once", async (a) => {
+    a.ok((await call("people")).firstSetup, "before anyone is set up, the sign-in screen offers First-time setup");
+    a.eq((await client(mod, makeEnv(root, { BOOTSTRAP_TOKEN: "" }))("people")).firstSetup, undefined, "not without a setup token");
     a.eq((await call("bootstrap", { token: "wrong", fullName: "Sam Admin", pin: "9999" })).error, "forbidden");
     const r = await call("bootstrap", { token: "test-bootstrap", fullName: "Sam Admin", pin: "9999" });
     a.ok(r.ok, JSON.stringify(r));
     a.eq((await call("bootstrap", { token: "test-bootstrap", fullName: "Other", pin: "9999" })).error, "already");
     const p = await call("people");
+    a.not(p.firstSetup, "and never again once there is a System Administrator");
     ID.admin = p.people.find((x) => x.name === "Sam Admin").id;
     await login("admin", "9999");
   });
@@ -326,28 +329,30 @@ export default async function ({ root }) {
     a.eq(others.length, 0, "nobody is asked to approve it");
   });
 
-  s.test("System Administrators are approvers too", async (a) => {
+  s.test("the System Administrator is not an approver: approvals stay with the Head Ushers", async (a) => {
     const ev = "S" + next.replace(/-/g, "") + "-2";
     const ap = env.DB._one("SELECT id FROM appointments WHERE event_id=? AND usher_id=? AND status='active'", ev, ID.hu).id;
     const r = await call("authorisation.request", { kind: "duty_takeover", appointmentId: ap, reason: "Swap back" }, T.B);
     a.eq(r.status, "pending");
-    const l = await call("authorisations.list", { status: "pending" }, T.admin);
-    a.ok(l.authorisations.some((x) => x.id === r.authorisationId && x.canDecide), JSON.stringify(l));
-    a.ok((await call("authorisation.decide", { id: r.authorisationId, decision: "approve", pin: "9999" }, T.admin)).ok);
+    a.eq((await call("authorisation.decide", { id: r.authorisationId, decision: "approve", pin: "9999" }, T.admin))._status, 403);
+    a.not(env.DB._rows("SELECT * FROM notifications WHERE type='approval_request' AND ref_id=?", r.authorisationId).some((n) => n.usher_id === ID.admin),
+      "approval requests do not go to the System Administrator");
+    a.ok((await call("authorisation.decide", { id: r.authorisationId, decision: "approve", pin: "1234" }, T.C)).ok === false, "nor to an usher");
+    a.ok((await call("authorisation.decide", { id: r.authorisationId, decision: "approve", pin: "1234" }, T.hu)).ok, "the Head Usher decides it");
   });
 
   let adminReport;
-  s.test("an administrator's report needs no approval to submit but must still be countersigned by somebody else", async (a) => {
+  s.test("an approver's report needs no approval to submit but must still be countersigned by somebody else", async (a) => {
     const ev = "S" + next.replace(/-/g, "") + "-2";
-    const sub = { eventId: ev, submissionId: "sub-admin-0001", attendance: { male: 4, female: 5, children: 1 }, ministration: { minister: "Pastor Ade" },
-      entries: [{ category: "General Offering", currency: "GBP", denomination: 1000, quantity: 2 }], signature: "Sam Admin", pin: "9999" };
-    a.eq((await call("report.submit", Object.assign({}, sub, { countersignerId: ID.admin }), T.admin)).error, "self_countersign");
-    const r = await call("report.submit", Object.assign({}, sub, { countersignerId: ID.D }), T.admin);
+    const sub = { eventId: ev, submissionId: "sub-hu-00001", attendance: { male: 4, female: 5, children: 1 }, ministration: { minister: "Pastor Ade" },
+      entries: [{ category: "General Offering", currency: "GBP", denomination: 1000, quantity: 2 }], signature: "Grace Okafor", pin: "1234" };
+    a.eq((await call("report.submit", Object.assign({}, sub, { countersignerId: ID.hu }), T.hu)).error, "self_countersign");
+    const r = await call("report.submit", Object.assign({}, sub, { countersignerId: ID.D }), T.hu);
     a.ok(r.ok, JSON.stringify(r));
     a.eq(r.report.status, "pending_countersignature", "not verified until somebody else countersigns");
-    a.eq(r.countersigner, "authorised", "the administrator's choice of countersigner is already approved");
+    a.eq(r.countersigner, "authorised", "the approver's choice of countersigner is already approved");
     adminReport = r.report.id;
-    a.eq((await call("report.countersign", { reportId: adminReport, submissionId: "cs-admin-self1", signature: "Sam Admin", pin: "9999" }, T.admin)).error, "not_countersigner");
+    a.eq((await call("report.countersign", { reportId: adminReport, submissionId: "cs-hu-self01", signature: "Grace Okafor", pin: "1234" }, T.hu)).error, "not_countersigner");
     const c = await call("report.countersign", { reportId: adminReport, submissionId: "cs-d-000001", signature: "David Cole", pin: "1234" }, T.D);
     a.ok(c.ok, JSON.stringify(c));
     a.eq(c.report.status, "verified");

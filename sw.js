@@ -2,9 +2,9 @@
    changes. Only the files below are served from the cache, and only when
    the network fails; everything else (the Admin App, the server) passes
    straight through. Same idea as the Driver App's sw.js. */
-const CACHE = "ushers-v0.2.0";
+const CACHE = "ushers-v0.3.0";
 const SHELL = ["./", "./index.html", "./config.js", "./shared/core.js", "./shared/reports.js", "./shared/style.css",
-  "./manifest.webmanifest", "./icon.svg", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
+  "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 /* config.js says where the server is. It is written for a page, so it is
    given a window to write to. */
