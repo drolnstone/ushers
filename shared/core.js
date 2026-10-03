@@ -10,7 +10,7 @@
    duplicates is made on the phone. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.6";
+  var APP_VERSION = "v0.3.7";
   var CFG = window.USHERS_CONFIG || {};
   var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:" };
 
@@ -180,9 +180,34 @@
   function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
 
   function foot(el) {
-    el.textContent = "app " + versions.app + (versions.server ? " · server " + versions.server : "") +
-                     (versions.sheet ? " · sheet " + versions.sheet : "");
+    clear(el);
+    el.appendChild(h("div", {}, "app " + versions.app + (versions.server ? " · server " + versions.server : "") +
+                     (versions.sheet ? " · sheet " + versions.sheet : "")));
+    el.appendChild(h("div", { class: "themes", role: "group", "aria-label": "Appearance" },
+      THEMES.map(function (t) {
+        return h("button", { type: "button", class: t[0] === themeChoice() ? "on" : "", "aria-pressed": String(t[0] === themeChoice()),
+                             onclick: function () { try { localStorage.setItem(THEME_KEY, t[0]); } catch (e) {} themeApply(); foot(el); } }, t[1]);
+      })));
   }
+
+  /* ---- appearance, as the Driver App: Auto follows the phone ------------
+     One key for both apps (same origin), read again in each page's head so
+     the first paint is already right. */
+  var THEME_KEY = "ushers.theme.v1";
+  var THEMES = [["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]];
+  function themeChoice() { try { return localStorage.getItem(THEME_KEY) || "auto"; } catch (e) { return "auto"; } }
+  function themeApply() {
+    var pick = themeChoice(), r = pick;
+    if (pick !== "light" && pick !== "dark") {
+      var m = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+      r = (m && m.matches) ? "dark" : "light";
+    }
+    document.documentElement.setAttribute("data-theme", r);
+  }
+  (function () {
+    var m = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+    if (m) { if (m.addEventListener) m.addEventListener("change", themeApply); else if (m.addListener) m.addListener(themeApply); }
+  })();
 
   /* ---- alerts on this phone (push) -------------------------------------
      The server's public key comes from "me". The push itself carries
