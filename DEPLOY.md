@@ -1,6 +1,6 @@
 # Setting up the Ushering App
 
-Versions: app v0.3.9 · server w0.3.6 · sheet v0.3.0.
+Versions: app v0.3.10 · server w0.3.7 · sheet v0.3.0.
 
 Already done once (skip if so): the D1 database exists with `server/schema.sql`
 run in its Console, the Worker exists, and `config.js` points at it
@@ -32,7 +32,7 @@ run in its Console, the Worker exists, and `config.js` points at it
 5. Settings → Triggers → Cron Triggers → add `*/5 * * * *` (reminders and
    the sheet knock).
 6. Open `https://<worker address>/api/health`. It should show
-   `"server":"w0.3.6"`, and `pinPepper` and `sheetToken` true.
+   `"server":"w0.3.7"`, and `pinPepper` and `sheetToken` true.
 
 ## 2. The pages (GitHub Pages)
 
@@ -89,7 +89,7 @@ test people**.
 
 A. `/api/health` shows `pinPepper`, `sheetToken` and `sheetKnock` true, and
    after five minutes `clockLastTick` is no longer 0.
-B. The foot of both apps reads app v0.3.9 · server w0.3.6 · sheet v0.3.0
+B. The foot of both apps reads app v0.3.10 · server w0.3.7 · sheet v0.3.0
    (the sheet number appears after the first drain).
 C. The Admin App's sign-in lists only Head Ushers, Assistant Head Ushers and
    System Administrators. A Head Usher moves between the apps with Open
@@ -105,8 +105,10 @@ G. An usher on the rota opens the First Service report, the attendance
 H. Within a minute the REPORTS, ATTENDANCE, OFFERING and AUDIT tabs have the
    rows, and every tab is still protected.
 I. On an iPhone: Share → Add to Home Screen shows the church logo; open it
-   from there, Notifications → Turn on alerts on this phone, and ask somebody
-   to send you a message (Admin → Message): the alert arrives.
+   from there, tap the bell at the top (or Notifications → Turn on alerts on
+   this phone), and ask somebody to send you a message (Admin → Message): the
+   alert arrives, and the bell shows the unread count. Notifications → Send a
+   test alert sends one that says "Alerts are working".
 J. Admin → Reports → Make PDF summary downloads the month so far.
 K. Admin → Events: add a Prayer Meeting for today and choose an usher on duty.
    That usher's report has no countersigner box and shows Verified once

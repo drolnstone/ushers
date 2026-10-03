@@ -36,6 +36,7 @@
 <header class="bar">
   <span class="brand"><img src="../shared/logo.png" alt=""><span><b>RCCG Dominion Assembly</b><small>Liverpool · Ushering Admin</small><em id="title"></em></span></span>
   <a href="../">Open Ushers App</a>
+  <button class="bell" id="bell" type="button" hidden aria-label="Notifications" aria-pressed="false"><svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span class="bell-count" id="bellCount" hidden></span></button>
   <button id="signOut" hidden>Sign out</button>
 </header>
 <nav class="tabs" id="tabs" hidden></nav>
@@ -103,6 +104,7 @@
      session, so signing in on either app signs you in on both. */
   function signIn() {
     ME = null;
+    C.bellStop();
     document.getElementById("tabs").hidden = true;
     document.getElementById("signOut").hidden = true;
     document.getElementById("title").textContent = "";
@@ -151,8 +153,12 @@
       tabs.hidden = false;
       paintQueue();
       C.flush();
-      unread();
       route();
+      /* The bell, as in the Ushers App: alerts on this device, the unread
+         count, and anything new shown while the app is open. */
+      C.bellStart({ key: PUSH_KEY, notes: "#notes", onNew: function () {
+        if ((location.hash || "").slice(1).split("/")[0] === "notes") notes();
+      } });
     }, failed);
   }
   document.getElementById("signOut").addEventListener("click", function () {
@@ -445,7 +451,8 @@
       on.concat(off).forEach(function (u, i) {
         if (i === on.length) parts.push(h("h2", {}, "Removed"), h("p", { class: "muted" }, "They cannot sign in. To bring someone back, tap Edit details and roles and tick Active."));
         parts.push(h("div", { class: "card" }, h("div", { class: "row" }, h("b", { class: "grow" }, u.name), u.active ? null : h("span", { class: "chip bad" }, "Removed"),
-            u.hasPin ? null : h("span", { class: "chip warn" }, "No PIN")),
+            u.hasPin ? null : h("span", { class: "chip warn" }, "No PIN"),
+            u.active && !u.alerts ? h("span", { class: "chip warn", title: "No phone has alerts on: they are emailed instead" }, "Alerts off") : null),
           h("div", {}, u.roles.map(function (r) { return h("span", { class: "chip" }, labelOf(r)); })),
           h("div", { class: "muted" }, [u.email, u.phone].filter(Boolean).join(" · ")),
           canEdit(u, j) ? h("a", { class: "btn ghost", href: "#ushers/" + encodeURIComponent(u.usherId) }, "Edit details and roles")
@@ -541,14 +548,9 @@
   /* The same notifications as the Ushers App's tab: filed reports, approval
      requests and the rest, kept until read. */
   function paintUnread(list) {
-    var b = document.getElementById("unread");
-    if (!b) return;
-    var n = list.filter(function (x) { return !x.read; }).length;
-    b.hidden = !n; b.textContent = n;
+    C.bellSet(list.filter(function (x) { return !x.read; }).length);
   }
-  function unread() {
-    C.api("notifications.list").then(function (j) { if (j.ok) paintUnread(j.notifications); }, function () {});
-  }
+  function unread() { C.bellCheck(); }
 
   function notes() {
     loading();
@@ -586,6 +588,11 @@
         box.appendChild(h("p", { class: "muted" }, "Alerts are blocked for this app in the device's settings. Allow notifications for it there, then come back."));
       } else if (state === "on") {
         box.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, "On. New notifications also arrive as alerts."),
+          h("button", { class: "ghost", onclick: function (e) {
+            var b = e.target; b.disabled = true;
+            C.alertsTest().then(function () { b.disabled = false; C.toast("A test alert is on its way to this device."); },
+              function (x) { b.disabled = false; paint("on", x.network ? "No connection." : x.message); });
+          } }, "Send a test alert"),
           h("button", { class: "ghost", onclick: function () { C.alertsOff().then(function () { paint("off"); }, function (e) { paint("on", e.message); }); } }, "Turn off")));
       } else {
         box.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, "Get an alert the moment a report is filed or an approval is needed."),
@@ -594,6 +601,7 @@
           } }, "Turn on alerts")));
       }
       if (note) box.appendChild(msg(note, "bad"));
+      C.bellState();
     }
     C.alertsState().then(function (s) { paint(s); }, function () { paint("unsupported"); });
     return box;
