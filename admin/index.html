@@ -21,14 +21,17 @@
 <body>
 <!-- No service worker: every screen is read from the server as it opens,
      as the Driver App's coordinator app. -->
+<div class="top">
 <header class="bar">
   <span class="brand"><img src="../shared/logo.png" alt=""><span><b>RCCG Dominion Assembly</b><small>Liverpool · Ushering Admin</small><em id="title"></em></span></span>
   <a href="../">Open Ushers App</a>
   <button id="signOut" hidden>Sign out</button>
 </header>
 <nav class="tabs" id="tabs" hidden></nav>
+</div>
 <main id="main"></main>
 <footer class="foot" id="foot"></footer>
+<button class="totop" id="toTop" type="button" aria-label="Back to top">&#8593;</button>
 <script>
 (function () {
   "use strict";
