@@ -7,31 +7,147 @@
    Offline rules, from the Driver App: drafts are saved on the phone as they
    are typed; a signed report with no signal waits in a queue, sent one at a
    time, and leaves the queue only when the server has it. The id that stops
-   duplicates is made on the phone. */
+   duplicates is made on the phone.
+
+   Both apps open with no signal once they have been opened with one: the
+   service worker keeps their files, and the last answer to each screen is
+   kept here, so a screen shows what this phone last saw (marked as such)
+   instead of nothing. A change made with no signal joins the same queue,
+   with its own id so the server does it once. As the Driver App's
+   rotaSaveCache: a saved copy is only ever a good answer, never an empty or
+   refused one. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.10";
+  var APP_VERSION = "v0.3.12";
   var CFG = window.USHERS_CONFIG || {};
-  var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:" };
+  var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:", saved: "ushers.saved.v1:" };
 
   /* Storage that never throws; memory when the browser refuses. */
   var mem = {};
   var store = {
     get: function (k) { try { var v = localStorage.getItem(k); return v === null ? (k in mem ? mem[k] : null) : v; } catch (e) { return k in mem ? mem[k] : null; } },
-    set: function (k, v) { mem[k] = v; try { localStorage.setItem(k, v); } catch (e) {} },
+    /* When the phone is full, saved copies of screens make way: the queue,
+       drafts and the session matter more than a copy of a screen. */
+    set: function (k, v) {
+      mem[k] = v;
+      try { localStorage.setItem(k, v); } catch (e) {
+        if (k.indexOf(K.saved) === 0) return;
+        savedClear();
+        try { localStorage.setItem(k, v); } catch (e2) {}
+      }
+    },
     del: function (k) { delete mem[k]; try { localStorage.removeItem(k); } catch (e) {} },
     getJSON: function (k, d) { try { var v = store.get(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
     setJSON: function (k, v) { store.set(k, JSON.stringify(v)); }
   };
 
   function token() { return store.get(K.session) || ""; }
-  function setToken(t) { if (t) store.set(K.session, t); else store.del(K.session); }
+  /* A new sign-in, or a sign-out, drops the saved screens: they belong to
+     whoever was signed in. */
+  function setToken(t) {
+    if ((t || "") !== token()) savedClear();
+    if (t) store.set(K.session, t); else store.del(K.session);
+  }
 
   var versions = { app: APP_VERSION, server: "", sheet: "" };
 
+  /* ---- saved copies of screens ----------------------------------------- */
+
+  /* Calls that only read. Their last good answer is kept, by call and
+     question, and answers the same call when the server cannot be reached. */
+  var READS = ["me", "home", "history.mine", "rota", "report.open", "reports.list", "reports.period", "ushers.selectable",
+               "authorisations.list", "notifications.list", "dues.mine", "dues.overview", "dues.member", "dashboard",
+               "ushers.list", "config.get", "audit.list", "notifications.count"];
+  var SAVED_MAX = 80, SAVED_BIG = 250000;
+  function savedKey(action, body) { return K.saved + action + ":" + JSON.stringify(body || {}); }
+  function savedKeys() {
+    var out = [];
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(K.saved) === 0) out.push(k);
+      }
+    } catch (e) {}
+    Object.keys(mem).forEach(function (k) { if (k.indexOf(K.saved) === 0 && out.indexOf(k) === -1) out.push(k); });
+    return out;
+  }
+  function savedClear() { savedKeys().forEach(function (k) { store.del(k); }); }
+  function savedPut(action, body, j) {
+    var copy = {};
+    Object.keys(j).forEach(function (k) { if (k.charAt(0) !== "_") copy[k] = j[k]; });
+    var v = JSON.stringify({ at: Date.now(), j: copy });
+    if (v.length > SAVED_BIG) return;
+    store.set(savedKey(action, body), v);
+    var keys = savedKeys();
+    if (keys.length > SAVED_MAX) {
+      keys.map(function (k) { return { k: k, at: (store.getJSON(k, {}) || {}).at || 0 }; })
+        .sort(function (a, b) { return a.at - b.at; })
+        .slice(0, keys.length - SAVED_MAX).forEach(function (x) { store.del(x.k); });
+    }
+  }
+  /* The same question first. A rota asked from another day is the one
+     exception: the last rota saved is better than none, and it names its
+     own dates. */
+  function savedGet(action, body) {
+    var hit = store.getJSON(savedKey(action, body), null);
+    if (hit || action !== "rota") return hit;
+    var best = null;
+    savedKeys().forEach(function (k) {
+      if (k.indexOf(K.saved + "rota:") !== 0) return;
+      var x = store.getJSON(k, null);
+      if (x && (!best || x.at > best.at)) best = x;
+    });
+    return best;
+  }
+
+  /* Whether the last call reached the server, shown in #linkBar on each
+     page: what is on screen may be a saved copy, and changes wait. */
+  var link = { offline: false, savedAt: 0 };
+  function setLink(offline, savedAt) {
+    link.offline = offline;
+    if (!offline) link.savedAt = 0;
+    else if (savedAt) link.savedAt = savedAt;
+    var b = document.getElementById("linkBar");
+    if (!b) return;
+    b.hidden = !offline;
+    b.textContent = !offline ? "" : "No signal. " +
+      (link.savedAt ? "Showing what this device saved on " + timeLabel(link.savedAt) + ". " : "") +
+      "Changes you make are kept on this device and sent when the signal is back.";
+  }
+
   /* Calls the server. Resolves with the answer, ok or not; rejects only when
-     the server could not be reached (err.network = true). */
+     the server could not be reached (err.network = true). A read the server
+     could not answer is answered from its saved copy, marked _savedAt. */
   function api(action, body) {
+    var read = READS.indexOf(action) !== -1;
+    return call(action, body).then(function (j) {
+      setLink(false);
+      if (read && j.ok && token()) savedPut(action, body, j);
+      return j;
+    }, function (err) {
+      if (!err || !err.network) throw err;
+      var hit = read && token() ? savedGet(action, body) : null;
+      setLink(true, hit && hit.at);
+      if (!hit) throw err;
+      return Object.assign({}, hit.j, { _savedAt: hit.at });
+    });
+  }
+
+  /* A change. With no signal it joins the queue and resolves
+     { ok: true, queued: true, message }; sent later, the queueId lets the
+     server do it once however many times it arrives. */
+  function send(action, body, label) {
+    body = Object.assign({}, body || {});
+    if (!body.queueId) body.queueId = newId("q");
+    return api(action, body).catch(function (err) {
+      if (!err || !err.network) throw err;
+      queueAdd({ id: body.queueId, action: action, label: label || action, body: body });
+      if (core.onQueueChange) core.onQueueChange();
+      return { ok: true, queued: true, message: "No signal. Saved on this device; it is sent when the signal is back." };
+    });
+  }
+
+  function call(action, body) {
     var headers = { "content-type": "application/json" };
     if (token()) headers.authorization = "Bearer " + token();
     return fetch(String(CFG.api || "").replace(/\/+$/, "") + "/api/" + action, {
@@ -493,7 +609,7 @@
     APP_VERSION: APP_VERSION, CFG: CFG, store: store, api: api, token: token, setToken: setToken, versions: versions,
     rememberPin: rememberPin, checkPinOnDevice: checkPinOnDevice,
     draftGet: draftGet, draftSave: draftSave, draftClear: draftClear, drafts: drafts,
-    queue: queue, queueAdd: queueAdd, queueRemove: queueRemove, flush: flush, newId: newId,
+    queue: queue, queueAdd: queueAdd, queueRemove: queueRemove, flush: flush, newId: newId, send: send, saved: savedGet, savedClear: savedClear,
     money: money, denomLabel: denomLabel, dateLabel: dateLabel, timeLabel: timeLabel, londonToday: londonToday,
     h: h, clear: clear, foot: foot, onSignedOut: null, onQueueChange: null,
     alertsSupported: alertsSupported, alertsState: alertsState, alertsOn: alertsOn, alertsOff: alertsOff, alertsTest: alertsTest, iPhoneNotInstalled: iPhoneNotInstalled,

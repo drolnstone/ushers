@@ -45,6 +45,7 @@
   <a href="#pin" data-r="pin">PIN</a>
 </nav>
 <div class="banner" id="queueBanner" hidden></div>
+<div class="banner" id="linkBar" hidden></div>
 </div>
 <main id="main"></main>
 <footer class="foot" id="foot"></footer>
@@ -58,7 +59,7 @@
   function msg(text, kind) { return h("div", { class: "msg " + (kind || "") }, text); }
   function show() { C.clear(main); main.appendChild(h.apply(null, ["div", {}].concat(Array.prototype.slice.call(arguments)))); C.foot(document.getElementById("foot")); }
   function loading() { show(h("p", { class: "muted" }, "Loading…")); }
-  function offline(err) { show(msg(err && err.network ? "No connection. Showing nothing new until the signal is back." : String(err), "bad")); }
+  function offline(err) { show(msg(err && err.network ? "No connection, and this screen has not been opened on this phone before. It shows once the signal is back." : String(err), "bad")); }
   function statusChip(code, label) { return h("span", { class: "chip status-" + (code || "") }, label || "Not started"); }
 
   C.onSignedOut = function () { ME = null; signIn(); };
@@ -154,6 +155,8 @@
       paintQueue();
       C.flush();
       route();
+      /* Kept for a report signed with no signal: who can countersign. */
+      C.api("ushers.selectable").then(function () {}, function () {});
       /* The bell: alerts on this phone, the unread count, and new ones shown
          while the app is open. On the Notifications screen the list is read
          again when something new arrives. */
@@ -261,13 +264,27 @@
     C.api("report.open", openArgs).then(function (j) {
       if (!j.ok) return show(msg(j.message, "bad"));
       if (j.report && j.report.status && j.report.status !== "draft") return viewReport(j);
+      if (j._savedAt) j.offline = true;
       editReport(j);
     }, function (e) {
-      /* No signal: a draft on this phone can still be finished and signed. */
+      /* No signal: a draft on this phone can still be finished and signed,
+         and so can a report for a duty Home showed, never opened here. */
       var d = ref.eventId && C.draftGet(ref.eventId);
-      if (d && d.event) editReport({ event: d.event, canSubmit: true, offline: true });
+      var ev = d && d.event ? d.event : ref.eventId && dutyEvent(ref.eventId);
+      if (ev) editReport({ event: ev, canSubmit: true, offline: true });
       else offline(e);
     });
+  }
+
+  /* A duty from the saved Home, made into the event a report needs. The
+     server checks it all again when the report is sent. */
+  function dutyEvent(id) {
+    var s = C.saved("home"), t;
+    var all = s && s.j ? [].concat(s.j.thisWeek || [], s.j.recent || [], s.j.later || []) : [];
+    var d = all.filter(function (x) { return x.eventId === id; })[0];
+    if (!d || d.cancelled || !d.reportDue || (d.reportStatus && d.reportStatus !== "draft") || !d.type || !(t = CONF.eventTypes[d.type])) return null;
+    return { id: d.eventId, title: d.title, date: d.date, type: d.type, status: "active", thanksgiving: !!d.thanksgiving,
+             attendance: !!t.attendance, ministration: !!t.ministration, offering: !!t.offering, countersign: !!t.countersign };
   }
 
   function totalsOf(entries) {
@@ -450,8 +467,8 @@
     return h("div", { class: "card" }, h("h3", {}, "Something wrong?"),
       h("label", { for: "amend-why" }, "Ask to amend this report: what needs changing?"), reason, h("p"),
       h("button", { class: "ghost", onclick: function () {
-        C.api("authorisation.request", { kind: "report_amendment", reportId: r.id, reason: reason.value }).then(function (x) {
-          C.clear(out).appendChild(msg(x.ok ? "Asked. You will be told when it is decided." : x.message, x.ok ? "ok" : "bad"));
+        C.send("authorisation.request", { kind: "report_amendment", reportId: r.id, reason: reason.value }, "Ask to amend " + j.event.title).then(function (x) {
+          C.clear(out).appendChild(msg(x.queued ? x.message : x.ok ? "Asked. You will be told when it is decided." : x.message, x.ok ? "ok" : "bad"));
         }, function () { C.clear(out).appendChild(msg("No connection.", "bad")); });
       } }, "Ask to amend"), out);
   }
@@ -463,8 +480,8 @@
       j.submitApproval === "pending" ? msg("You have asked for approval. You will be told when it is decided.") : [
         h("label", { for: "why" }, "Why are you submitting this report?"), reason, h("p"),
         h("button", { onclick: function () {
-          C.api("authorisation.request", { kind: "report_submission", eventId: j.event.id, reason: reason.value }).then(function (r) {
-            C.clear(out).appendChild(msg(r.ok ? "Asked. You will be told when it is decided." : r.message, r.ok ? "ok" : "bad"));
+          C.send("authorisation.request", { kind: "report_submission", eventId: j.event.id, reason: reason.value }, "Ask to submit " + j.event.title).then(function (r) {
+            C.clear(out).appendChild(msg(r.queued ? r.message : r.ok ? "Asked. You will be told when it is decided." : r.message, r.ok ? "ok" : "bad"));
           }, function () { C.clear(out).appendChild(msg("No connection.", "bad")); });
         } }, "Ask for approval")], out);
     return box;
@@ -514,8 +531,9 @@
     return h("div", { class: "card" }, h("label", { for: "cs2" }, "Change countersigner"), cs, h("p"),
       h("button", { class: "ghost", onclick: function () {
         if (!cs.value) return;
-        C.api("report.countersigner", { reportId: r.id, countersignerId: cs.value }).then(function (x) {
-          if (x.ok) report({ reportId: r.id }); else C.clear(out).appendChild(msg(x.message, "bad"));
+        C.send("report.countersigner", { reportId: r.id, countersignerId: cs.value }, "Change countersigner").then(function (x) {
+          if (x.queued) C.clear(out).appendChild(msg(x.message, "ok"));
+          else if (x.ok) report({ reportId: r.id }); else C.clear(out).appendChild(msg(x.message, "bad"));
         });
       } }, "Change"), out);
   }
@@ -559,7 +577,7 @@
       if (!j.ok) return show(msg(j.message, "bad"));
       C.bellSet(j.notifications.filter(function (n) { return !n.read; }).length);
       var parts = [h("div", { class: "row" }, h("h1", { class: "grow" }, "Notifications"),
-        h("button", { class: "ghost", onclick: function () { C.api("notifications.read", { all: true }).then(notes); } }, "Mark all read"))];
+        h("button", { class: "ghost", onclick: function () { C.send("notifications.read", { all: true }, "Mark notifications read").then(notes); } }, "Mark all read"))];
       parts.push(alertsCard());
       if (!j.notifications.length) parts.push(h("p", { class: "muted" }, "Nothing yet."));
       j.notifications.forEach(function (n) {
@@ -568,8 +586,8 @@
         parts.push(h("div", { class: "card", style: n.read ? "opacity:.7" : "" },
           h("div", { class: "row" }, h("b", { class: "grow" }, n.title), n.read ? null : h("span", { class: "chip warn" }, "New")),
           n.body ? h("div", {}, n.body) : null, h("div", { class: "muted" }, C.timeLabel(n.at)),
-          h("div", { class: "row" }, link ? h("a", { class: "btn ghost", href: link, onclick: function () { C.api("notifications.read", { ids: [n.id] }).then(C.bellCheck, function () {}); } }, "Open") : null,
-            n.read ? null : h("button", { class: "ghost", onclick: function () { C.api("notifications.read", { ids: [n.id] }).then(notes); } }, "Mark read"))));
+          h("div", { class: "row" }, link ? h("a", { class: "btn ghost", href: link, onclick: function () { C.send("notifications.read", { ids: [n.id] }, "Mark a notification read").then(C.bellCheck, function () {}); } }, "Open") : null,
+            n.read ? null : h("button", { class: "ghost", onclick: function () { C.send("notifications.read", { ids: [n.id] }, "Mark a notification read").then(notes); } }, "Mark read"))));
       });
       show.apply(null, parts);
     }, offline);
@@ -638,7 +656,7 @@
           .map(function (x) { return h("div", { class: "stat" }, h("b", {}, x[1]), h("span", {}, x[0])); })),
           h("p"), h("button", { class: "ghost", onclick: function (e) {
             e.target.disabled = true;
-            C.api("dues.remind", {}).then(function (x) { e.target.textContent = x.ok ? "Reminders sent: " + x.sent : x.message; });
+            C.send("dues.remind", {}, "Remind everyone behind on dues").then(function (x) { e.target.textContent = x.queued ? "Saved; reminders go when the signal is back" : x.ok ? "Reminders sent: " + x.sent : x.message; });
           } }, "Remind everyone who is behind"))];
       parts.push(h("div", { class: "card" }, h("table", {}, h("tr", {}, h("th", {}, "Name"), h("th", { class: "num" }, "Paid"), h("th", { class: "num" }, "Outstanding"), h("th", {}, "Status")),
         j.members.map(function (m) {
@@ -666,7 +684,7 @@
               return h("tr", {}, h("td", {}, C.dateLabel(p.paidOn)), h("td", { class: "num" }, C.money(p.amount)), h("td", {}, p.method), h("td", {},
                 h("button", { class: "ghost", onclick: function () {
                   var why = prompt("Why is this payment being voided?");
-                  if (why) C.api("dues.void", { id: p.id, reason: why }).then(function (x) { if (x.ok) treasurer(usherId); else alert(x.message); });
+                  if (why) C.send("dues.void", { id: p.id, reason: why }, "Void " + j.name + "'s payment of " + C.money(p.amount)).then(function (x) { if (x.queued) alert(x.message); else if (x.ok) treasurer(usherId); else alert(x.message); });
                 } }, "Void")));
             })));
         }),
@@ -675,8 +693,9 @@
         h("label", {}, "Method"), method, h("label", {}, "Note"), note, h("p"),
         h("button", { onclick: function () {
           C.clear(out);
-          C.api("dues.record", { usherId: usherId, paidOn: paidOn.value, amountPence: Math.round(Number(amount.value) * 100), year: Number(year.value), method: method.value, note: note.value })
-            .then(function (x) { if (x.ok) treasurer(usherId); else out.appendChild(msg(x.message, "bad")); });
+          C.send("dues.record", { usherId: usherId, paidOn: paidOn.value, amountPence: Math.round(Number(amount.value) * 100), year: Number(year.value), method: method.value, note: note.value },
+                 "Payment of £" + Number(amount.value).toFixed(2) + " from " + j.name)
+            .then(function (x) { if (x.queued) out.appendChild(msg(x.message, "ok")); else if (x.ok) treasurer(usherId); else out.appendChild(msg(x.message, "bad")); });
         } }, "Record payment"), out);
       var w = main.firstChild; w.insertBefore(card, w.children[1] || null);
     });
