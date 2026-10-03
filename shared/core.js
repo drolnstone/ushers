@@ -18,7 +18,7 @@
    refused one. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.10";
+  var APP_VERSION = "v0.3.11";
   var CFG = window.USHERS_CONFIG || {};
   var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:", saved: "ushers.saved.v1:" };
 

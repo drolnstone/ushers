@@ -1,6 +1,6 @@
 # Setting up the Ushering App
 
-Versions: app v0.3.10 · server w0.3.7 · sheet v0.3.0.
+Versions: app v0.3.11 · server w0.3.7 · sheet v0.3.0.
 
 Already done once (skip if so): the D1 database exists with `server/schema.sql`
 run in its Console, the Worker exists, and `config.js` points at it
@@ -89,7 +89,7 @@ test people**.
 
 A. `/api/health` shows `pinPepper`, `sheetToken` and `sheetKnock` true, and
    after five minutes `clockLastTick` is no longer 0.
-B. The foot of both apps reads app v0.3.10 · server w0.3.7 · sheet v0.3.0
+B. The foot of both apps reads app v0.3.11 · server w0.3.7 · sheet v0.3.0
    (the sheet number appears after the first drain).
 C. The Admin App's sign-in lists only Head Ushers, Assistant Head Ushers and
    System Administrators. A Head Usher moves between the apps with Open
@@ -114,8 +114,8 @@ K. Admin → Events: add a Prayer Meeting for today and choose an usher on duty.
    That usher's report has no countersigner box and shows Verified once
    signed, and the Head Usher gets "Report filed" straight away, in the
    app, as a phone alert (if turned on) and by email.
-L. The Ushers App's banner is bright purple and the Admin App's is deep
-   aubergine, as their home-screen icons. Auto, Light and Dark at the foot of
+L. The Ushers App's banner is purple and the Admin App's is deep
+   teal, as their home-screen icons. Auto, Light and Dark at the foot of
    either app change both; Auto follows the phone.
 M. Open both apps once with signal and look at a few screens. Turn on
    airplane mode and open each again: both open, the screens seen before
