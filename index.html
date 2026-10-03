@@ -339,15 +339,17 @@
       var cat = h("select", { id: "cat" }, CONF.offeringCategories.map(function (c) { return h("option", { value: c }, c); }));
       var den = h("select", { id: "den" }, cur.denominations.map(function (d) { return h("option", { value: d }, C.denomLabel(d, cur.symbol)); }));
       var qty = h("input", { id: "qty", type: "number", min: "1", step: "1", inputmode: "numeric", placeholder: "e.g. 10" });
+      var addSay = h("div");
       parts.push(h("div", { class: "card" }, h("h2", {}, "Offering"),
         h("div", { class: "grid3" }, h("div", {}, h("label", { for: "cat" }, "Category"), cat), h("div", {}, h("label", { for: "den" }, "Note or coin"), den),
           h("div", {}, h("label", { for: "qty" }, "Quantity"), qty)),
         h("p"), h("button", { class: "ghost", onclick: function () {
           var q = parseInt(qty.value, 10);
-          if (!(q > 0)) { qty.focus(); return; }
+          C.clear(addSay);
+          if (!(q > 0)) { addSay.appendChild(msg("Enter a quantity of 1 or more.", "bad")); qty.focus(); return; }
           state.entries.push({ category: cat.value, currency: CONF.defaultCurrency, denomination: Number(den.value), quantity: q });
           qty.value = ""; keep(); paintLines();
-        } }, "Add line"), lines, h("h3", {}, "Totals"), totals));
+        } }, "Add line"), addSay, lines, h("h3", {}, "Totals"), totals));
       paintLines();
     }
 
@@ -702,16 +704,28 @@
     var old = h("input", { id: "old", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var nw = h("input", { id: "new", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var again = h("input", { id: "again", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
-    var out = h("div");
+    var out = h("div"), max = CONF.pinMax || 4;
+    /* As the Driver App: each box hands on to the next once its four digits
+       are in, so the PIN is keyed straight through. The last one stops
+       there; Change PIN is still their own tap. */
+    [old, nw, again].forEach(function (box, i, all) {
+      box.addEventListener("input", function () {
+        var v = box.value.replace(/\D/g, "").slice(0, max);
+        if (box.value !== v) box.value = v;
+        if (v.length === max && all[i + 1]) all[i + 1].focus();
+      });
+    });
     show(h("h1", {}, forced === true ? "Change your default PIN" : "Change PIN"),
       h("div", { class: "card" },
-      h("label", { for: "old" }, forced === true ? "Default PIN" : "Current PIN"), old, h("label", { for: "new" }, "New PIN (" + CONF.pinMax + " digits)"), nw,
+      h("label", { for: "old" }, forced === true ? "Default PIN" : "Current PIN"), old, h("label", { for: "new" }, "New PIN (" + max + " digits)"), nw,
       h("label", { for: "again" }, "New PIN again"), again, h("p"),
       h("button", { onclick: function () {
         C.clear(out);
+        if (old.value.length < max) return out.appendChild(msg("Enter your " + (forced === true ? "default" : "current") + " PIN.", "bad"));
+        if (nw.value.length !== max) return out.appendChild(msg("A PIN is exactly " + max + " digits.", "bad"));
         if (nw.value !== again.value) return out.appendChild(msg("The new PINs do not match.", "bad"));
         C.api("pin.change", { oldPin: old.value, newPin: nw.value }).then(function (j) {
-          if (!j.ok) return out.appendChild(msg(j.message, "bad"));
+          if (!j.ok) return out.appendChild(msg(j.message + (j.left !== undefined ? " " + j.left + " tries left." : ""), "bad"));
           C.rememberPin(ME.name, nw.value);
           old.value = nw.value = again.value = "";
           if (forced === true) return start();
