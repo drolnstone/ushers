@@ -52,7 +52,9 @@ notified → Coordinator dashboard.
 - **Countersigning** is the second person confirming the report is true; it
   is not an approval. Only Sunday First Service and Second Service are
   countersigned. Every other event's report is filed as soon as it is
-  signed.
+  signed. A report of another event that was still waiting for a
+  countersignature when this rule came in is filed once, by the server, on
+  the record, and the Head Usher is told.
 - **Status.** First and Second Service: Draft → Submitted → Pending
   Countersignature → Verified. Any other event: Draft → Submitted →
   Verified. Every change is kept in `report_history` and on the AUDIT tab.

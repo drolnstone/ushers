@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.4";
+const SERVER_VERSION = "w0.3.5";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -413,7 +413,7 @@ async function stReportFiled(env, cfg, rec, e, title, lead, skip) {
   ).bind(...roles).all();
   const t = typeOf(cfg, e.type), facts = [];
   if (t.attendance) facts.push("attendance " + (rec.attendance_total || 0));
-  if (t.offering) facts.push("offering £" + pounds(rec.offering_total).toFixed(2));
+  if (t.offering) facts.push("offering " + (((cfg.currencies || {})[cfg.default_currency] || {}).symbol || "") + pounds(rec.offering_total).toFixed(2));
   const f = facts.join(", ");
   const body = lead + (f ? " " + f.charAt(0).toUpperCase() + f.slice(1) + "." : "");
   const st = [];
@@ -1510,6 +1510,9 @@ async function aReportCountersign(env, cfg, b, me) {
       (names[r.submitter_id] || "The submitter") + " submitted the report and " + me.usher.full_name + " countersigned it.", [me.usher.id, r.submitter_id])
   ];
   if (auth) st.push(stConsume(env, auth, names));
+  /* Any other request about countersigning this report no longer applies. */
+  const open = ((await env.DB.prepare("SELECT * FROM authorisations WHERE kind='countersign' AND target_type='report' AND target_id=? AND status IN ('pending','approved')").bind(r.id).all()).results) || [];
+  for (const a of open) if (!auth || a.id !== auth.id) st.push(stCancelAuth(env, a, "Report countersigned", names, now));
   await run(env, st);
   return { ok: true, report: await reportView(env, cfg, after, me) };
 }
@@ -2213,13 +2216,17 @@ async function aHealth(env, cfg) {
 const KNOCK_GAP_MS = 10000;
 async function knockSheet(env) {
   if (!env.SHEET_WEBAPP_URL || !env.SHEET_TOKEN) return false;
-  const last = Number(await setting(env, "last_knock")) || 0;
-  const wait = KNOCK_GAP_MS - (Date.now() - last);
-  if (wait > 0) {
-    await new Promise((done) => setTimeout(done, Math.min(wait, KNOCK_GAP_MS)));
-    if ((Number(await setting(env, "last_knock")) || 0) !== last) return false;
-  }
-  await env.DB.prepare("INSERT INTO settings (k, v) VALUES ('last_knock', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(String(Date.now())).run();
+  const last = await setting(env, "last_knock");
+  const wait = KNOCK_GAP_MS - (Date.now() - (Number(last) || 0));
+  if (wait > 0) await new Promise((done) => setTimeout(done, Math.min(wait, KNOCK_GAP_MS)));
+  /* Claim the knock: only a request that still finds the value it read may
+     knock. One that lost the race is covered by the winner's drain, which
+     starts after this write had landed. */
+  const now = String(Date.now());
+  const claim = last
+    ? await env.DB.prepare("UPDATE settings SET v=? WHERE k='last_knock' AND v=?").bind(now, last).run()
+    : await env.DB.prepare("INSERT INTO settings (k, v) VALUES ('last_knock', ?) ON CONFLICT(k) DO NOTHING").bind(now).run();
+  if (!claim || !claim.meta || !claim.meta.changes) return false;
   try {
     const res = await fetch(env.SHEET_WEBAPP_URL, { method: "POST", headers: { "content-type": "text/plain" },
       body: JSON.stringify({ action: "drain", sheetToken: env.SHEET_TOKEN }) });
@@ -2458,10 +2465,12 @@ const MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS push_subs_usher ON push_subs(usher_id)",
   "ALTER TABLE ushers ADD COLUMN pin_must_change INTEGER DEFAULT 0"
 ];
-/* A setting saved in Admin -> Settings replaces the whole default, so a rule
-   that changes later has to be written into the saved copy too. Each change
-   is made once, remembered by name, and goes on the audit like any other. */
-const SETTING_MIGRATIONS = [
+/* Changes made once, each remembered by name, on the audit like any other.
+   A setting saved in Admin -> Settings replaces the whole default, so a rule
+   that changes later has to be written into the saved copy too (key and
+   change). Other changes to existing records are a run that returns the
+   statements to apply. */
+const ONCE = [
   { name: "countersign_sunday_only", key: "event_types",
     why: "Only First and Second Service are countersigned",
     change: (v) => {
@@ -2474,27 +2483,67 @@ const SETTING_MIGRATIONS = [
     } },
   { name: "email_report_filed", key: "email_types",
     why: "Filed reports are emailed to the Head Usher and Assistant Head Usher",
-    change: (v) => Array.isArray(v) && v.indexOf("report_filed") === -1 ? v.concat(["report_filed"]) : null }
+    change: (v) => Array.isArray(v) && v.indexOf("report_filed") === -1 ? v.concat(["report_filed"]) : null },
+  { name: "file_uncountersigned_reports", run: fileUncountersigned }
 ];
 
-async function migrateSettings(env) {
-  for (const m of SETTING_MIGRATIONS) {
+/* Reports still waiting for a countersignature when their event stopped
+   needing one are filed: the Head Usher is told, the submitter is told, and
+   any request about countersigning them is cancelled. */
+async function fileUncountersigned(env) {
+  const cfg = await loadConfig(env);
+  const types = Object.keys(cfg.event_types).filter((k) => !cfg.event_types[k].countersign);
+  if (!types.length) return [];
+  const rows = ((await env.DB.prepare(
+    "SELECT r.* FROM reports r JOIN events e ON e.id=r.event_id WHERE r.status='pending_countersignature' AND e.type IN (" + types.map(() => "?").join(",") + ")"
+  ).bind(...types).all()).results) || [];
+  if (!rows.length) return [];
+  const names = await namesMap(env), now = Date.now(), st = [];
+  const note = "Countersignature no longer needed for this event";
+  for (const r of rows) {
+    const e = await getEvent(env, r.event_id);
+    const rec = Object.assign({}, r, { status: "verified", countersigner_id: null, countersign_required: 0, verified_at: now, updated_at: now });
+    st.push(env.DB.prepare("UPDATE reports SET status='verified', countersigner_id=NULL, countersign_required=0, verified_at=?, updated_at=? WHERE id=? AND status='pending_countersignature'")
+      .bind(now, now, r.id));
+    st.push(env.DB.prepare("INSERT INTO report_history (report_id, at, actor_id, from_status, to_status, note) VALUES (?,?,?,?,?,?)")
+      .bind(r.id, now, "system", "pending_countersignature", "verified", note));
+    st.push(stAudit(env, "system", "report.file", "report", r.id, { status: r.status, countersigner: r.countersigner_id || "" }, { status: "verified" }, note));
+    st.push(stOutbox(env, "REPORTS", reportRow(rec, e, names), "REPORT_ID"));
+    const open = ((await env.DB.prepare("SELECT * FROM authorisations WHERE kind='countersign' AND target_type='report' AND target_id=? AND status IN ('pending','approved')").bind(r.id).all()).results) || [];
+    for (const a of open) st.push(stCancelAuth(env, a, note, names, now));
+    st.push(env.DB.prepare("UPDATE notifications SET read_at=? WHERE type='countersign_request' AND ref_type='report' AND ref_id=? AND read_at IS NULL").bind(now, r.id));
+    st.push(stNotify(env, cfg, await getUsher(env, r.submitter_id), "report_status", "Filed: " + e.title + " " + ukDate(e.date),
+      "Your report is filed. This event no longer needs a countersignature.", "report", r.id));
+    st.push(await stReportFiled(env, cfg, rec, e, (r.version || 1) > 1 ? "Amended report filed" : "Report filed",
+      (names[r.submitter_id] || "The submitter") + " signed the report. This event no longer needs a countersignature.", [r.submitter_id]));
+  }
+  return st;
+}
+
+/* True when every change is made (or was made before). */
+async function migrateOnce(env) {
+  let ok = true;
+  for (const m of ONCE) {
     const flag = "migrated_" + m.name;
     if (await setting(env, flag)) continue;
     try {
-      const row = await env.DB.prepare("SELECT v FROM config WHERE k=?").bind(m.key).first();
-      const before = row ? JSON.parse(row.v) : null;
-      const after = row ? m.change(JSON.parse(row.v)) : null;
       const now = Date.now();
       const st = [env.DB.prepare("INSERT INTO settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(flag, String(now))];
-      if (after) {
-        st.push(env.DB.prepare("UPDATE config SET v=?, updated_by=?, updated_at=? WHERE k=?").bind(JSON.stringify(after), "system", now, m.key));
-        st.push(stAudit(env, "system", "config.set", "config", m.key, before, after, m.why));
-        st.push(stOutbox(env, "CONFIG", { KEY: m.key, VALUE: JSON.stringify(after), UPDATED_BY: "system", UPDATED_AT: londonStamp(now) }, "KEY"));
+      if (m.run) {
+        st.push(await m.run(env));
+      } else {
+        const row = await env.DB.prepare("SELECT v FROM config WHERE k=?").bind(m.key).first();
+        const after = row ? m.change(JSON.parse(row.v)) : null;
+        if (after) {
+          st.push(env.DB.prepare("UPDATE config SET v=?, updated_by=?, updated_at=? WHERE k=?").bind(JSON.stringify(after), "system", now, m.key));
+          st.push(stAudit(env, "system", "config.set", "config", m.key, JSON.parse(row.v), after, m.why));
+          st.push(stOutbox(env, "CONFIG", { KEY: m.key, VALUE: JSON.stringify(after), UPDATED_BY: "system", UPDATED_AT: londonStamp(now) }, "KEY"));
+        }
       }
       await run(env, st);
-    } catch (e) { /* tried again with the next version */ }
+    } catch (e) { ok = false; }
   }
+  return ok;
 }
 
 let schemaChecked = false;
@@ -2504,8 +2553,11 @@ async function migrate(env) {
   for (const sql of MIGRATIONS) {
     try { await env.DB.prepare(sql).run(); } catch (e) { /* already there */ }
   }
-  await migrateSettings(env);
-  try { await env.DB.prepare("INSERT INTO settings (k, v) VALUES ('schema', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(SERVER_VERSION).run(); } catch (e) {}
+  /* Only marked done when every once-only change is made; if one failed, the
+     next fresh start tries again. */
+  if (await migrateOnce(env)) {
+    try { await env.DB.prepare("INSERT INTO settings (k, v) VALUES ('schema', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(SERVER_VERSION).run(); } catch (e) {}
+  }
   schemaChecked = true;
 }
 
