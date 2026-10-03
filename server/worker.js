@@ -67,7 +67,7 @@ const DEFAULT_CONFIG = {
     GBP: { symbol: "£", denominations: [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1] }
   },
   default_currency: "GBP",
-  countersign_roles: ["head_usher", "assistant_head_usher", "system_admin"],
+  countersign_roles: ["head_usher", "assistant_head_usher"],
   countersign_rostered: true,         // anyone on duty at that event may countersign
   self_approval: false,               // may an approver decide somebody else's request about themselves?
   church_name: "RCCG Dominion Assembly",
@@ -105,10 +105,12 @@ const ROLE_PERMISSIONS = {
   head_usher: COORD_PERMS,
   assistant_head_usher: COORD_PERMS,
   treasurer: ["usher.app", "admin.app", "treasurer.app", "dues.view_all", "dues.record", "dues.remind"],
-  /* Administrators are approvers: what they do needs nobody's request. */
+  /* The System Administrator builds and runs the system (people, roles,
+     settings, audit) and is not an approver: approvals stay with the Head
+     Usher and Assistant Head Usher. To test a role, sign in as a test
+     person who holds it (Admin -> Settings -> Testing). */
   system_admin: ["admin.app", "ushers.view", "ushers.manage", "roles.manage", "roles.grant_any",
-    "config.manage", "audit.view", "exceptions.approve", "reports.view_all", "reports.submit_any",
-    "reports.countersign", "dashboard.view"]
+    "config.manage", "audit.view"]
 };
 /* Without roles.grant_any a person may grant only these. Treasurer and
    System Administrator need a System Administrator. */

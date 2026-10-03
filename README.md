@@ -61,7 +61,7 @@ required → Google Sheets record → Coordinator dashboard.
   not rostered on, amending a submitted report, and duty takeovers (B did
   A's duty: the duty moves to B, A's stays on the record as removed).
 - **Approvers need no request.** Anyone holding `exceptions.approve` (Head
-  Usher, Assistant Head Usher, System Administrator) who does something that
+  Usher and Assistant Head Usher) who does something that
   would need approval has it approved at once, by themselves, on the record
   (`AUTHORISATIONS`, `AUDIT`). Deciding someone else's request still needs
   the approver's PIN. **Every report is still countersigned by somebody
@@ -98,8 +98,11 @@ System Administrator. Permissions are the union of a person's roles
   dashboard (operational offering totals), messages, ushers.
 - Treasurer: dues, payments, balances, reminders. **Head Usher has no dues
   permission**; someone with both roles gets both.
-- System Administrator: ushers, roles (including Treasurer and System
-  Administrator), settings, audit, and approvals (an approver, as above).
+- System Administrator: the builder and tester. Ushers, roles (including
+  Treasurer and System Administrator), settings, audit. Not an approver and
+  sees no reports or dues; to try a role, sign in as a test person
+  (Admin → Settings → Testing adds six, across every role, and walks a
+  sample week; "Switch off test people" retires them for go-live).
 
 ## Sign-in, sessions and app switching
 
