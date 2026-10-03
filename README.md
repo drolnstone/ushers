@@ -106,9 +106,10 @@ notified → Coordinator dashboard.
   Anything new is shown in a strip at the foot of the screen. Notifications
   → Send a test alert (`push.test`) proves the chain end to end.
 - **Nobody left unalerted.** Once signed in on a phone where alerts are off,
-  the person is asked straight out to turn them on (again three days after
-  "Not now"; on an iPhone in Safari, told to add the app to the Home Screen
-  first). Anyone with alerts on no phone is emailed whatever is still unread
+  the person is asked straight out to turn them on, on every sign-in and
+  every time the app is opened afresh, for as long as alerts stay off ("Not
+  now" puts it away for that visit only; on an iPhone in Safari, they are
+  told to add the app to the Home Screen first). Anyone with alerts on no phone is emailed whatever is still unread
   after `unalerted_email_minutes` (60; 0 turns it off), one email listing
   them, at most two days back and once each. Admin → Ushers marks them
   "Alerts off".
