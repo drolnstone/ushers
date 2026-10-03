@@ -395,10 +395,13 @@
       }
       var parts = [h("h1", {}, "Ushers")];
       if (j.canManage) parts.push(h("p", { class: "muted" }, "To make someone Head Usher, Assistant Head Usher" +
-        (j.canGrantAny ? ", Treasurer or System Administrator" : "") + ", tap Edit details and roles under their name."));
+        (j.canGrantAny ? ", Treasurer or System Administrator" : "") + ", or to remove someone, tap Edit details and roles under their name."));
       if (j.canManage) parts.push(usherForm(null, j));
-      j.ushers.forEach(function (u) {
-        parts.push(h("div", { class: "card" }, h("div", { class: "row" }, h("b", { class: "grow" }, u.name), u.active ? null : h("span", { class: "chip bad" }, "Inactive"),
+      /* Removed people go last, under their own heading. */
+      var on = j.ushers.filter(function (u) { return u.active; }), off = j.ushers.filter(function (u) { return !u.active; });
+      on.concat(off).forEach(function (u, i) {
+        if (i === on.length) parts.push(h("h2", {}, "Removed"), h("p", { class: "muted" }, "They cannot sign in. To bring someone back, tap Edit details and roles and tick Active."));
+        parts.push(h("div", { class: "card" }, h("div", { class: "row" }, h("b", { class: "grow" }, u.name), u.active ? null : h("span", { class: "chip bad" }, "Removed"),
             u.hasPin ? null : h("span", { class: "chip warn" }, "No PIN")),
           h("div", {}, u.roles.map(function (r) { return h("span", { class: "chip" }, labelOf(r)); })),
           h("div", { class: "muted" }, [u.email, u.phone].filter(Boolean).join(" · ")),
@@ -463,7 +466,16 @@
             ? "PIN reset to their default PIN. They are asked whether to keep it when they next sign in."
             : "PIN reset to the one you typed. They are asked whether to keep it when they next sign in.", "ok"));
         }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
-      } }, "Reset PIN") : null, out);
+      } }, "Reset PIN") : null, " ",
+      u && u.active ? h("button", { class: "danger", onclick: function () {
+        C.clear(out);
+        if (!confirm("Remove " + u.name + "?\n\nThey will no longer be able to sign in, every role but Usher is taken away and they come off every duty from today. " +
+          "Their reports and dues stay on the record. You can bring them back by ticking Active.")) return;
+        C.api("usher.remove", { usherId: u.usherId }).then(function (x) {
+          if (!x.ok) throw new Error(x.message);
+          location.hash = "#ushers";
+        }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
+      } }, "Remove " + u.name) : null, out);
   }
 
   /* ---- notifications ---------------------------------------------------- */
