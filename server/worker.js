@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.0";
+const SERVER_VERSION = "w0.3.1";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -104,7 +104,9 @@ const ROLE_PERMISSIONS = {
   usher: ["usher.app"],
   head_usher: COORD_PERMS,
   assistant_head_usher: COORD_PERMS,
-  treasurer: ["usher.app", "admin.app", "treasurer.app", "dues.view_all", "dues.record", "dues.remind"],
+  /* The Treasurer works inside the Ushers App (its Treasurer tab) and has
+     no Admin App: that is for the Head Usher and Assistant Head Usher. */
+  treasurer: ["usher.app", "treasurer.app", "dues.view_all", "dues.record", "dues.remind"],
   /* The System Administrator builds and runs the system (people, roles,
      settings, audit) and is not an approver: approvals stay with the Head
      Usher and Assistant Head Usher. To test a role, sign in as a test
@@ -503,16 +505,27 @@ function meView(me) {
    SIGN IN, SIGN OUT, PIN
    ========================================================================== */
 
-async function aPeople(env, cfg) {
+/* Roles whose holders are listed on the Admin App's sign-in. */
+const ADMIN_SIGN_IN_ROLES = ["head_usher", "assistant_head_usher", "system_admin"];
+
+async function aPeople(env, cfg, b) {
   /* Before anybody is a System Administrator, the sign-in screen offers
      First-time setup (it still needs BOOTSTRAP_TOKEN). */
   const firstSetup = !!env.BOOTSTRAP_TOKEN &&
     !(await env.DB.prepare("SELECT 1 AS n FROM user_roles WHERE role='system_admin' LIMIT 1").first());
   if (firstSetup) return { ok: true, people: [], firstSetup: true };
   if (!cfg.public_name_list) return { ok: true, people: [], typeName: true };
-  const r = await env.DB.prepare(
-    "SELECT id, full_name FROM ushers WHERE active=1 AND pin_hash IS NOT NULL ORDER BY full_name COLLATE NOCASE"
-  ).all();
+  /* The Admin App lists only the people it is for. Anyone else is refused
+     by the Admin App after sign-in anyway; this keeps the list short. */
+  const adminOnly = !!(b && b.app === "admin");
+  const r = adminOnly
+    ? await env.DB.prepare(
+        "SELECT DISTINCT u.id, u.full_name FROM ushers u JOIN user_roles r ON r.usher_id=u.id " +
+        "WHERE u.active=1 AND u.pin_hash IS NOT NULL AND r.role IN (" + ADMIN_SIGN_IN_ROLES.map(() => "?").join(",") + ") " +
+        "ORDER BY u.full_name COLLATE NOCASE").bind(...ADMIN_SIGN_IN_ROLES).all()
+    : await env.DB.prepare(
+        "SELECT id, full_name FROM ushers WHERE active=1 AND pin_hash IS NOT NULL ORDER BY full_name COLLATE NOCASE"
+      ).all();
   return { ok: true, people: (r.results || []).map((u) => ({ id: u.id, name: u.full_name })) };
 }
 

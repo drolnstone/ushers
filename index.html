@@ -28,6 +28,7 @@
   <a href="#rota" data-r="rota">Rota</a>
   <a href="#notes" data-r="notes">Notifications<span class="badge" id="unread" hidden></span></a>
   <a href="#dues" data-r="dues">Dues</a>
+  <a href="#treasurer" data-r="treasurer" id="treasurerTab" hidden>Treasurer</a>
   <a href="#history" data-r="history">History</a>
   <a href="#pin" data-r="pin">PIN</a>
 </nav>
@@ -62,6 +63,7 @@
     document.getElementById("tabs").hidden = true;
     document.getElementById("signOut").hidden = true;
     document.getElementById("toAdmin").hidden = true;
+    document.getElementById("treasurerTab").hidden = true;
     var who = h("select", { id: "who" }, h("option", { value: "" }, "Choose your name"));
     var typed = h("input", { id: "whoTyped", placeholder: "e.g. John Smith", autocomplete: "name", hidden: true });
     var pin = h("input", { id: "pin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "6" });
@@ -131,6 +133,7 @@
       /* Open Admin App only when the server says so; the Admin App asks
          the server again before it shows anything. */
       document.getElementById("toAdmin").hidden = ME.permissions.indexOf("admin.app") === -1;
+      document.getElementById("treasurerTab").hidden = ME.permissions.indexOf("dues.view_all") === -1;
       paintQueue();
       C.flush();
       route();
@@ -148,7 +151,7 @@
       a.className = a.getAttribute("data-r") === hash[0] ? "on" : "";
     });
     ({ home: home, rota: rota, report: function () { report({ eventId: hash[1] }); }, rep: function () { report({ reportId: hash[1] }); },
-       notes: notes, dues: dues, history: history, pin: pinScreen }[hash[0]] || home)();
+       notes: notes, dues: dues, treasurer: function () { treasurer(hash[1]); }, history: history, pin: pinScreen }[hash[0]] || home)();
   }
   window.addEventListener("hashchange", route);
 
@@ -591,6 +594,62 @@
       });
       show.apply(null, parts);
     }, offline);
+  }
+
+  /* ---- treasurer: only for people with dues.view_all ------------------- */
+
+  function treasurer(usherId) {
+    loading();
+    var year = Number(C.londonToday().slice(0, 4));
+    C.api("dues.overview", { year: year }).then(function (j) {
+      if (!j.ok) return show(msg(j.message, "bad"));
+      var parts = [h("h1", {}, "Treasurer · dues " + j.year),
+        h("div", { class: "card" }, h("div", { class: "grid4" }, [["Expected so far", C.money(j.totals.expected)], ["Paid", C.money(j.totals.paid)], ["Outstanding", C.money(j.totals.outstanding)], ["Behind", j.totals.behind]]
+          .map(function (x) { return h("div", { class: "stat" }, h("b", {}, x[1]), h("span", {}, x[0])); })),
+          h("p"), h("button", { class: "ghost", onclick: function (e) {
+            e.target.disabled = true;
+            C.api("dues.remind", {}).then(function (x) { e.target.textContent = x.ok ? "Reminders sent: " + x.sent : x.message; });
+          } }, "Remind everyone who is behind"))];
+      parts.push(h("div", { class: "card" }, h("table", {}, h("tr", {}, h("th", {}, "Name"), h("th", { class: "num" }, "Paid"), h("th", { class: "num" }, "Outstanding"), h("th", {}, "Status")),
+        j.members.map(function (m) {
+          return h("tr", {}, h("td", {}, h("a", { href: "#treasurer/" + m.usherId }, m.name)), h("td", { class: "num" }, C.money(m.paid)),
+            h("td", { class: "num" }, C.money(m.outstanding)), h("td", {}, h("span", { class: "chip " + (m.status === "Behind" ? "bad" : "ok") }, m.status)));
+        }))));
+      show.apply(null, parts);
+      if (usherId) member(usherId, parts);
+    }, offline);
+  }
+
+  function member(usherId, parts) {
+    C.api("dues.member", { usherId: usherId }).then(function (j) {
+      if (!j.ok) return;
+      var paidOn = h("input", { type: "date", value: C.londonToday() });
+      var amount = h("input", { type: "number", min: "0.01", step: "0.01", value: "5.00", inputmode: "decimal" });
+      var year = h("input", { type: "number", value: C.londonToday().slice(0, 4) });
+      var method = h("select", {}, ["Cash", "Bank transfer", "Card", "Other"].map(function (x) { return h("option", {}, x); }));
+      var note = h("input", { placeholder: "e.g. Paid at the Sunday meeting" });
+      var out = h("div");
+      var card = h("div", { class: "card" }, h("h2", {}, j.name),
+        j.years.map(function (y) {
+          return h("div", {}, h("h3", {}, y.year + " · " + y.status), h("div", { class: "muted" }, "Expected " + C.money(y.expected) + " · paid " + C.money(y.paid) + " · outstanding " + C.money(y.outstanding)),
+            h("table", {}, y.payments.map(function (p) {
+              return h("tr", {}, h("td", {}, C.dateLabel(p.paidOn)), h("td", { class: "num" }, C.money(p.amount)), h("td", {}, p.method), h("td", {},
+                h("button", { class: "ghost", onclick: function () {
+                  var why = prompt("Why is this payment being voided?");
+                  if (why) C.api("dues.void", { id: p.id, reason: why }).then(function (x) { if (x.ok) treasurer(usherId); else alert(x.message); });
+                } }, "Void")));
+            })));
+        }),
+        h("h3", {}, "Record a payment"),
+        h("div", { class: "grid3" }, h("div", {}, h("label", {}, "Date paid"), paidOn), h("div", {}, h("label", {}, "Amount (£)"), amount), h("div", {}, h("label", {}, "Dues year"), year)),
+        h("label", {}, "Method"), method, h("label", {}, "Note"), note, h("p"),
+        h("button", { onclick: function () {
+          C.clear(out);
+          C.api("dues.record", { usherId: usherId, paidOn: paidOn.value, amountPence: Math.round(Number(amount.value) * 100), year: Number(year.value), method: method.value, note: note.value })
+            .then(function (x) { if (x.ok) treasurer(usherId); else out.appendChild(msg(x.message, "bad")); });
+        } }, "Record payment"), out);
+      var w = main.firstChild; w.insertBefore(card, w.children[1] || null);
+    });
   }
 
   /* ---- history ---------------------------------------------------------- */
