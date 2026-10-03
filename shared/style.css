@@ -1,7 +1,7 @@
 /* Ushering App: one look for both apps, each in its own colour.
    The banner carries the app's colour, the same one its home-screen icon is
-   drawn on (tools/make-icons.mjs): bright purple for the Ushers App, deep
-   aubergine for the Admin App, so the two can be told apart at a glance.
+   drawn on (tools/make-icons.mjs): purple for the Ushers App, deep teal
+   for the Admin App, so the two can be told apart at a glance.
    Light, Dark or Auto (follow the phone) is picked at the foot of either app
    and kept on the phone for both; the head of each page sets data-theme on
    <html> before the first paint so a dark phone never flashes white. */
@@ -18,11 +18,12 @@
   --brand: #b48ae0; --brand-ink: #151316; --ok: #5cc794; --warn: #f0b056; --bad: #ff8a80; --chip: #2c2433;
   color-scheme: dark;
 }
-/* The Admin App: the deep colour of its icon, in the banner and on its buttons. */
-:root.admin { --brand: #2d1544; --chip: #e6e0ec; --bar: #2d1544; --bg: #f1f0f3; }
+/* The Admin App: the deep teal of its icon, in the banner, buttons and tabs,
+   and a cooler page, so it never reads as the purple Ushers App. */
+:root.admin { --brand: #0b5f5c; --chip: #dcefed; --bar: #0b5f5c; --bg: #f0f5f4; --line: #d6e2e0; }
 :root.admin[data-theme="dark"] {
-  --bg: #121114; --card: #1c1a1f; --line: #322e37;
-  --brand: #cdb8e6; --brand-ink: #121114; --chip: #29232f; --bar: #2d1544;
+  --bg: #0f1514; --card: #172120; --line: #2a3836; --muted: #9db0ad;
+  --brand: #5fcdc3; --brand-ink: #0f1514; --chip: #1c2e2c; --bar: #0b5f5c;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
