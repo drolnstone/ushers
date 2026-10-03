@@ -386,9 +386,18 @@
      iPhone in Safari they are told how to add the app first. The server
      also emails what is still unread to anyone with alerts on no phone. */
   var ASK_KEY = "ushers.alertAsk.v1", ASK_AGAIN_MS = 3 * 24 * 3600000;
+  /* The box sits at the foot of the screen, so while it shows the page is
+     given that much more room at its foot: whatever it would cover (a
+     report's Sign and submit, say) can always be scrolled up above it. */
+  function askRoom() {
+    var a = document.getElementById("alertAsk");
+    document.body.style.paddingBottom = a ? (a.offsetHeight + 32) + "px" : "";
+  }
+  window.addEventListener("resize", askRoom);
   function askClose(not) {
     var a = document.getElementById("alertAsk");
     if (a) a.parentNode.removeChild(a);
+    askRoom();
     if (not) store.set(ASK_KEY, String(Date.now()));
   }
   function alertAsk(s) {
@@ -408,6 +417,7 @@
         ? "On iPhone, alerts need Ushers on your Home Screen: tap Share, then Add to Home Screen, open it from there and tap the bell."
         : "Without them you only find out about duties, reminders, countersignatures and approvals when you next open the app."),
       h("div", { class: "row" }, go, install ? null : h("button", { type: "button", class: "ghost", onclick: function () { askClose(true); } }, "Not now"))));
+    askRoom();
   }
 
   /* Called once signed in. opts.key is the server's public key ("me"),
