@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.1";
+const SERVER_VERSION = "w0.3.2";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -77,7 +77,7 @@ const DEFAULT_CONFIG = {
   session_idle_hours: 12,
   session_max_days: 30,
   pin_min_length: 4,
-  pin_max_length: 6,
+  pin_max_length: 4,                  // PINs are exactly four digits
   pin_max_tries: 3,
   pin_lock_minutes: 5,
   offline_signing: true,              // a report signed with no signal may be sent later
@@ -418,7 +418,9 @@ function pinIterations(env) {
 function checkPinShape(cfg, pin) {
   const p = String(pin || "");
   if (!/^\d+$/.test(p) || p.length < cfg.pin_min_length || p.length > cfg.pin_max_length) {
-    fail(400, "pin_shape", "A PIN is " + cfg.pin_min_length + " to " + cfg.pin_max_length + " digits.");
+    fail(400, "pin_shape", cfg.pin_min_length === cfg.pin_max_length
+      ? "A PIN is exactly " + cfg.pin_min_length + " digits."
+      : "A PIN is " + cfg.pin_min_length + " to " + cfg.pin_max_length + " digits.");
   }
   return p;
 }

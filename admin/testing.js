@@ -151,13 +151,13 @@
 
   /* The card on the Settings screen. */
   function card(conf) {
-    var pin = h("input", { id: "tpin", type: "password", inputmode: "numeric", maxlength: "6", placeholder: "e.g. 2468" });
+    var pin = h("input", { id: "tpin", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin", placeholder: "e.g. 2468" });
     var out = h("div", { class: "muted" });
     function log(t) { out.appendChild(h("div", {}, t)); }
     function busy(b) { add.disabled = off.disabled = b; }
     var add = h("button", { onclick: function () {
       C.clear(out);
-      if (!/^\d{4,6}$/.test(pin.value)) { log("Choose a PIN of 4 to 6 digits for the test people."); return; }
+      if (!/^\d{4}$/.test(pin.value)) { log("Choose a 4-digit PIN for the test people."); return; }
       busy(true); log("Working…");
       seed(pin.value, log, conf).catch(function (e) { log("Stopped: " + (e && e.message || e)); }).then(function () { busy(false); });
     } }, "Add test people and a sample week");

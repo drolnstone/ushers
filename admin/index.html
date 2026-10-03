@@ -54,7 +54,7 @@
   function failed(e) { show(msg(e && e.network ? "No connection to the server." : String(e && e.message || e), "bad")); }
   function money(p) { return C.money(p); }
   function chip(code, label) { return h("span", { class: "chip status-" + (code || "") }, label || "Not started"); }
-  function pinInput(id) { return h("input", { id: id, type: "password", inputmode: "numeric", maxlength: "6" }); }
+  function pinInput(id) { return h("input", { id: id, type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" }); }
 
   C.onSignedOut = function () { C.setToken(""); signIn(); };
 
@@ -67,7 +67,7 @@
     document.getElementById("title").textContent = "";
     var who = h("select", { id: "who" }, h("option", { value: "" }, "Choose your name"));
     var typed = h("input", { id: "whoTyped", placeholder: "e.g. John Smith", autocomplete: "name", hidden: true });
-    var pin = h("input", { id: "pin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "6" });
+    var pin = h("input", { id: "pin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var out = h("div");
     var go = h("button", { onclick: function () {
       out.textContent = "";
@@ -411,7 +411,7 @@
     return h("div", { class: "card" }, h("h2", {}, u ? "Edit " + u.name : "Add an usher"),
       h("label", {}, "Full name"), name, h("label", {}, "Email"), email, h("label", {}, "Phone"), phone,
       u ? h("label", { class: "check" }, active, "Active") : null, roleBoxes,
-      h("label", {}, u ? "New PIN (leave blank to keep)" : "PIN (" + CONF.pinMin + " to " + CONF.pinMax + " digits)"), pin, h("p"),
+      h("label", {}, u ? "New PIN (leave blank to keep)" : "PIN (" + CONF.pinMax + " digits)"), pin, h("p"),
       h("button", { onclick: function () {
         C.clear(out);
         var body = { usherId: u ? u.usherId : undefined, name: name.value, email: email.value, phone: phone.value, active: active.checked };

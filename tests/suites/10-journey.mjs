@@ -296,6 +296,18 @@ export default async function ({ root }) {
     a.ok(t.includes("dues.view_all") && t.includes("usher.app"), "the Treasurer's page is in the Ushers App");
   });
 
+  s.test("a PIN is always exactly four digits; anyone changes their own", async (a) => {
+    for (const bad of ["123", "12345", "123456", "12a4", "abcd"]) {
+      const r = await call("pin.change", { oldPin: "1234", newPin: bad }, T.C);
+      a.eq(r.error, "pin_shape", bad);
+    }
+    a.ok(/exactly 4 digits/.test((await call("pin.change", { oldPin: "1234", newPin: "12345" }, T.C)).message));
+    a.ok((await call("pin.change", { oldPin: "1234", newPin: "4321" }, T.C)).ok, "four digits are fine");
+    await login("C", "4321");
+    a.ok((await call("pin.change", { oldPin: "4321", newPin: "1234" }, T.C)).ok);
+    await login("C", "1234");
+  });
+
   s.test("a Head Usher may not grant the Treasurer role; a System Administrator may", async (a) => {
     a.eq((await call("usher.roles", { usherId: ID.C, roles: ["usher", "treasurer"] }, T.hu))._status, 403);
     a.ok((await call("usher.roles", { usherId: ID.C, roles: ["usher", "assistant_head_usher"] }, T.hu)).ok);

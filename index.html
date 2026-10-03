@@ -66,7 +66,7 @@
     document.getElementById("treasurerTab").hidden = true;
     var who = h("select", { id: "who" }, h("option", { value: "" }, "Choose your name"));
     var typed = h("input", { id: "whoTyped", placeholder: "e.g. John Smith", autocomplete: "name", hidden: true });
-    var pin = h("input", { id: "pin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "6" });
+    var pin = h("input", { id: "pin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var out = h("div");
     var go = h("button", { onclick: function () {
       out.textContent = "";
@@ -97,8 +97,8 @@
   function firstSetup() {
     var tok = h("input", { id: "bt", type: "password", autocomplete: "off", placeholder: "The BOOTSTRAP_TOKEN from Cloudflare" });
     var name = h("input", { id: "bn", autocomplete: "name", placeholder: "e.g. Asim Bassey" });
-    var p1 = h("input", { id: "bp1", type: "password", inputmode: "numeric", maxlength: "6" });
-    var p2 = h("input", { id: "bp2", type: "password", inputmode: "numeric", maxlength: "6" });
+    var p1 = h("input", { id: "bp1", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
+    var p2 = h("input", { id: "bp2", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var out = h("div");
     var go = h("button", { onclick: function () {
       C.clear(out);
@@ -116,7 +116,7 @@
     show(h("h1", {}, "First-time setup"),
       h("p", { class: "muted" }, "Nobody is set up yet. This makes the first System Administrator, who then adds everyone else."),
       h("div", { class: "card" }, h("label", { for: "bt" }, "Setup token"), tok, h("label", { for: "bn" }, "Your full name"), name,
-        h("label", { for: "bp1" }, "Choose a PIN (4 to 6 digits)"), p1, h("label", { for: "bp2" }, "PIN again"), p2, h("p"), go, out));
+        h("label", { for: "bp1" }, "Choose a PIN (4 digits)"), p1, h("label", { for: "bp2" }, "PIN again"), p2, h("p"), go, out));
   }
 
   /* ---- start ------------------------------------------------------------ */
@@ -344,7 +344,7 @@
     var cs = h("select", { id: "cs" }, h("option", { value: "" }, "Choose who will countersign"));
     var sig = h("input", { id: "sig", placeholder: "e.g. " + ME.name, autocomplete: "off" });
     var agree = h("input", { type: "checkbox", id: "agree" });
-    var pin = h("input", { id: "spin", type: "password", inputmode: "numeric", maxlength: "6" });
+    var pin = h("input", { id: "spin", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var out = h("div");
     if (ev.countersign) {
       C.api("ushers.selectable").then(function (s) {
@@ -501,7 +501,7 @@
   function countersignBox(r, j) {
     var sig = h("input", { id: "csig", placeholder: "e.g. " + ME.name, autocomplete: "off" });
     var agree = h("input", { type: "checkbox" });
-    var pin = h("input", { id: "cpin", type: "password", inputmode: "numeric", maxlength: "6" });
+    var pin = h("input", { id: "cpin", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var out = h("div"), sid = C.newId("cs");
     var btn = h("button", { onclick: function () {
       C.clear(out);
@@ -670,12 +670,12 @@
   /* ---- PIN -------------------------------------------------------------- */
 
   function pinScreen() {
-    var old = h("input", { id: "old", type: "password", inputmode: "numeric", maxlength: "6" });
-    var nw = h("input", { id: "new", type: "password", inputmode: "numeric", maxlength: "6" });
-    var again = h("input", { id: "again", type: "password", inputmode: "numeric", maxlength: "6" });
+    var old = h("input", { id: "old", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
+    var nw = h("input", { id: "new", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
+    var again = h("input", { id: "again", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var out = h("div");
     show(h("h1", {}, "Change PIN"), h("div", { class: "card" },
-      h("label", { for: "old" }, "Current PIN"), old, h("label", { for: "new" }, "New PIN (" + CONF.pinMin + " to " + CONF.pinMax + " digits)"), nw,
+      h("label", { for: "old" }, "Current PIN"), old, h("label", { for: "new" }, "New PIN (" + CONF.pinMax + " digits)"), nw,
       h("label", { for: "again" }, "New PIN again"), again, h("p"),
       h("button", { onclick: function () {
         C.clear(out);
