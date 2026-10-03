@@ -57,11 +57,11 @@
           if (have) {
             id[p.key] = have.usherId;
             return C.api("usher.save", { usherId: have.usherId, name: p.name, active: true }).then(function (x) { must(x, p.name); })
-              .then(function () { return C.api("usher.resetPin", { usherId: have.usherId, pin: pin, reason: "Test person" }); })
+              .then(function () { return C.api("usher.resetPin", { usherId: have.usherId, pin: pin, mustChange: false, reason: "Test person" }); })
               .then(function (x) { must(x, p.name + " PIN"); return C.api("usher.roles", { usherId: have.usherId, roles: p.roles }); })
               .then(function (x) { must(x, p.name + " roles"); log(p.name + ": ready again"); });
           }
-          return C.api("usher.save", { name: p.name, pin: pin }).then(function (x) {
+          return C.api("usher.save", { name: p.name, pin: pin, mustChange: false }).then(function (x) {
             must(x, p.name); id[p.key] = x.usherId;
             return C.api("usher.roles", { usherId: x.usherId, roles: p.roles });
           }).then(function (x) { must(x, p.name + " roles"); log(p.name + ": added"); });

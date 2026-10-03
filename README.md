@@ -110,7 +110,12 @@ System Administrator. Permissions are the union of a person's roles
 Pick your name (or type it, with `public_name_list` off) and enter your PIN.
 PINs are hashed with PBKDF2-SHA-256, a random salt per person and a server
 secret (`PIN_PEPPER`); the PIN is never stored. A PIN is always exactly four digits
-(`pin_min_length` = `pin_max_length` = 4). Three wrong tries pause that
+(`pin_min_length` = `pin_max_length` = 4). A new usher starts on a default PIN, and every
+reset drops back to it; how it is made is told to ushers at onboarding and is
+never shown in either app. At the next sign-in they are asked once, "Do you
+wish to keep your default PIN?": Yes keeps it, No leads them to a new PIN
+(they can still change it later on the PIN tab). Someone with no default PIN gets a
+starting PIN typed by whoever adds or resets them. Three wrong tries pause that
 name for five minutes. A sign-in makes a session token, stored on the server
 only as a hash. Both apps live on one site, so they share the token: **Open
 Admin App** and **Open Ushers App** need no second sign-in. The Admin App

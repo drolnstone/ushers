@@ -39,7 +39,7 @@ export default async function ({ root }) {
   s.test("the administrator adds ushers and gives roles; IDs are U-codes made by the server", async (a) => {
     for (const [k, name] of [["hu", "Grace Okafor"], ["A", "John Smith"], ["B", "Mary Jones"], ["C", "Peter Brown"],
                              ["T", "Ruth Adeyemi"], ["D", "David Cole"], ["D2", "David Cole"]]) {
-      const r = await call("usher.save", { name, email: k.toLowerCase() + "@example.org", pin: "1234" }, T.admin);
+      const r = await call("usher.save", { name, email: k.toLowerCase() + "@example.org", pin: "1234", mustChange: false }, T.admin);
       a.ok(r.ok, JSON.stringify(r));
       a.ok(/^U\d{3}$/.test(r.usherId), r.usherId);
       ID[k] = r.usherId;
@@ -306,6 +306,35 @@ export default async function ({ root }) {
     await login("C", "4321");
     a.ok((await call("pin.change", { oldPin: "4321", newPin: "1234" }, T.C)).ok);
     await login("C", "1234");
+  });
+
+  s.test("new and reset ushers start on the default PIN and are asked once whether to keep it", async (a) => {
+    const add = await call("usher.save", { name: "Esther Bello", phone: "07700 900 123", pin: "9999", mustChange: false }, T.hu);
+    a.ok(add.ok && add.pinFrom === "default", JSON.stringify(add));
+    a.eq((await call("login", { usherId: add.usherId, pin: "9999" })).error, "bad_pin", "a typed PIN is ignored when there is a phone number");
+    let l = await call("login", { usherId: add.usherId, pin: "0123" });
+    a.ok(l.ok && l.me.askPinChange, "signs in with the default PIN and is asked");
+    a.eq((await call("home", {}, l.token)).error, "pin_question", "nothing else until they answer");
+    a.ok((await call("me", {}, l.token)).ok);
+    a.eq((await call("pin.change", { oldPin: "0123", newPin: "0123" }, l.token)).error, "same_pin");
+    a.ok((await call("pin.change", { oldPin: "0123", newPin: "5555" }, l.token)).ok);
+    a.ok((await call("home", {}, l.token)).ok, "then everything works");
+    a.not((await call("me", {}, l.token)).me.askPinChange);
+    const r = await call("usher.resetPin", { usherId: add.usherId, pin: "7777", mustChange: false }, T.hu);
+    a.ok(r.ok && r.pinFrom === "default", "a reset drops back to the default PIN");
+    a.eq((await call("login", { usherId: add.usherId, pin: "5555" })).error, "bad_pin");
+    l = await call("login", { usherId: add.usherId, pin: "0123" });
+    a.ok(l.ok && l.me.askPinChange, "and asked again; only a System Administrator can skip the question (test people)");
+    a.ok((await call("pin.keep", {}, l.token)).ok, "No: the default PIN stays");
+    a.ok((await call("home", {}, l.token)).ok, "and everything works");
+    l = await call("login", { usherId: add.usherId, pin: "0123" });
+    a.ok(l.ok && !l.me.askPinChange, "not asked again");
+    a.ok((await call("pin.change", { oldPin: "0123", newPin: "6060" }, l.token)).ok, "they can still change it later on the PIN tab");
+    const none = await call("usher.save", { name: "Femi Ade" }, T.hu);
+    a.eq((await call("usher.resetPin", { usherId: none.usherId }, T.hu)).error, "no_default_pin", "no phone and no PIN typed: refused");
+    a.ok((await call("usher.resetPin", { usherId: none.usherId, pin: "2222" }, T.hu)).ok, "no phone: a typed PIN");
+    a.ok((await call("login", { usherId: none.usherId, pin: "2222" })).me.askPinChange);
+    for (const id of [add.usherId, none.usherId]) await call("usher.save", { usherId: id, name: id === add.usherId ? "Esther Bello" : "Femi Ade", active: false }, T.admin);
   });
 
   s.test("a Head Usher may not grant the Treasurer role; a System Administrator may", async (a) => {

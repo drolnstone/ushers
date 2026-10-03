@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS ushers (
   pin_hash    TEXT,
   pin_iter    INTEGER,
   pin_set_at  INTEGER,
+  -- 1 = the PIN was set for them (the default PIN); at the next sign-in they
+  -- are asked once whether to keep it, before anything else.
+  pin_must_change INTEGER DEFAULT 0,
   created_at  INTEGER,
   updated_at  INTEGER
 );

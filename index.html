@@ -128,6 +128,8 @@
       if (!j.ok) return signIn();
       ME = j.me; CONF = j.config; PUSH_KEY = j.pushKey || "";
       document.getElementById("title").textContent = ME.name;
+      /* Just given the default PIN (new, or reset): asked once whether to change it. */
+      if (ME.askPinChange) { document.getElementById("signOut").hidden = false; return pinQuestion(); }
       document.getElementById("tabs").hidden = false;
       document.getElementById("signOut").hidden = false;
       /* Open Admin App only when the server says so; the Admin App asks
@@ -669,13 +671,28 @@
 
   /* ---- PIN -------------------------------------------------------------- */
 
-  function pinScreen() {
+  function pinQuestion() {
+    var out = h("div");
+    show(h("h1", {}, "Your PIN"),
+      h("div", { class: "card" },
+        h("p", {}, h("b", {}, "Do you wish to keep your default PIN?")),
+        h("button", { onclick: function () {
+          C.api("pin.keep", {}).then(function (j) {
+            if (!j.ok) return out.appendChild(msg(j.message, "bad"));
+            start();
+          }, function () { out.appendChild(msg("No connection.", "bad")); });
+        } }, "Yes, keep it"), " ",
+        h("button", { class: "ghost", onclick: function () { pinScreen(true); } }, "No, change it"), out));
+  }
+
+  function pinScreen(forced) {
     var old = h("input", { id: "old", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var nw = h("input", { id: "new", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var again = h("input", { id: "again", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var out = h("div");
-    show(h("h1", {}, "Change PIN"), h("div", { class: "card" },
-      h("label", { for: "old" }, "Current PIN"), old, h("label", { for: "new" }, "New PIN (" + CONF.pinMax + " digits)"), nw,
+    show(h("h1", {}, forced === true ? "Change your default PIN" : "Change PIN"),
+      h("div", { class: "card" },
+      h("label", { for: "old" }, forced === true ? "Default PIN" : "Current PIN"), old, h("label", { for: "new" }, "New PIN (" + CONF.pinMax + " digits)"), nw,
       h("label", { for: "again" }, "New PIN again"), again, h("p"),
       h("button", { onclick: function () {
         C.clear(out);
@@ -684,6 +701,7 @@
           if (!j.ok) return out.appendChild(msg(j.message, "bad"));
           C.rememberPin(ME.name, nw.value);
           old.value = nw.value = again.value = "";
+          if (forced === true) return start();
           out.appendChild(msg("PIN changed. You are signed out on other phones.", "ok"));
         }, function () { out.appendChild(msg("No connection.", "bad")); });
       } }, "Change PIN"), out));

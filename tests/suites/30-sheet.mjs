@@ -81,7 +81,7 @@ export default async function ({ root }) {
     const call = client(mod, env);
     await call("bootstrap", { token: "test-bootstrap", fullName: "Sam Admin", pin: "9999", email: "sam@example.org" });
     const admin = (await call("login", { usherId: "U001", pin: "9999" })).token;
-    await call("usher.save", { name: "John Smith", email: "john@example.org", pin: "1234" }, admin);
+    await call("usher.save", { name: "John Smith", email: "john@example.org", pin: "1234", mustChange: false }, admin);
     await call("usher.roles", { usherId: "U001", roles: ["usher", "system_admin", "head_usher"] }, admin);
     a.ok((await call("notify.send", { all: true, title: "Welcome", body: "Hello" }, admin)).ok);
     /* Two pulls prepared from the real Worker, the second empty. */

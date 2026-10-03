@@ -35,7 +35,7 @@ await page.waitForSelector("text=You are the System Administrator");
 const admin = (await api("login", { usherId: "U001", pin: "9999" })).token;
 const ids = {};
 for (const [k, n] of [["hu", "Grace Okafor"], ["A", "John Smith"], ["B", "Mary Jones"], ["C", "Peter Brown"], ["T", "Ruth Adeyemi"]]) {
-  ids[k] = (await api("usher.save", { name: n, pin: "1234", email: k + "@example.org" }, admin)).usherId;
+  ids[k] = (await api("usher.save", { name: n, pin: "1234", mustChange: false, email: k + "@example.org" }, admin)).usherId;
 }
 await api("usher.roles", { usherId: ids.hu, roles: ["usher", "head_usher"] }, admin);
 await api("usher.roles", { usherId: ids.T, roles: ["usher", "treasurer"] }, admin);
@@ -275,6 +275,34 @@ await page.click("text=Switch off test people");
 await page.waitForSelector("text=Their past rows stay on the sheet");
 if (fresh.env.DB._one("SELECT count(*) AS n FROM ushers WHERE full_name LIKE 'Test %' AND active=1").n !== 0) throw new Error("test people still on");
 fresh.server.close();
+// A new usher starts on the default PIN and is asked once whether to keep it.
+await api("usher.save", { name: "Esther Bello", phone: "07700 900 123" }, admin);
+await page.goto(BASE + "/");
+await page.evaluate(() => localStorage.removeItem("ushers.session.v1"));
+await page.goto(BASE + "/");
+await page.waitForSelector("#who option:nth-child(2)", { state: "attached" });
+await page.selectOption("#who", { label: "Esther Bello" });
+await page.fill("#pin", "0123");
+await page.click("button:has-text('Sign in')");
+await page.waitForSelector("text=Do you wish to keep your default PIN?");
+if (await page.locator("text=/phone/i").count()) throw new Error("the PIN question mentions the phone");
+if (await page.locator("#tabs").isVisible()) throw new Error("tabs shown before answering");
+await shot("default-pin-question");
+await page.click("text=No, change it");
+await page.fill("#old", "0123"); await page.fill("#new", "4826"); await page.fill("#again", "4826");
+await page.click("button:has-text('Change PIN')");
+await page.waitForSelector("text=What am I doing?");
+// Reset, and this time keep the default.
+const eb = (await api("ushers.list", {}, admin)).ushers.find((u) => u.name === "Esther Bello");
+await api("usher.resetPin", { usherId: eb.usherId }, admin);
+await page.evaluate(() => localStorage.removeItem("ushers.session.v1"));
+await page.goto(BASE + "/");
+await page.waitForSelector("#who option:nth-child(2)", { state: "attached" });
+await page.selectOption("#who", { label: "Esther Bello" });
+await page.fill("#pin", "0123");
+await page.click("button:has-text('Sign in')");
+await page.click("text=Yes, keep it");
+await page.waitForSelector("text=What am I doing?");
 
 await browser.close();
 server.close();

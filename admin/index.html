@@ -96,6 +96,8 @@
     C.api("me").then(function (j) {
       if (!j.ok) return start();
       ME = j.me; CONF = j.config;
+      /* Just given the default PIN: the Ushers App asks whether to change it. */
+      if (ME.askPinChange) { location.href = "../"; return; }
       document.getElementById("signOut").hidden = false;
       if (!can("admin.app")) return show(h("h1", {}, "Not available"), msg("The Admin App is for the Head Usher and Assistant Head Usher. Everything else, the Treasurer's page included, is in the Ushers App."), h("a", { class: "btn", href: "../" }, "Open Ushers App"));
       document.getElementById("title").textContent = ME.name;
@@ -411,7 +413,10 @@
     return h("div", { class: "card" }, h("h2", {}, u ? "Edit " + u.name : "Add an usher"),
       h("label", {}, "Full name"), name, h("label", {}, "Email"), email, h("label", {}, "Phone"), phone,
       u ? h("label", { class: "check" }, active, "Active") : null, roleBoxes,
-      h("label", {}, u ? "New PIN (leave blank to keep)" : "PIN (" + CONF.pinMax + " digits)"), pin, h("p"),
+      h("p", { class: "muted" }, u
+        ? "Reset PIN sets it back to their default PIN; at their next sign-in they are asked whether to keep it."
+        : "They start on their default PIN; at their first sign-in they are asked whether to keep it."),
+      h("label", {}, "Starting PIN (" + CONF.pinMax + " digits), only if they have no default PIN"), pin, h("p"),
       h("button", { onclick: function () {
         C.clear(out);
         var body = { usherId: u ? u.usherId : undefined, name: name.value, email: email.value, phone: phone.value, active: active.checked };
@@ -420,14 +425,26 @@
           if (!x.ok) throw new Error(x.message);
           var steps = [];
           if (u) steps.push(C.api("usher.roles", { usherId: u.usherId, roles: Object.keys(roles).filter(function (k) { return roles[k]; }) }));
-          if (u && pin.value) steps.push(C.api("usher.resetPin", { usherId: u.usherId, pin: pin.value }));
           return Promise.all(steps);
         }).then(function (rs) {
           var bad = (rs || []).filter(function (x) { return !x.ok; })[0];
           if (bad) throw new Error(bad.message);
           location.hash = "#ushers"; ushers();
         }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
-      } }, u ? "Save" : "Add"), out);
+      } }, u ? "Save" : "Add"), " ",
+      u ? h("button", { class: "ghost", onclick: function () {
+        C.clear(out);
+        if (!confirm("Reset " + u.name + "'s PIN to their default PIN?")) return;
+        var body = { usherId: u.usherId };
+        if (pin.value) body.pin = pin.value;
+        C.api("usher.resetPin", body).then(function (x) {
+          if (!x.ok) throw new Error(x.message);
+          pin.value = "";
+          out.appendChild(msg(x.pinFrom === "default"
+            ? "PIN reset to their default PIN. They are asked whether to keep it when they next sign in."
+            : "PIN reset to the one you typed. They are asked whether to keep it when they next sign in.", "ok"));
+        }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
+      } }, "Reset PIN") : null, out);
   }
 
   /* ---- message ---------------------------------------------------------- */
