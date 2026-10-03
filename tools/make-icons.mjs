@@ -13,7 +13,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const logo = "data:image/png;base64," + readFileSync(join(root, "shared", "logo.png")).toString("base64");
 const APPS = [
   { dir: ".", bg: "#5b2a86", label: "USHERS" },
-  { dir: "admin", bg: "#2d1544", label: "ADMIN" }
+  { dir: "admin", bg: "#0b5f5c", label: "ADMIN" }
 ];
 const SIZES = [
   { name: "apple-touch-icon.png", px: 180, safe: 1 },
