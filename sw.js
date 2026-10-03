@@ -2,7 +2,7 @@
    changes. Only the files below are served from the cache, and only when
    the network fails; everything else (the Admin App, the server) passes
    straight through. Same idea as the Driver App's sw.js. */
-const CACHE = "ushers-v0.3.8";
+const CACHE = "ushers-v0.3.9";
 const SHELL = ["./", "./index.html", "./config.js", "./shared/core.js", "./shared/reports.js", "./shared/style.css", "./shared/logo.png",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
@@ -56,6 +56,18 @@ self.addEventListener("push", (e) => {
       body: say.body || "", tag: say.tag || "ushers", renotify: true,
       icon: "./icon-192.png", badge: "./icon-192.png", data: { url: say.url || "./#notes" }
     });
+    /* The unread count on the home-screen icon, where the phone allows it,
+       and any open copy of either app told at once, so its bell updates
+       without waiting for its next look. */
+    try {
+      const n = Number(say.unread);
+      if (n > 0 && self.navigator.setAppBadge) await self.navigator.setAppBadge(n);
+      else if (say.unread === 0 && self.navigator.clearAppBadge) await self.navigator.clearAppBadge();
+    } catch (err) {}
+    try {
+      const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      all.forEach((c) => c.postMessage({ type: "ushers:notified" }));
+    } catch (err) {}
   })());
 });
 

@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.5";
+const SERVER_VERSION = "w0.3.6";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -89,6 +89,7 @@ const DEFAULT_CONFIG = {
   report_reminder_hour: 15,           // on the event day
   rota_weeks_ahead: 8,
   push_types: null,                   // null = every notification also goes to phones with alerts on
+  unalerted_email_minutes: 60,       // someone with alerts on no phone is emailed what is still unread after this long (0 = never)
   email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "report_filed", "dues_reminder", "admin_message"],
   report_notify_roles: ["head_usher", "assistant_head_usher"]  // told of every report once it is filed
 };
@@ -2017,10 +2018,11 @@ async function aDashboard(env, cfg, b, me) {
 async function aUshersList(env, cfg, b, me) {
   need(me, "ushers.view");
   const rows = ((await env.DB.prepare(
-    "SELECT u.*, group_concat(r.role) AS roles FROM ushers u LEFT JOIN user_roles r ON r.usher_id=u.id GROUP BY u.id ORDER BY u.full_name COLLATE NOCASE"
+    "SELECT u.*, group_concat(r.role) AS roles, (SELECT count(*) FROM push_subs p WHERE p.usher_id=u.id) AS alerts " +
+    "FROM ushers u LEFT JOIN user_roles r ON r.usher_id=u.id GROUP BY u.id ORDER BY u.full_name COLLATE NOCASE"
   ).all()).results) || [];
   return { ok: true, ushers: rows.map((u) => ({
-    usherId: u.id, name: u.full_name, email: u.email, phone: u.phone, active: !!u.active, hasPin: !!u.pin_hash,
+    usherId: u.id, name: u.full_name, email: u.email, phone: u.phone, active: !!u.active, hasPin: !!u.pin_hash, alerts: Number(u.alerts) || 0,
     roles: String(u.roles || "").split(",").filter(Boolean) })),
     canManage: me.perms.has("ushers.manage"), canGrantAny: me.perms.has("roles.grant_any") };
 }
@@ -2324,8 +2326,44 @@ async function clockTick(env, now) {
         "The report for " + x.title + " on " + ukDate(x.date) + " has not been submitted.", "event", x.eid, "report:" + x.eid + ":" + x.id)) sent++;
     }
   }
+  try { await emailUnalerted(env, cfg, at.getTime()); } catch (e) { console.log("unalerted", e && e.message); }
   await env.DB.prepare("INSERT INTO settings (k, v) VALUES ('clock_tick', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(String(Date.now())).run();
   return sent;
+}
+
+/* NOBODY LEFT IN THE DARK. A person who has never turned alerts on, on any
+   phone, is woken by nothing: a duty reminder or a "report not yet
+   submitted" that was not one of the emailed types would sit in the app
+   until they happened to open it. So anything still unread after
+   unalerted_email_minutes, and not already emailed, goes to them by email,
+   one email per person per tick listing what is waiting. Two days back at
+   most, so switching this on never sends a pile of old news. Turning
+   alerts on, or reading it in the app, stops it. */
+async function emailUnalerted(env, cfg, nowMs) {
+  const mins = Number(cfg.unalerted_email_minutes) || 0;
+  if (mins <= 0) return 0;
+  const now = nowMs || Date.now();
+  const rows = ((await env.DB.prepare(
+    "SELECT n.id, n.usher_id, n.title, n.body, n.created_at FROM notifications n JOIN ushers u ON u.id=n.usher_id " +
+    "WHERE n.emailed=0 AND n.read_at IS NULL AND n.created_at<=? AND n.created_at>? AND u.active=1 AND COALESCE(u.email,'')<>'' " +
+    "AND NOT EXISTS (SELECT 1 FROM push_subs p WHERE p.usher_id=n.usher_id) ORDER BY n.created_at LIMIT 200"
+  ).bind(now - mins * 60000, now - 48 * 3600000).all()).results) || [];
+  if (!rows.length) return 0;
+  const by = {};
+  for (const n of rows) (by[n.usher_id] = by[n.usher_id] || []).push(n);
+  const st = [];
+  for (const id of Object.keys(by)) {
+    const u = await getUsher(env, id);
+    if (!u || !u.email) continue;
+    const list = by[id];
+    const subject = list.length === 1 ? list[0].title : list.length + " new notifications in the Ushers App";
+    const body = list.map((n) => "• " + n.title + (n.body ? "\n  " + n.body : "")).join("\n\n") +
+      "\n\nOpen the Ushers App to see them. To be told on your phone instead, tap the bell at the top of the app and turn alerts on.";
+    st.push(stOutbox(env, "@email", { to: u.email, subject: text(subject, 140), body: body.slice(0, 3000) }));
+    for (const n of list) st.push(env.DB.prepare("UPDATE notifications SET emailed=2 WHERE id=? AND emailed=0").bind(n.id));
+  }
+  await run(env, st);
+  return Object.keys(by).length;
 }
 
 /* ==========================================================================
@@ -2486,19 +2524,66 @@ async function aPushUnsubscribe(env, cfg, b, me) {
    something showable (a push that shows nothing is held against the site). */
 async function aPushWhat(env, cfg, b) {
   const plain = { ok: true, title: cfg.church_name ? "Ushering" : "Ushering", body: "Open the app for the latest.", tag: "ushers", url: "./#notes" };
-  const sub = await env.DB.prepare("SELECT * FROM push_subs WHERE endpoint=?").bind(String(b.endpoint || "")).first();
+  const endpoint = String(b.endpoint || "");
+  const sub = await env.DB.prepare("SELECT * FROM push_subs WHERE endpoint=?").bind(endpoint).first();
   if (!sub) return plain;
+  const more = await env.DB.prepare("SELECT count(*) AS n FROM notifications WHERE usher_id=? AND read_at IS NULL").bind(sub.usher_id).first();
+  const unread = more ? Number(more.n) || 0 : 0;
+  /* A test asked for from the bell, answered before anything else (as the
+     Driver App's testpush): the push carries nothing, so without this the
+     test would be shown as the newest real notification and could not be
+     told apart from it. Cleared as it is read; five minutes at most. */
+  const tkey = "pushtest:" + endpoint;
+  const test = await setting(env, tkey);
+  if (test) {
+    await env.DB.prepare("DELETE FROM settings WHERE k=?").bind(tkey).run();
+    if (Date.now() - (Number(test) || 0) < 5 * 60000) {
+      return { ok: true, title: "Alerts are working", body: "This phone will be told the moment anything new arrives.", tag: "test", url: "./#notes", unread };
+    }
+  }
   const n = await env.DB.prepare(
     "SELECT * FROM notifications WHERE usher_id=? AND read_at IS NULL ORDER BY created_at DESC LIMIT 1").bind(sub.usher_id).first();
-  if (!n) return plain;
-  const more = await env.DB.prepare("SELECT count(*) AS n FROM notifications WHERE usher_id=? AND read_at IS NULL").bind(sub.usher_id).first();
-  const extra = more && more.n > 1 ? " (" + (more.n - 1) + " more in the app)" : "";
+  if (!n) return Object.assign(plain, { unread });
+  const extra = unread > 1 ? " (" + (unread - 1) + " more in the app)" : "";
   let url = "./#notes";
   if (n.ref_type === "report" && n.type === "report_filed" && permissionsFor(cfg, await rolesOf(env, sub.usher_id)).has("admin.app")) url = "./admin/#report/" + n.ref_id;
   else if (n.ref_type === "report") url = "./#rep/" + n.ref_id;
   else if (n.ref_type === "authorisation") url = "./admin/#approvals";
   else if (n.ref_type === "event") url = "./#report/" + n.ref_id;
-  return { ok: true, title: n.title, body: (n.body || "") + extra, tag: "n|" + n.id, url };
+  return { ok: true, title: n.title, body: (n.body || "") + extra, tag: "n|" + n.id, url, unread };
+}
+
+/* The bell's test, from the Driver App's testpush: one push to this phone,
+   the caller's own, and the push service's answer handed back, so "alerts
+   are on" is proved rather than assumed. One at a time per phone. */
+async function aPushTest(env, cfg, b, me, selfOrigin) {
+  const endpoint = okEndpoint(b.endpoint);
+  if (!endpoint) fail(400, "endpoint", "This phone did not give a push address.");
+  const sub = await env.DB.prepare("SELECT * FROM push_subs WHERE endpoint=? AND usher_id=?").bind(endpoint, me.usher.id).first();
+  if (!sub) fail(404, "not_subscribed", "Alerts are not on for this phone. Turn them on first.");
+  const tkey = "pushtest:" + endpoint;
+  const pending = Number(await setting(env, tkey)) || 0;
+  if (pending && Date.now() - pending < 20000) fail(429, "busy", "A test is already on its way.");
+  await env.DB.prepare("INSERT INTO settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(tkey, String(Date.now())).run();
+  const sent = await pushOne(env, sub, await vapidKeys(env), selfOrigin);
+  if (!sent) {
+    await env.DB.prepare("DELETE FROM settings WHERE k=?").bind(tkey).run();
+    const still = await env.DB.prepare("SELECT 1 AS n FROM push_subs WHERE id=?").bind(sub.id).first();
+    return { ok: false, error: still ? "push_failed" : "gone",
+             message: still ? "The phone's push service did not take the test. Try again in a minute."
+                            : "This phone's alerts had lapsed. Turn them on again." };
+  }
+  return { ok: true };
+}
+
+/* What the bell polls: how many are unread and the newest, small enough to
+   ask every half minute without reading the whole list. */
+async function aNotificationsCount(env, cfg, b, me) {
+  const c = await env.DB.prepare("SELECT count(*) AS n FROM notifications WHERE usher_id=? AND read_at IS NULL").bind(me.usher.id).first();
+  const n = await env.DB.prepare("SELECT * FROM notifications WHERE usher_id=? ORDER BY created_at DESC LIMIT 1").bind(me.usher.id).first();
+  const alerts = await env.DB.prepare("SELECT count(*) AS n FROM push_subs WHERE usher_id=?").bind(me.usher.id).first();
+  return { ok: true, unread: c ? Number(c.n) || 0 : 0, alertPhones: alerts ? Number(alerts.n) || 0 : 0,
+           latest: n ? { id: n.id, type: n.type, title: n.title, body: n.body, refType: n.ref_type, refId: n.ref_id, at: n.created_at, read: !!n.read_at } : null };
 }
 
 /* ==========================================================================
@@ -2662,7 +2747,9 @@ const ACTIONS = {
   "audit.list":             { fn: aAuditList },
   "push.subscribe":         { fn: aPushSubscribe },
   "push.unsubscribe":       { fn: aPushUnsubscribe },
-  "push.what":              { auth: false, fn: aPushWhat }
+  "push.what":              { auth: false, fn: aPushWhat },
+  "push.test":              { fn: aPushTest },
+  "notifications.count":    { fn: aNotificationsCount }
 };
 
 async function handle(request, env, ctx) {
@@ -2698,7 +2785,7 @@ async function handle(request, env, ctx) {
         fail(403, "pin_question", "Say whether you wish to keep your default PIN first.");
       }
     }
-    const out = await spec.fn(env, cfg, b, me);
+    const out = await spec.fn(env, cfg, b, me, url.origin);
     if (out && typeof out === "object" && out.sheet === undefined) out.sheet = await setting(env, "sheet_version");
     if (spec.write && ctx && typeof ctx.waitUntil === "function") {
       ctx.waitUntil(knockSheet(env));

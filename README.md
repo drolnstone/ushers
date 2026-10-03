@@ -96,6 +96,22 @@ notified → Coordinator dashboard.
   notification then also wakes the phone. As in the Driver App, the push
   carries nothing: the phone asks the server what it is for. On iPhone it
   works once Ushers is added to the Home Screen and opened from there.
+- **The bell.** Both apps have a bell in the banner once signed in, as the
+  Driver App's coordinator app. Hollow while alerts are off on this phone:
+  a tap turns them on. Filled once they are on: a tap opens Notifications.
+  It carries the unread count (also on the Notifications tab and, where the
+  phone allows, on the home-screen icon) and keeps listening while the app
+  is open: it asks `notifications.count` every `refreshSeconds`, again when
+  the app comes back into view, and at once when a phone alert lands.
+  Anything new is shown in a strip at the foot of the screen. Notifications
+  → Send a test alert (`push.test`) proves the chain end to end.
+- **Nobody left unalerted.** Once signed in on a phone where alerts are off,
+  the person is asked straight out to turn them on (again three days after
+  "Not now"; on an iPhone in Safari, told to add the app to the Home Screen
+  first). Anyone with alerts on no phone is emailed whatever is still unread
+  after `unalerted_email_minutes` (60; 0 turns it off), one email listing
+  them, at most two days back and once each. Admin → Ushers marks them
+  "Alerts off".
 - **PDFs.** Any report has a PDF button (both apps). Admin → Reports makes a
   summary PDF for any period of up to 400 days.
 - **Signing** is typing your full name, ticking to confirm, and your PIN.
