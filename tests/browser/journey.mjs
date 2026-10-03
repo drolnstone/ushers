@@ -313,7 +313,20 @@ if (await page.locator("text=/phone/i").count()) throw new Error("the PIN questi
 if (await page.locator("#tabs").isVisible()) throw new Error("tabs shown before answering");
 await shot("default-pin-question");
 await page.click("text=No, change it");
-await page.fill("#old", "0123"); await page.fill("#new", "4826"); await page.fill("#again", "4826");
+// Each box hands on to the next at four digits; the last never submits.
+await page.click("#old"); await page.keyboard.type("0123");
+if (await page.evaluate(() => document.activeElement.id) !== "new") throw new Error("the default PIN box did not hand on");
+await page.keyboard.type("4826");
+if (await page.evaluate(() => document.activeElement.id) !== "again") throw new Error("the new PIN box did not hand on");
+await page.keyboard.type("4827");
+if (await page.evaluate(() => document.activeElement.id) !== "again") throw new Error("the last PIN box moved on");
+// A wrong entry is said in bold red.
+await page.click("button:has-text('Change PIN')");
+const bad = page.locator(".msg.bad", { hasText: "The new PINs do not match." });
+await bad.waitFor();
+if (Number(await bad.evaluate((e) => getComputedStyle(e).fontWeight)) < 700) throw new Error("the refusal is not bold");
+await shot("pin-mismatch-bold-red");
+await page.fill("#again", "4826");
 await page.click("button:has-text('Change PIN')");
 await page.waitForSelector("text=What am I doing?");
 // Reset, and this time keep the default.
