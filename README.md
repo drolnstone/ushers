@@ -109,7 +109,8 @@ System Administrator. Permissions are the union of a person's roles
 
 Pick your name (or type it, with `public_name_list` off) and enter your PIN.
 PINs are hashed with PBKDF2-SHA-256, a random salt per person and a server
-secret (`PIN_PEPPER`); the PIN is never stored. Three wrong tries pause that
+secret (`PIN_PEPPER`); the PIN is never stored. A PIN is always exactly four digits
+(`pin_min_length` = `pin_max_length` = 4). Three wrong tries pause that
 name for five minutes. A sign-in makes a session token, stored on the server
 only as a hash. Both apps live on one site, so they share the token: **Open
 Admin App** and **Open Ushers App** need no second sign-in. The Admin App
