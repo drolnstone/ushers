@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.2";
+const SERVER_VERSION = "w0.3.3";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -431,6 +431,14 @@ async function newPinFields(env, cfg, pin) {
   return { pin_salt: salt, pin_hash: await pinHash(env, p, salt, iter), pin_iter: iter, pin_set_at: Date.now() };
 }
 
+/* The default PIN. A new usher starts on it and every reset drops back to
+   it; at the next sign-in they are asked once whether to keep it. Ushers
+   are told how it is made at onboarding; the apps never say. */
+function phoneDefaultPin(phone) {
+  const d = String(phone || "").replace(/\D/g, "");
+  return d.length >= 4 ? d.slice(-4) : "";
+}
+
 /* Throws on a wrong PIN or a lockout; returns quietly on a right one. */
 async function verifyPin(env, cfg, usher, pin) {
   if (!usher.pin_hash) fail(403, "no_pin", "No PIN is set for this person. Ask the coordinator.");
@@ -499,7 +507,8 @@ function meView(me) {
     name: me.usher.full_name,
     roles: me.roles.map((r) => ROLE_LABELS[r] || r),
     permissions: Array.from(me.perms).sort(),
-    hasPin: !!me.usher.pin_hash
+    hasPin: !!me.usher.pin_hash,
+    askPinChange: !!me.usher.pin_must_change
   };
 }
 
@@ -603,16 +612,31 @@ function publicConfig(cfg) {
   };
 }
 
+/* "Do you wish to change your default PIN?" No: it stays, and they are not
+   asked again. They can still change it on the PIN tab whenever they like. */
+async function aPinKeep(env, cfg, b, me) {
+  if (!me.usher.pin_must_change) return { ok: true };
+  await run(env, [
+    env.DB.prepare("UPDATE ushers SET pin_must_change=0, updated_at=? WHERE id=?").bind(Date.now(), me.usher.id),
+    stAudit(env, me.usher.id, "pin.keep", "usher", me.usher.id, null, null, "Kept the default PIN")
+  ]);
+  return { ok: true };
+}
+
 async function aPinChange(env, cfg, b, me) {
   await verifyPin(env, cfg, me.usher, b.oldPin);
+  if (String(b.newPin || "") === String(b.oldPin || "")) fail(400, "same_pin", "Choose a PIN different from the one you have.");
+  if (phoneDefaultPin(me.usher.phone) && String(b.newPin || "") === phoneDefaultPin(me.usher.phone)) {
+    fail(400, "same_pin", "Choose a different PIN.");
+  }
   const pin = await newPinFields(env, cfg, b.newPin);
   const now = Date.now();
   await run(env, [
-    env.DB.prepare("UPDATE ushers SET pin_salt=?, pin_hash=?, pin_iter=?, pin_set_at=?, updated_at=? WHERE id=?")
+    env.DB.prepare("UPDATE ushers SET pin_salt=?, pin_hash=?, pin_iter=?, pin_set_at=?, pin_must_change=0, updated_at=? WHERE id=?")
       .bind(pin.pin_salt, pin.pin_hash, pin.pin_iter, pin.pin_set_at, now, me.usher.id),
     /* Every other session of this person ends; this one carries on. */
     env.DB.prepare("UPDATE sessions SET revoked_at=? WHERE usher_id=? AND token_hash<>? AND revoked_at IS NULL").bind(now, me.usher.id, me.tokenHash),
-    stAudit(env, me.usher.id, "pin.change", "usher", me.usher.id, null, null, "Changed own PIN"),
+    stAudit(env, me.usher.id, "pin.change", "usher", me.usher.id, null, null, "Changed to a new PIN"),
     stAuthLog(env, me.usher.id, "pin_set", "own change")
   ]);
   return { ok: true };
@@ -1956,17 +1980,22 @@ async function aUsherSave(env, cfg, b, me) {
   }
   const id = await nextId(env, "usher", "U", 3);
   const u = { id, full_name: name, email, phone, active: 1, created_at: now, updated_at: now };
+  /* The first PIN is the default PIN; a typed PIN only when there is no
+     default. Either way they are asked at first sign-in whether to keep it,
+     unless a System Administrator says otherwise (test people). */
+  const start = phoneDefaultPin(phone) || (b.pin ? String(b.pin) : "");
   let pin = null;
-  if (b.pin) pin = await newPinFields(env, cfg, b.pin);
+  if (start) pin = await newPinFields(env, cfg, start);
+  const mustChange = pin && !(b.mustChange === false && me.perms.has("roles.grant_any")) ? 1 : 0;
   await run(env, [
-    env.DB.prepare("INSERT INTO ushers (id, full_name, email, phone, active, pin_salt, pin_hash, pin_iter, pin_set_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(id, name, email, phone, 1, pin && pin.pin_salt, pin && pin.pin_hash, pin && pin.pin_iter, pin && pin.pin_set_at, now, now),
+    env.DB.prepare("INSERT INTO ushers (id, full_name, email, phone, active, pin_salt, pin_hash, pin_iter, pin_set_at, pin_must_change, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(id, name, email, phone, 1, pin && pin.pin_salt, pin && pin.pin_hash, pin && pin.pin_iter, pin && pin.pin_set_at, mustChange, now, now),
     env.DB.prepare("INSERT INTO user_roles (usher_id, role, granted_by, granted_at) VALUES (?,?,?,?)").bind(id, "usher", me.usher.id, now),
     stAudit(env, me.usher.id, "usher.create", "usher", id, null, { name, email, phone, roles: ["usher"] }, ""),
     stOutbox(env, "USHERS", usherRow(Object.assign(u, pin || {}), ["usher"]), "USHER_ID"),
     pin ? stAuthLog(env, id, "pin_set", "by " + me.usher.id) : null
   ]);
-  return { ok: true, usherId: id };
+  return { ok: true, usherId: id, pinFrom: pin ? (phoneDefaultPin(phone) ? "default" : "typed") : "" };
 }
 
 async function aUsherRoles(env, cfg, b, me) {
@@ -1998,18 +2027,23 @@ async function aUsherResetPin(env, cfg, b, me) {
   need(me, "ushers.manage");
   const u = await getUsher(env, text(b.usherId, 20));
   if (!u) fail(404, "no_usher", "Not found.");
-  const pin = await newPinFields(env, cfg, b.pin);
+  /* A reset drops back to the default PIN. A typed PIN is only for
+     someone with no phone number on file. */
+  const start = phoneDefaultPin(u.phone) || (b.pin ? String(b.pin) : "");
+  if (!start) fail(400, "no_default_pin", "They have no default PIN yet. Type a starting PIN.");
+  const pin = await newPinFields(env, cfg, start);
+  const mustChange = b.mustChange === false && me.perms.has("roles.grant_any") ? 0 : 1;
   const now = Date.now();
   await run(env, [
-    env.DB.prepare("UPDATE ushers SET pin_salt=?, pin_hash=?, pin_iter=?, pin_set_at=?, updated_at=? WHERE id=?")
-      .bind(pin.pin_salt, pin.pin_hash, pin.pin_iter, pin.pin_set_at, now, u.id),
+    env.DB.prepare("UPDATE ushers SET pin_salt=?, pin_hash=?, pin_iter=?, pin_set_at=?, pin_must_change=?, updated_at=? WHERE id=?")
+      .bind(pin.pin_salt, pin.pin_hash, pin.pin_iter, pin.pin_set_at, mustChange, now, u.id),
     env.DB.prepare("DELETE FROM pin_failures WHERE usher_id=?").bind(u.id),
     env.DB.prepare("UPDATE sessions SET revoked_at=? WHERE usher_id=? AND revoked_at IS NULL").bind(now, u.id),
     stAudit(env, me.usher.id, "pin.reset", "usher", u.id, null, null, text(b.reason, 200) || "PIN set by administrator"),
     stAuthLog(env, u.id, "pin_set", "by " + me.usher.id),
     stOutbox(env, "USHERS", usherRow(Object.assign({}, u, pin, { updated_at: now }), await rolesOf(env, u.id)), "USHER_ID")
   ]);
-  return { ok: true };
+  return { ok: true, pinFrom: phoneDefaultPin(u.phone) ? "default" : "typed" };
 }
 
 /* ==========================================================================
@@ -2350,7 +2384,8 @@ const MIGRATIONS = [
   "CREATE TABLE IF NOT EXISTS report_versions (id INTEGER PRIMARY KEY AUTOINCREMENT, report_id TEXT NOT NULL, version INTEGER NOT NULL, snapshot_json TEXT NOT NULL, replaced_at INTEGER NOT NULL, replaced_by TEXT NOT NULL, reason TEXT DEFAULT '', amend_submission_id TEXT UNIQUE)",
   "CREATE UNIQUE INDEX IF NOT EXISTS report_versions_once ON report_versions(report_id, version)",
   "CREATE TABLE IF NOT EXISTS push_subs (id INTEGER PRIMARY KEY AUTOINCREMENT, usher_id TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, created_at INTEGER, seen INTEGER, fails INTEGER DEFAULT 0)",
-  "CREATE INDEX IF NOT EXISTS push_subs_usher ON push_subs(usher_id)"
+  "CREATE INDEX IF NOT EXISTS push_subs_usher ON push_subs(usher_id)",
+  "ALTER TABLE ushers ADD COLUMN pin_must_change INTEGER DEFAULT 0"
 ];
 let schemaChecked = false;
 async function migrate(env) {
@@ -2372,9 +2407,10 @@ const ACTIONS = {
   "bootstrap":              { auth: false, fn: aBootstrap, write: true },
   "sheet.pull":             { auth: "sheet", fn: aSheetPull },
   "sheet.ack":              { auth: "sheet", fn: aSheetAck },
-  "logout":                 { fn: aLogout },
-  "me":                     { fn: aMe },
-  "pin.change":             { fn: aPinChange, write: true },
+  "logout":                 { fn: aLogout, whileDefaultPin: true },
+  "me":                     { fn: aMe, whileDefaultPin: true },
+  "pin.change":             { fn: aPinChange, write: true, whileDefaultPin: true },
+  "pin.keep":               { fn: aPinKeep, write: true, whileDefaultPin: true },
   "home":                   { fn: aHome },
   "history.mine":           { fn: aHistoryMine },
   "rota":                   { fn: aRota, write: true },
@@ -2442,6 +2478,11 @@ async function handle(request, env, ctx) {
     } else if (spec.auth !== false) {
       me = await sessionOf(env, cfg, bearer(request));
       if (!me) fail(401, "signed_out", "Please sign in again.");
+      /* Someone just given the default PIN is asked once whether to change
+         it; until they answer (change or keep), nothing else runs. */
+      if (me.usher.pin_must_change && !spec.whileDefaultPin) {
+        fail(403, "pin_question", "Say whether you wish to keep your default PIN first.");
+      }
     }
     const out = await spec.fn(env, cfg, b, me);
     if (out && typeof out === "object" && out.sheet === undefined) out.sheet = await setting(env, "sheet_version");

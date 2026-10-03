@@ -1,6 +1,6 @@
 # Setting up the Ushering App
 
-Versions: app v0.3.3 · server w0.3.2 · sheet v0.3.0.
+Versions: app v0.3.4 · server w0.3.3 · sheet v0.3.0.
 
 ## 1. The database and server (Cloudflare)
 
@@ -60,7 +60,7 @@ test people**.
 
 ## Afterwards, check
 
-A. The foot of both apps reads app v0.3.3 · server w0.3.2 · sheet v0.3.0
+A. The foot of both apps reads app v0.3.4 · server w0.3.3 · sheet v0.3.0
    (the sheet number appears after the first drain).
 B. A Head Usher signed in on the Ushers App sees Open Admin App, and it opens
    without asking for the PIN again.

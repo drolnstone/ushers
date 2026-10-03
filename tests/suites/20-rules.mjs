@@ -40,7 +40,7 @@ export default async function ({ root }) {
     await call("bootstrap", { token: "test-bootstrap", fullName: "Sam Admin", pin: "9999" });
     const people = (await call("people")).people;
     const admin = (await call("login", { usherId: people[0].id, pin: "9999" })).token;
-    const u = (await call("usher.save", { name: "John Smith", email: "j@example.org", pin: "1234" }, admin)).usherId;
+    const u = (await call("usher.save", { name: "John Smith", email: "j@example.org", pin: "1234", mustChange: false }, admin)).usherId;
     await call("usher.roles", { usherId: people[0].id, roles: ["usher", "system_admin", "head_usher"] }, admin);
     await call("rota", { from: "2026-10-01", weeks: 2 }, admin);
     a.ok((await call("rota.set", { eventId: "S20261011-1", usherIds: [u] }, admin)).ok);

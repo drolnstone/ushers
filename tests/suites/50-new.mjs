@@ -35,8 +35,8 @@ export default async function ({ root }) {
     const adminId = (await call("people")).people[0].id;
     const admin = (await call("login", { usherId: adminId, pin: "9999" })).token;
     a.ok((await call("usher.roles", { usherId: adminId, roles: ["system_admin", "head_usher"] }, admin)).ok);
-    const u = (await call("usher.save", { name: "John Smith", pin: "1234" }, admin)).usherId;
-    const v = (await call("usher.save", { name: "Mary Jones", pin: "1234" }, admin)).usherId;
+    const u = (await call("usher.save", { name: "John Smith", pin: "1234", mustChange: false }, admin)).usherId;
+    const v = (await call("usher.save", { name: "Mary Jones", pin: "1234", mustChange: false }, admin)).usherId;
     const john = (await call("login", { usherId: u, pin: "1234" })).token;
     const mary = (await call("login", { usherId: v, pin: "1234" })).token;
     await call("rota", { from: "2026-10-01", weeks: 1 }, admin);
