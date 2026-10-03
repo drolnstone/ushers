@@ -18,7 +18,7 @@
    refused one. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.11";
+  var APP_VERSION = "v0.3.12";
   var CFG = window.USHERS_CONFIG || {};
   var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:", saved: "ushers.saved.v1:" };
 
@@ -411,6 +411,7 @@
     if (tab) { tab.hidden = !n; tab.textContent = n || ""; }
     if (!b) return;
     b.hidden = !BELL.on;
+    if (b.parentNode && b.parentNode.classList) b.parentNode.classList.toggle("has-bell", BELL.on);
     b.disabled = BELL.busy;
     b.classList.toggle("on", BELL.state === "on");
     b.setAttribute("aria-pressed", BELL.state === "on" ? "true" : "false");
@@ -497,19 +498,31 @@
   /* ASKED, NOT LEFT TO BE FOUND. A bell nobody taps leaves a person told of
      nothing until they open the app. So, once signed in on a phone where
      alerts are off, they are asked straight out (as the Driver App's
-     "Turn on" sheet), and asked again three days after a "Not now". On an
+     "Turn on" sheet), on every sign-in and every time the app is opened
+     afresh, for as long as alerts stay off. "Not now" puts it away for
+     this visit only; moving between the two apps does not ask twice. On an
      iPhone in Safari they are told how to add the app first. The server
      also emails what is still unread to anyone with alerts on no phone. */
-  var ASK_KEY = "ushers.alertAsk.v1", ASK_AGAIN_MS = 3 * 24 * 3600000;
+  var ASK_KEY = "ushers.alertAsked.v2";
+  function askedThisVisit() { try { return sessionStorage.getItem(ASK_KEY) === token(); } catch (e) { return false; } }
+  function markAsked() { try { sessionStorage.setItem(ASK_KEY, token()); } catch (e) {} }
+  /* The box sits at the foot of the screen, so while it shows the page is
+     given that much more room at its foot: whatever it would cover (a
+     report's Sign and submit, say) can always be scrolled up above it. */
+  function askRoom() {
+    var a = document.getElementById("alertAsk");
+    document.body.style.paddingBottom = a ? (a.offsetHeight + 32) + "px" : "";
+  }
+  window.addEventListener("resize", askRoom);
   function askClose(not) {
     var a = document.getElementById("alertAsk");
     if (a) a.parentNode.removeChild(a);
-    if (not) store.set(ASK_KEY, String(Date.now()));
+    askRoom();
+    if (not) markAsked();
   }
   function alertAsk(s) {
     if (document.getElementById("alertAsk")) return;
-    var last = Number(store.get(ASK_KEY)) || 0;
-    if (Date.now() - last < ASK_AGAIN_MS) return;
+    if (askedThisVisit()) return;
     var install = s === "install";
     var go = h("button", { type: "button", onclick: function () {
       if (install) return askClose(true);
@@ -523,6 +536,7 @@
         ? "On iPhone, alerts need Ushers on your Home Screen: tap Share, then Add to Home Screen, open it from there and tap the bell."
         : "Without them you only find out about duties, reminders, countersignatures and approvals when you next open the app."),
       h("div", { class: "row" }, go, install ? null : h("button", { type: "button", class: "ghost", onclick: function () { askClose(true); } }, "Not now"))));
+    askRoom();
   }
 
   /* Called once signed in. opts.key is the server's public key ("me"),
