@@ -110,6 +110,60 @@ export default async function ({ root }) {
     for (const tab of Object.keys(ctx.TABS)) a.eq(gas.ss.getSheetByName(tab).protections.length, 1, tab + " protected after the drain");
   });
 
+  s.test("an email that fails to send is not acknowledged, so the server offers it again", (a) => {
+    const { gas, ctx } = loadCodeGs(root, { props: PROPS, userEmail: "owner@example.org" });
+    ctx.setUpSheet();
+    const rows = [
+      { id: 1, tab: "@email", row: { to: "a@example.org", subject: "One", body: "x" } },
+      { id: 2, tab: "@email", row: { to: "b@example.org", subject: "Two", body: "x" } },
+      { id: 3, tab: "@email", row: { subject: "No address", body: "x" } }
+    ];
+    const acks = [];
+    gas.setFetchReply((url, opts) => {
+      if (url.endsWith("/api/sheet.pull")) return { code: 200, body: JSON.stringify(acks.length ? { ok: true, rows: [] } : { ok: true, claim: "c1", rows, more: 0 }) };
+      if (url.endsWith("/api/sheet.ack")) { acks.push(JSON.parse(opts.payload)); return { code: 200, body: "{\"ok\":true}" }; }
+      return { code: 404, body: "{}" };
+    });
+    const send = ctx.MailApp.sendEmail;
+    ctx.MailApp.sendEmail = function (m) {
+      if ((typeof m === "object" ? m.to : m) === "b@example.org") throw new Error("Service invoked too many times for one day: email.");
+      return send.apply(this, arguments);
+    };
+    const r = ctx.drain();
+    a.eq(r.emailed, 1, "only the email that went is counted");
+    a.same(acks[0].ids, [1, 3], "the failed send is left for the next drain; a row with no address is done");
+  });
+
+  s.test("text made only of digits keeps its leading zero", (a) => {
+    const { ctx } = loadCodeGs(root, { props: PROPS });
+    a.eq(ctx.safeCell("07700900123"), "'07700900123");
+    a.eq(ctx.safeCell("2026"), "'2026");
+    a.eq(ctx.safeCell("+447700900123"), "'+447700900123");
+    a.eq(ctx.safeCell("07700 900123"), "07700 900123");
+    a.eq(ctx.safeCell(12), 12, "a number stays a number");
+    a.eq(ctx.safeCell("-5"), "-5");
+    a.eq(ctx.safeCell(""), "");
+  });
+
+  s.test("Check everything shows the knock, the last collection and the server's clock", (a) => {
+    const { gas, ctx } = loadCodeGs(root, { props: PROPS, userEmail: "owner@example.org" });
+    ctx.setUpSheet();
+    const health = (checks) => gas.setFetchReply(() => ({ code: 200, body: JSON.stringify({ ok: true, server: "w0.3.5",
+      checks: Object.assign({ pinPepper: true, sheetToken: true, waitingForSheet: 0 }, checks) }) }));
+    health({ sheetKnock: false, sheetLastDrained: 0, clockLastTick: 0 });
+    let lines = ctx.healthLines().join("\n");
+    a.ok(lines.includes("✗ The server has SHEET_WEBAPP_URL"), lines);
+    a.ok(lines.includes("✗ The sheet has never collected"), lines);
+    a.ok(lines.includes("✗ The server's clock has never run"), lines);
+    health({ sheetKnock: true, sheetLastDrained: Date.now() - 12 * 60000, clockLastTick: Date.now() - 2 * 60000 });
+    lines = ctx.healthLines().join("\n");
+    a.ok(lines.includes("✓ The server has SHEET_WEBAPP_URL"), lines);
+    a.ok(lines.includes("✓ The sheet last collected 12 minutes ago"), lines);
+    a.ok(lines.includes("✓ The server's clock last ran 2 minutes ago"), lines);
+    health({ sheetKnock: true, sheetLastDrained: Date.now(), clockLastTick: Date.now() - 3 * 3600000 });
+    a.ok(ctx.healthLines().join("\n").includes("✗ The server's clock last ran 3 hours ago"));
+  });
+
   s.test("the same rows drained twice are written once", (a) => {
     const { gas, ctx } = loadCodeGs(root, { props: PROPS });
     const rows = [{ tab: "AUDIT", mode: "upsert", key: "AUDIT_ID", value: "x1", row: { AUDIT_ID: "x1", ACTION: "a" } }];

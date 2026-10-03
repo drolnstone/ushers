@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en-GB">
+<html lang="en-GB" class="admin">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -12,6 +12,16 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Ushers Admin">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
+<script>
+/* The theme, set before the first paint (as the Driver App): Light, Dark, or
+   Auto to follow the phone. One setting for both apps on this phone. */
+(function () {
+  var t = "auto";
+  try { t = localStorage.getItem("ushers.theme.v1") || "auto"; } catch (e) {}
+  var m = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+  document.documentElement.setAttribute("data-theme", t !== "auto" ? t : ((m && m.matches) ? "dark" : "light"));
+})();
+</script>
 <link rel="stylesheet" href="../shared/style.css">
 <script src="../config.js"></script>
 <script src="../shared/core.js"></script>
@@ -390,7 +400,7 @@
     C.api("ushers.list").then(function (j) {
       /* Editing someone (their details and roles) is a screen of its own,
          opened at the top, so the form is never hidden down the list. */
-      var one = j.canManage && editing ? j.ushers.filter(function (u) { return u.usherId === editing; })[0] : null;
+      var one = editing ? j.ushers.filter(function (u) { return u.usherId === editing && canEdit(u, j); })[0] : null;
       if (one) {
         show(h("a", { class: "btn ghost", href: "#ushers" }, "← All ushers"), usherForm(one, j));
         window.scrollTo(0, 0);
@@ -408,10 +418,16 @@
             u.hasPin ? null : h("span", { class: "chip warn" }, "No PIN")),
           h("div", {}, u.roles.map(function (r) { return h("span", { class: "chip" }, labelOf(r)); })),
           h("div", { class: "muted" }, [u.email, u.phone].filter(Boolean).join(" · ")),
-          j.canManage ? h("a", { class: "btn ghost", href: "#ushers/" + encodeURIComponent(u.usherId) }, "Edit details and roles") : null));
+          canEdit(u, j) ? h("a", { class: "btn ghost", href: "#ushers/" + encodeURIComponent(u.usherId) }, "Edit details and roles")
+            : j.canManage ? h("p", { class: "muted" }, "Only a System Administrator can change or remove a Treasurer or System Administrator.") : null));
       });
       show.apply(null, parts);
     }, failed);
+  }
+  /* Mirrors the server: without roles.grant_any, nobody who is Treasurer or
+     System Administrator can be edited, have their PIN reset or be removed. */
+  function canEdit(u, j) {
+    return j.canManage && (j.canGrantAny || u.roles.every(function (r) { return ["usher", "head_usher", "assistant_head_usher"].indexOf(r) !== -1; }));
   }
   function labelOf(r) { var x = CONF.roles.filter(function (y) { return y.key === r; })[0]; return x ? x.label : r; }
 

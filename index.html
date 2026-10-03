@@ -12,6 +12,16 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Ushers">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
+<script>
+/* The theme, set before the first paint (as the Driver App): Light, Dark, or
+   Auto to follow the phone. One setting for both apps on this phone. */
+(function () {
+  var t = "auto";
+  try { t = localStorage.getItem("ushers.theme.v1") || "auto"; } catch (e) {}
+  var m = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+  document.documentElement.setAttribute("data-theme", t !== "auto" ? t : ((m && m.matches) ? "dark" : "light"));
+})();
+</script>
 <link rel="stylesheet" href="shared/style.css">
 <script src="config.js"></script>
 <script src="shared/core.js"></script>

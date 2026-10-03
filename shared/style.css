@@ -1,13 +1,28 @@
-/* Ushering App — one look for both apps. Colours as tokens; dark mode follows the phone. */
+/* Ushering App: one look for both apps, each in its own colour.
+   The banner carries the app's colour, the same one its home-screen icon is
+   drawn on (tools/make-icons.mjs): bright purple for the Ushers App, deep
+   aubergine for the Admin App, so the two can be told apart at a glance.
+   Light, Dark or Auto (follow the phone) is picked at the foot of either app
+   and kept on the phone for both; the head of each page sets data-theme on
+   <html> before the first paint so a dark phone never flashes white. */
 [hidden] { display: none !important; }
 :root {
   --bg: #f5f3ef; --card: #ffffff; --ink: #1d1b19; --muted: #6b655e; --line: #e2ddd5;
   --brand: #5b2a86; --brand-ink: #ffffff; --ok: #1f7a4d; --warn: #a65b00; --bad: #b3261e; --chip: #efe9f6;
+  --bar: #5b2a86; --bar-ink: #ffffff; --bar-muted: rgba(255,255,255,.78);
   --radius: 12px;
+  color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #151316; --card: #201d22; --ink: #f1edf3; --muted: #a59fa9; --line: #35303a;
-          --brand: #b48ae0; --brand-ink: #151316; --ok: #5cc794; --warn: #f0b056; --bad: #ff8a80; --chip: #2c2433; }
+:root[data-theme="dark"] {
+  --bg: #151316; --card: #201d22; --ink: #f1edf3; --muted: #a59fa9; --line: #35303a;
+  --brand: #b48ae0; --brand-ink: #151316; --ok: #5cc794; --warn: #f0b056; --bad: #ff8a80; --chip: #2c2433;
+  color-scheme: dark;
+}
+/* The Admin App: the deep colour of its icon, in the banner and on its buttons. */
+:root.admin { --brand: #2d1544; --chip: #e6e0ec; --bar: #2d1544; --bg: #f1f0f3; }
+:root.admin[data-theme="dark"] {
+  --bg: #121114; --card: #1c1a1f; --line: #322e37;
+  --brand: #cdb8e6; --brand-ink: #121114; --chip: #29232f; --bar: #2d1544;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -16,17 +31,16 @@ body { padding-bottom: 48px; }
    scrolls under them: one sticky block, so the tabs always sit right under
    the banner whatever height it wraps to. */
 .top { position: sticky; top: 0; z-index: 5; }
-header.bar { background: var(--brand); color: var(--brand-ink); padding: 10px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-header.bar { background: var(--card); color: var(--ink); border-bottom: 1px solid var(--line); }
+header.bar { background: var(--bar); color: var(--bar-ink); padding: 10px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 header.bar .brand { display: flex; align-items: center; gap: 12px; flex: 1 1 240px; min-width: 0; }
 header.bar .brand img { width: 52px; height: 52px; flex: none; }
 header.bar .brand > span { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
 header.bar .brand b { font-size: 20px; letter-spacing: -0.01em; }
-header.bar .brand small { font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
-header.bar .brand em { font-style: normal; font-size: 13px; color: var(--brand); margin-top: 2px; }
+header.bar .brand small { font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--bar-muted); margin-top: 2px; }
+header.bar .brand em { font-style: normal; font-size: 13px; color: var(--bar-ink); margin-top: 2px; }
 header.bar .brand em:empty { display: none; }
 @media (max-width: 440px) { header.bar .brand img { width: 44px; height: 44px; } header.bar .brand b { font-size: 17px; } header.bar .brand small { font-size: 12px; letter-spacing: 0.12em; } }
-header.bar a, header.bar button { color: var(--brand); background: transparent; border: 1px solid currentColor; border-radius: 999px; padding: 4px 12px; font-size: 14px; text-decoration: none; cursor: pointer; }
+header.bar a, header.bar button { color: var(--bar-ink); background: transparent; border: 1px solid currentColor; border-radius: 999px; padding: 4px 12px; font-size: 14px; text-decoration: none; cursor: pointer; }
 nav.tabs { display: flex; gap: 6px; overflow-x: auto; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
 nav.tabs a { white-space: nowrap; padding: 6px 12px; border-radius: 999px; color: var(--ink); text-decoration: none; font-size: 15px; }
 nav.tabs a.on { background: var(--chip); font-weight: 600; }
@@ -74,5 +88,10 @@ td.num, th.num { text-align: right; }
 .totop.on { display: flex; }
 .totop:focus-visible { outline: 3px solid var(--brand); outline-offset: 3px; }
 footer.foot { text-align: center; color: var(--muted); font-size: 12px; padding: 16px; }
+/* Appearance, under the versions on every screen, as the Driver App's. */
+.themes { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin: 10px 0 0; }
+.themes button { min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--card); color: var(--muted); font-size: 13px; font-weight: 600; }
+.themes button.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
 .people { columns: 2; column-gap: 12px; }
 @media (max-width: 420px) { .grid4 { grid-template-columns: repeat(2, 1fr); } .people { columns: 1; } }

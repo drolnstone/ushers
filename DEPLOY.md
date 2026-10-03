@@ -112,6 +112,9 @@ K. Admin → Events: add a Prayer Meeting for today and choose an usher on duty.
    That usher's report has no countersigner box and shows Verified once
    signed, and the Head Usher gets "Report filed" straight away, in the
    app, as a phone alert (if turned on) and by email.
+L. The Ushers App's banner is bright purple and the Admin App's is deep
+   aubergine, as their home-screen icons. Auto, Light and Dark at the foot of
+   either app change both; Auto follows the phone.
 
 ## Updating later
 

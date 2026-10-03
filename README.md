@@ -120,7 +120,11 @@ Roles are given on Admin → Ushers: tick them when adding someone, or tap
 The System Administrator can give any role. The Head Usher and Assistant Head
 Usher can add people and give or take away Usher, Head Usher and Assistant
 Head Usher; Treasurer and System Administrator need a System Administrator
-(`ROLES_GRANTABLE`, checked on the server).
+(`ROLES_GRANTABLE`, checked on the server). Anyone who is Treasurer or System
+Administrator can be changed, have their PIN reset or be removed only by a
+System Administrator, so no other admin can reset a System Administrator's
+PIN and sign in as them. Settings (`config.manage`) and Audit are the
+System Administrator's alone.
 
 **Removing someone** is on the same Edit screen. They can no longer sign in
 (and are signed out at once), every role but Usher is taken away, phone

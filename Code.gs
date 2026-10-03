@@ -20,7 +20,7 @@
    Menu: Ushering > Set up the sheet (once), then Check everything.
    ========================================================================== */
 
-var SHEET_VERSION = "v0.3.0";
+var SHEET_VERSION = "v0.3.1";
 
 /* The tabs and the headers each starts with. A missing header is added at
    the end; a header is never renamed or moved by this script, and a column
@@ -114,9 +114,13 @@ function ensureTab(ss, name, headers) {
   return sh;
 }
 
-/* A cell never starts a formula from somebody's typing. */
+/* A cell never starts a formula from somebody's typing, and text made only
+   of digits stays text: Sheets would read 07700900123 as a number and drop
+   the leading zero. The server sends every quantity as a number, so a digit
+   string is always text (a phone, a year in REF_ID, a CONFIG value). */
 function safeCell(v) {
   if (v === null || v === undefined) return "";
+  if (typeof v === "string" && /^\d+$/.test(v)) return "'" + v;
   if (typeof v === "string" && /^[=+\-@]/.test(v) && !/^-?\d+(\.\d+)?$/.test(v)) return "'" + v;
   return v;
 }
@@ -277,11 +281,16 @@ function drain() {
       var byTab = {}, order = [], done = [];
       got.rows.forEach(function (r) {
         if (r.tab === "@email") {
+          /* A send that throws (the day's MailApp quota spent, say) is not
+             acknowledged, so the server offers it again once the claim
+             lapses. A row with no address is acknowledged and not counted. */
           try {
-            if (r.row && r.row.to) sendMail({ to: r.row.to, subject: r.row.subject, body: r.row.body });
-            emailed++;
+            if (r.row && r.row.to) {
+              sendMail({ to: r.row.to, subject: r.row.subject, body: r.row.body });
+              emailed++;
+            }
+            done.push(r.id);
           } catch (err) { Logger.log("email failed: " + err); }
-          done.push(r.id);
           return;
         }
         if (!byTab[r.tab]) { byTab[r.tab] = []; order.push(r.tab); }
@@ -408,10 +417,30 @@ function healthLines() {
       out.push("✓ The server answers (" + h.server + ")");
       out.push((h.checks && h.checks.pinPepper ? "✓" : "✗") + " The server has PIN_PEPPER");
       out.push((h.checks && h.checks.sheetToken ? "✓" : "✗") + " The server has SHEET_TOKEN");
+      out.push((h.checks && h.checks.sheetKnock ? "✓" : "✗") + " The server has SHEET_WEBAPP_URL, so it knocks after a save");
+      var drained = h.checks ? Number(h.checks.sheetLastDrained) || 0 : 0;
+      out.push(drained ? "✓ The sheet last collected " + agoWords(drained) : "✗ The sheet has never collected from the server");
+      /* The Cron Trigger runs every five minutes, so a quarter of an hour
+         without a tick means it has stopped. */
+      var tick = h.checks ? Number(h.checks.clockLastTick) || 0 : 0;
+      out.push(!tick ? "✗ The server's clock has never run. Add the Cron Trigger to the Worker in Cloudflare" :
+        Date.now() - tick > 15 * 60000 ? "✗ The server's clock last ran " + agoWords(tick) + ". Check the Worker's Cron Trigger" :
+        "✓ The server's clock last ran " + agoWords(tick));
       out.push("Waiting to come to the sheet: " + (h.checks ? h.checks.waitingForSheet : "?"));
     } catch (err) { out.push("✗ The server did not answer"); }
   }
   return out;
+}
+
+/* "just now", "12 minutes ago", "3 hours ago", "2 days ago". */
+function agoWords(ms) {
+  var m = Math.round((Date.now() - Number(ms)) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return m + " minute" + (m === 1 ? "" : "s") + " ago";
+  var h = Math.round(m / 60);
+  if (h < 24) return h + " hour" + (h === 1 ? "" : "s") + " ago";
+  var d = Math.round(h / 24);
+  return d + " day" + (d === 1 ? "" : "s") + " ago";
 }
 
 function checkEverything() {
