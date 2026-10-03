@@ -111,7 +111,9 @@ PINs are hashed with PBKDF2-SHA-256, a random salt per person and a server
 secret (`PIN_PEPPER`); the PIN is never stored. Three wrong tries pause that
 name for five minutes. A sign-in makes a session token, stored on the server
 only as a hash. Both apps live on one site, so they share the token: **Open
-Admin App** and **Open Ushers App** need no second sign-in, and the server
+Admin App** and **Open Ushers App** need no second sign-in. The Admin App
+also has its own sign-in at `/admin/`, so it can be opened or added to the
+home screen on its own; signing in on either app signs you in on both. The server
 re-reads the person's roles on every call, so removing a role takes effect at
 once.
 

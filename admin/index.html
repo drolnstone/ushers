@@ -57,13 +57,47 @@
   function chip(code, label) { return h("span", { class: "chip status-" + (code || "") }, label || "Not started"); }
   function pinInput(id) { return h("input", { id: id, type: "password", inputmode: "numeric", maxlength: "6" }); }
 
-  C.onSignedOut = function () { location.href = "../"; };
+  C.onSignedOut = function () { C.setToken(""); signIn(); };
+
+  /* Sign in here as well as on the Ushers App: the same people, PINs and
+     session, so signing in on either app signs you in on both. */
+  function signIn() {
+    ME = null;
+    document.getElementById("tabs").hidden = true;
+    document.getElementById("signOut").hidden = true;
+    document.getElementById("title").textContent = "";
+    var who = h("select", { id: "who" }, h("option", { value: "" }, "Choose your name"));
+    var typed = h("input", { id: "whoTyped", placeholder: "e.g. John Smith", autocomplete: "name", hidden: true });
+    var pin = h("input", { id: "pin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "6" });
+    var out = h("div");
+    var go = h("button", { onclick: function () {
+      out.textContent = "";
+      var body = { pin: pin.value };
+      if (!typed.hidden) body.name = typed.value; else body.usherId = who.value;
+      if ((!body.usherId && !body.name) || !pin.value) { out.appendChild(msg("Choose your name and enter your PIN.", "bad")); return; }
+      go.disabled = true;
+      C.api("login", body).then(function (j) {
+        go.disabled = false;
+        if (!j.ok) { out.appendChild(msg(j.message + (j.left !== undefined ? " " + j.left + " tries left." : ""), "bad")); return; }
+        C.setToken(j.token);
+        start();
+      }, function () { go.disabled = false; out.appendChild(msg("No connection. Try again when you have signal.", "bad")); });
+    } }, "Sign in");
+    show(h("h1", {}, "Sign in to Admin"),
+      h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), who, typed, h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
+    C.api("people").then(function (j) {
+      if (j.firstSetup) { C.clear(out); out.appendChild(msg("Nobody is set up yet. Open the Ushers App for First-time setup.")); return; }
+      if (j.typeName) { who.hidden = true; typed.hidden = false; return; }
+      (j.people || []).forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
+    }, function () { who.hidden = true; typed.hidden = false; });
+  }
 
   function start() {
-    if (!C.token()) return show(h("h1", {}, "Please sign in"), h("p", {}, "Sign in on the Ushers App, then open the Admin App from there."), h("a", { class: "btn", href: "../" }, "Open Ushers App"));
+    if (!C.token()) return signIn();
     C.api("me").then(function (j) {
       if (!j.ok) return start();
       ME = j.me; CONF = j.config;
+      document.getElementById("signOut").hidden = false;
       if (!can("admin.app")) return show(h("h1", {}, "Not available"), msg("Your roles do not include the Admin App."), h("a", { class: "btn", href: "../" }, "Open Ushers App"));
       document.getElementById("title").textContent = ME.name;
       document.getElementById("signOut").hidden = false;
@@ -75,7 +109,7 @@
     }, failed);
   }
   document.getElementById("signOut").addEventListener("click", function () {
-    C.api("logout").then(function () {}, function () {}).then(function () { C.setToken(""); location.href = "../"; });
+    C.api("logout").then(function () {}, function () {}).then(function () { C.setToken(""); signIn(); });
   });
 
   function route() {
