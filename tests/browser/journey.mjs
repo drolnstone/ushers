@@ -191,11 +191,35 @@ await page.click("button:has-text('Countersign')");
 await page.waitForSelector(".chip.status-verified");
 if (env.DB._one("SELECT version, attendance_total FROM reports WHERE event_id=?", "S" + focus.replace(/-/g, "") + "-1").attendance_total !== 37) throw new Error("amendment not saved");
 
-// Dashboard; Treasurer boundary.
+// A Prayer Meeting needs no countersignature: John signs and it is filed.
+const huTok = (await api("login", { usherId: ids.hu, pin: "1234" })).token;
+const prayer = (await api("event.save", { type: "PRAYER", date: today }, huTok)).eventId;
+await api("rota.set", { eventId: prayer, usherIds: [ids.A] }, huTok);
+await signIn("John Smith");
+await page.goto(BASE + "/#report/" + prayer);
+await page.waitForSelector("#att-male");
+if (await page.locator("#cs").count()) throw new Error("a Prayer Meeting report asks for a countersigner");
+await page.fill("#att-male", "4"); await page.fill("#att-female", "6"); await page.fill("#att-children", "2");
+await page.fill("#sig", "John Smith"); await page.check("#agree"); await page.fill("#spin", "1234");
+await page.click("text=Sign and submit");
+await page.waitForSelector(".chip.status-verified");
+await shot("a-prayer-filed");
+
+// Dashboard; the Head Usher's notifications; Treasurer boundary.
 await signIn("Grace Okafor");
 await page.goto(BASE + "/admin/#dashboard");
 await page.waitForSelector("text=Next Sunday");
+await page.waitForSelector("#unread:not([hidden])");
 await shot("admin-dashboard");
+await page.click("nav.tabs a:has-text('Notifications')");
+await page.waitForSelector("text=Report filed: Prayer Meeting");
+await page.waitForSelector("text=Report filed: Sunday First Service");
+await page.waitForSelector("text=Alerts on this device");
+await shot("admin-notifications");
+await page.locator(".card", { hasText: "Report filed: Prayer Meeting" }).locator("a", { hasText: "Open" }).click();
+await page.waitForSelector("text=John Smith");
+await page.waitForSelector(".chip.status-verified");
+await shot("admin-filed-report");
 await page.goto(BASE + "/admin/#reports");
 await page.waitForSelector("text=Summary for a period");
 await page.fill("#pfrom", focus);

@@ -33,11 +33,12 @@
 (function () {
   "use strict";
   var C = window.UshersCore, R = window.UshersReports, h = C.h, main = document.getElementById("main");
-  var ME = null, CONF = null, timer = null;
+  var ME = null, CONF = null, PUSH_KEY = "", timer = null;
   /* Each screen and the permission the server needs for it. The server
      refuses anyway; this only decides what is offered. */
   var SCREENS = [
     ["dashboard", "Dashboard", "dashboard.view"],
+    ["notes", "Notifications", "admin.app"],
     ["rota", "Rota", "rota.manage"],
     ["events", "Events", "events.manage"],
     ["reports", "Reports", "reports.view_all"],
@@ -95,7 +96,7 @@
     if (!C.token()) return signIn();
     C.api("me").then(function (j) {
       if (!j.ok) return start();
-      ME = j.me; CONF = j.config;
+      ME = j.me; CONF = j.config; PUSH_KEY = j.pushKey || "";
       /* Just given the default PIN: the Ushers App asks whether to change it. */
       if (ME.askPinChange) { location.href = "../"; return; }
       document.getElementById("signOut").hidden = false;
@@ -104,8 +105,11 @@
       document.getElementById("signOut").hidden = false;
       var tabs = document.getElementById("tabs");
       C.clear(tabs);
-      SCREENS.filter(function (s) { return can(s[2]); }).forEach(function (s) { tabs.appendChild(h("a", { href: "#" + s[0], "data-r": s[0] }, s[1])); });
+      SCREENS.filter(function (s) { return can(s[2]); }).forEach(function (s) {
+        tabs.appendChild(h("a", { href: "#" + s[0], "data-r": s[0] }, s[1], s[0] === "notes" ? h("span", { class: "badge", id: "unread", hidden: true }) : null));
+      });
       tabs.hidden = false;
+      unread();
       route();
     }, failed);
   }
@@ -122,7 +126,7 @@
     if (!allowed.some(function (s) { return s[0] === name; })) name = allowed.length ? allowed[0][0] : "";
     Array.prototype.forEach.call(document.querySelectorAll("#tabs a"), function (a) { a.className = a.getAttribute("data-r") === name ? "on" : ""; });
     var fn = { dashboard: dashboard, rota: rota, events: events, reports: reports, approvals: approvals, ushers: ushers,
-               message: message, audit: audit, settings: settings, report: function () { reportView(parts[1]); } }[parts[0] === "report" ? "report" : name];
+               message: message, audit: audit, settings: settings, notes: notes, report: function () { reportView(parts[1]); } }[parts[0] === "report" ? "report" : name];
     if (fn) fn(parts[1]); else show(msg("Nothing here for your roles."));
   }
   window.addEventListener("hashchange", route);
@@ -148,6 +152,7 @@
 
   function dashboard() {
     function load() {
+      unread();
       C.api("dashboard").then(function (d) {
         if (!d.ok) return show(msg(d.message, "bad"));
         var cur = d.current, rep = cur.reporting;
@@ -327,7 +332,7 @@
           h("h3", {}, "Totals"), offeringTable(r.byCategory, r.offeringTotal)) : null,
         r.notes ? h("div", { class: "card" }, h("b", {}, "Notes"), h("div", {}, r.notes)) : null,
         r.amend && r.amend.possible ? h("div", { class: "card" }, h("h3", {}, "Amend this report"),
-          h("p", { class: "muted" }, "Amending makes a new version and keeps this one. The amended report is countersigned again."),
+          h("p", { class: "muted" }, "Amending makes a new version and keeps this one." + (r.parts && r.parts.countersign ? " The amended report is countersigned again." : "")),
           h("a", { class: "btn ghost", href: "../#rep/" + r.id }, "Amend in the Ushers App")) : null,
         h("div", { class: "card" }, h("h3", {}, "History"), r.history.map(function (x) {
           return h("div", { class: "muted" }, C.timeLabel(x.at) + " · " + (x.from ? x.from + " → " : "") + x.to + (x.who ? " · " + x.who : "") + (x.note ? " · " + x.note : ""));
@@ -445,6 +450,69 @@
             : "PIN reset to the one you typed. They are asked whether to keep it when they next sign in.", "ok"));
         }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
       } }, "Reset PIN") : null, out);
+  }
+
+  /* ---- notifications ---------------------------------------------------- */
+
+  /* The same notifications as the Ushers App's tab: filed reports, approval
+     requests and the rest, kept until read. */
+  function paintUnread(list) {
+    var b = document.getElementById("unread");
+    if (!b) return;
+    var n = list.filter(function (x) { return !x.read; }).length;
+    b.hidden = !n; b.textContent = n;
+  }
+  function unread() {
+    C.api("notifications.list").then(function (j) { if (j.ok) paintUnread(j.notifications); }, function () {});
+  }
+
+  function notes() {
+    loading();
+    C.api("notifications.list").then(function (j) {
+      if (!j.ok) return show(msg(j.message, "bad"));
+      paintUnread(j.notifications);
+      var parts = [h("div", { class: "row" }, h("h1", { class: "grow" }, "Notifications"),
+        h("button", { class: "ghost", onclick: function () { C.api("notifications.read", { all: true }).then(notes, failed); } }, "Mark all read"))];
+      parts.push(alertsCard());
+      if (!j.notifications.length) parts.push(h("p", { class: "muted" }, "Nothing yet."));
+      j.notifications.forEach(function (n) {
+        var link = n.refType === "report" ? "#report/" + n.refId : n.refType === "authorisation" ? "#approvals" :
+                   n.refType === "event" ? "../#report/" + n.refId : "";
+        parts.push(h("div", { class: "card", style: n.read ? "opacity:.7" : "" },
+          h("div", { class: "row" }, h("b", { class: "grow" }, n.title), n.read ? null : h("span", { class: "chip warn" }, "New")),
+          n.body ? h("div", {}, n.body) : null, h("div", { class: "muted" }, C.timeLabel(n.at)),
+          h("div", { class: "row" }, link ? h("a", { class: "btn ghost", href: link, onclick: function () { C.api("notifications.read", { ids: [n.id] }).then(unread, function () {}); } }, "Open") : null,
+            n.read ? null : h("button", { class: "ghost", onclick: function () { C.api("notifications.read", { ids: [n.id] }).then(notes, failed); } }, "Mark read"))));
+      });
+      show.apply(null, parts);
+    }, failed);
+  }
+
+  /* Alerts on this phone or computer: the same notifications, as an alert. */
+  function alertsCard() {
+    var box = h("div", { class: "card" }, h("p", { class: "muted" }, "Checking alerts on this device…"));
+    function paint(state, note) {
+      C.clear(box);
+      box.appendChild(h("h3", {}, "Alerts on this device"));
+      if (state === "unsupported" || !PUSH_KEY) {
+        box.appendChild(h("p", { class: "muted" }, C.iPhoneNotInstalled()
+          ? "On iPhone: tap Share, then Add to Home Screen, and open Ushers from the Home Screen. Then turn alerts on here or in the Ushers App."
+          : "This browser cannot show alerts. Notifications still appear here."));
+      } else if (state === "blocked") {
+        box.appendChild(h("p", { class: "muted" }, "Alerts are blocked for this app in the device's settings. Allow notifications for it there, then come back."));
+      } else if (state === "on") {
+        box.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, "On. New notifications also arrive as alerts."),
+          h("button", { class: "ghost", onclick: function () { C.alertsOff().then(function () { paint("off"); }, function (e) { paint("on", e.message); }); } }, "Turn off")));
+      } else {
+        box.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, "Get an alert the moment a report is filed or an approval is needed."),
+          h("button", { onclick: function () {
+            C.alertsOn(PUSH_KEY).then(function () { paint("on"); }, function (e) { paint("off", e && e.message || "Could not turn alerts on."); });
+          } }, "Turn on alerts")));
+      }
+      if (note) box.appendChild(msg(note, "bad"));
+    }
+    C.alertsState().then(function (s) { paint(s); }, function () { paint("unsupported"); });
+    return box;
   }
 
   /* ---- message ---------------------------------------------------------- */
