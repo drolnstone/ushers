@@ -10,7 +10,7 @@
    duplicates is made on the phone. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.9";
+  var APP_VERSION = "v0.3.10";
   var CFG = window.USHERS_CONFIG || {};
   var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:" };
 
@@ -295,6 +295,7 @@
     if (tab) { tab.hidden = !n; tab.textContent = n || ""; }
     if (!b) return;
     b.hidden = !BELL.on;
+    if (b.parentNode && b.parentNode.classList) b.parentNode.classList.toggle("has-bell", BELL.on);
     b.disabled = BELL.busy;
     b.classList.toggle("on", BELL.state === "on");
     b.setAttribute("aria-pressed", BELL.state === "on" ? "true" : "false");

@@ -98,7 +98,11 @@ footer.foot { text-align: center; color: var(--muted); font-size: 12px; padding:
 /* The bell, in the banner of both apps (the Driver App's coordinator bell):
    hollow while alerts are off on this phone, filled once they are on, with
    the unread count on it. */
-header.bar button.bell { position: relative; flex: none; width: 40px; height: 40px; padding: 0; border-radius: 10px;
+/* Pinned to the far right of the banner's top line, whatever the buttons
+   beside it wrap to; the banner keeps room for it while it shows. */
+header.bar { position: relative; }
+header.bar.has-bell { padding-right: 68px; }
+header.bar button.bell { position: absolute; top: 16px; right: 16px; flex: none; width: 40px; height: 40px; padding: 0; border-radius: 10px;
   display: inline-flex; align-items: center; justify-content: center; border: 1.5px solid rgba(255,255,255,.45); }
 header.bar button.bell svg { width: 21px; height: 21px; display: block; fill: none; }
 header.bar button.bell.on svg { fill: currentColor; }
@@ -115,6 +119,7 @@ header.bar button.bell .bell-count { position: absolute; top: -6px; right: -6px;
 .toast.on { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
 .toast.tap { cursor: pointer; font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+@media (max-width: 440px) { header.bar button.bell { top: 12px; } }
 /* Asked once signed in while alerts are off: a sheet at the foot. */
 .ask { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 8;
   width: min(520px, calc(100vw - 32px)); background: var(--card); color: var(--ink); border: 1px solid var(--line);
