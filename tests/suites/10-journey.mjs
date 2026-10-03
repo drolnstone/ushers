@@ -284,6 +284,18 @@ export default async function ({ root }) {
     a.ok((await call("usher.roles", { usherId: ID.hu, roles: ["usher", "head_usher"] }, T.admin)).ok);
   });
 
+  s.test("the Admin App is for the Head Usher and Assistant Head Usher (and the System Administrator), not the Treasurer", async (a) => {
+    const all = (await call("people")).people.map((p) => p.name);
+    const admins = (await call("people", { app: "admin" })).people.map((p) => p.name);
+    a.ok(all.includes("Ruth Adeyemi") && all.includes("John Smith"), "the Ushers App lists everyone");
+    a.ok(admins.includes("Grace Okafor") && admins.includes("Sam Admin"), JSON.stringify(admins));
+    a.not(admins.includes("Ruth Adeyemi"), "the Treasurer is not listed on the Admin App sign-in");
+    a.not(admins.includes("John Smith"), "nor is an ordinary usher");
+    const t = (await call("me", {}, T.T)).me.permissions;
+    a.not(t.includes("admin.app"), "the Treasurer has no Admin App");
+    a.ok(t.includes("dues.view_all") && t.includes("usher.app"), "the Treasurer's page is in the Ushers App");
+  });
+
   s.test("a Head Usher may not grant the Treasurer role; a System Administrator may", async (a) => {
     a.eq((await call("usher.roles", { usherId: ID.C, roles: ["usher", "treasurer"] }, T.hu))._status, 403);
     a.ok((await call("usher.roles", { usherId: ID.C, roles: ["usher", "assistant_head_usher"] }, T.hu)).ok);

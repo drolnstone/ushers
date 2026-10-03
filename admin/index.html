@@ -43,7 +43,6 @@
     ["reports", "Reports", "reports.view_all"],
     ["approvals", "Approvals", "exceptions.approve"],
     ["ushers", "Ushers", "ushers.view"],
-    ["treasurer", "Treasurer", "dues.view_all"],
     ["message", "Message", "notifications.send"],
     ["audit", "Audit", "audit.view"],
     ["settings", "Settings", "config.manage"]
@@ -85,7 +84,7 @@
     } }, "Sign in");
     show(h("h1", {}, "Sign in to Admin"),
       h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), who, typed, h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
-    C.api("people").then(function (j) {
+    C.api("people", { app: "admin" }).then(function (j) {
       if (j.firstSetup) { C.clear(out); out.appendChild(msg("Nobody is set up yet. Open the Ushers App for First-time setup.")); return; }
       if (j.typeName) { who.hidden = true; typed.hidden = false; return; }
       (j.people || []).forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
@@ -98,7 +97,7 @@
       if (!j.ok) return start();
       ME = j.me; CONF = j.config;
       document.getElementById("signOut").hidden = false;
-      if (!can("admin.app")) return show(h("h1", {}, "Not available"), msg("Your roles do not include the Admin App."), h("a", { class: "btn", href: "../" }, "Open Ushers App"));
+      if (!can("admin.app")) return show(h("h1", {}, "Not available"), msg("The Admin App is for the Head Usher and Assistant Head Usher. Everything else, the Treasurer's page included, is in the Ushers App."), h("a", { class: "btn", href: "../" }, "Open Ushers App"));
       document.getElementById("title").textContent = ME.name;
       document.getElementById("signOut").hidden = false;
       var tabs = document.getElementById("tabs");
@@ -121,7 +120,7 @@
     if (!allowed.some(function (s) { return s[0] === name; })) name = allowed.length ? allowed[0][0] : "";
     Array.prototype.forEach.call(document.querySelectorAll("#tabs a"), function (a) { a.className = a.getAttribute("data-r") === name ? "on" : ""; });
     var fn = { dashboard: dashboard, rota: rota, events: events, reports: reports, approvals: approvals, ushers: ushers,
-               treasurer: treasurer, message: message, audit: audit, settings: settings, report: function () { reportView(parts[1]); } }[parts[0] === "report" ? "report" : name];
+               message: message, audit: audit, settings: settings, report: function () { reportView(parts[1]); } }[parts[0] === "report" ? "report" : name];
     if (fn) fn(parts[1]); else show(msg("Nothing here for your roles."));
   }
   window.addEventListener("hashchange", route);
@@ -429,62 +428,6 @@
           location.hash = "#ushers"; ushers();
         }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
       } }, u ? "Save" : "Add"), out);
-  }
-
-  /* ---- treasurer -------------------------------------------------------- */
-
-  function treasurer(usherId) {
-    loading();
-    var year = Number(C.londonToday().slice(0, 4));
-    C.api("dues.overview", { year: year }).then(function (j) {
-      if (!j.ok) return show(msg(j.message, "bad"));
-      var parts = [h("h1", {}, "Treasurer · dues " + j.year),
-        h("div", { class: "card" }, h("div", { class: "grid4" }, [["Expected so far", money(j.totals.expected)], ["Paid", money(j.totals.paid)], ["Outstanding", money(j.totals.outstanding)], ["Behind", j.totals.behind]]
-          .map(function (x) { return h("div", { class: "stat" }, h("b", {}, x[1]), h("span", {}, x[0])); })),
-          h("p"), h("button", { class: "ghost", onclick: function (e) {
-            e.target.disabled = true;
-            C.api("dues.remind", {}).then(function (x) { e.target.textContent = x.ok ? "Reminders sent: " + x.sent : x.message; });
-          } }, "Remind everyone who is behind"))];
-      parts.push(h("div", { class: "card" }, h("table", {}, h("tr", {}, h("th", {}, "Name"), h("th", { class: "num" }, "Paid"), h("th", { class: "num" }, "Outstanding"), h("th", {}, "Status")),
-        j.members.map(function (m) {
-          return h("tr", {}, h("td", {}, h("a", { href: "#treasurer/" + m.usherId }, m.name)), h("td", { class: "num" }, money(m.paid)),
-            h("td", { class: "num" }, money(m.outstanding)), h("td", {}, h("span", { class: "chip " + (m.status === "Behind" ? "bad" : "ok") }, m.status)));
-        }))));
-      show.apply(null, parts);
-      if (usherId) member(usherId, parts);
-    }, failed);
-  }
-
-  function member(usherId, parts) {
-    C.api("dues.member", { usherId: usherId }).then(function (j) {
-      if (!j.ok) return;
-      var paidOn = h("input", { type: "date", value: C.londonToday() });
-      var amount = h("input", { type: "number", min: "0.01", step: "0.01", value: "5.00", inputmode: "decimal" });
-      var year = h("input", { type: "number", value: C.londonToday().slice(0, 4) });
-      var method = h("select", {}, ["Cash", "Bank transfer", "Card", "Other"].map(function (x) { return h("option", {}, x); }));
-      var note = h("input", { placeholder: "e.g. Paid at the Sunday meeting" });
-      var out = h("div");
-      var card = h("div", { class: "card" }, h("h2", {}, j.name),
-        j.years.map(function (y) {
-          return h("div", {}, h("h3", {}, y.year + " · " + y.status), h("div", { class: "muted" }, "Expected " + money(y.expected) + " · paid " + money(y.paid) + " · outstanding " + money(y.outstanding)),
-            h("table", {}, y.payments.map(function (p) {
-              return h("tr", {}, h("td", {}, C.dateLabel(p.paidOn)), h("td", { class: "num" }, money(p.amount)), h("td", {}, p.method), h("td", {},
-                h("button", { class: "ghost", onclick: function () {
-                  var why = prompt("Why is this payment being voided?");
-                  if (why) C.api("dues.void", { id: p.id, reason: why }).then(function (x) { if (x.ok) treasurer(usherId); else alert(x.message); });
-                } }, "Void")));
-            })));
-        }),
-        h("h3", {}, "Record a payment"),
-        h("div", { class: "grid3" }, h("div", {}, h("label", {}, "Date paid"), paidOn), h("div", {}, h("label", {}, "Amount (£)"), amount), h("div", {}, h("label", {}, "Dues year"), year)),
-        h("label", {}, "Method"), method, h("label", {}, "Note"), note, h("p"),
-        h("button", { onclick: function () {
-          C.clear(out);
-          C.api("dues.record", { usherId: usherId, paidOn: paidOn.value, amountPence: Math.round(Number(amount.value) * 100), year: Number(year.value), method: method.value, note: note.value })
-            .then(function (x) { if (x.ok) treasurer(usherId); else out.appendChild(msg(x.message, "bad")); });
-        } }, "Record payment"), out);
-      var w = main.firstChild; w.insertBefore(card, w.children[1] || null);
-    });
   }
 
   /* ---- message ---------------------------------------------------------- */

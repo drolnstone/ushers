@@ -11,7 +11,7 @@ for what was reused, adapted, replaced and added.
 | Part | Where | What it is |
 |---|---|---|
 | Ushers App | `index.html`, `sw.js`, `manifest.webmanifest` | For every usher. Home answers "What am I doing?" |
-| Admin App | `admin/` | Head Usher, Assistant Head Usher, System Administrator, and the Treasurer's screen. No service worker |
+| Admin App | `admin/` | Head Usher, Assistant Head Usher and System Administrator only; its sign-in lists only them. No service worker |
 | Shared page code | `shared/core.js`, `shared/reports.js`, `shared/style.css`, `config.js` | Session, server calls, offline queue, drafts, phone alerts, report parts, look |
 | PDFs | `shared/pdf.js`, `shared/vendor/jspdf.umd.min.js` (MIT) | Service report and period summary PDFs, made on the phone. Loaded only when a PDF is made |
 | Icons | `apple-touch-icon.png`, `icon-*.png` (and the same in `admin/`) | Home-screen icons. Remade by `node tools/make-icons.mjs` from `shared/logo.png` |
@@ -96,7 +96,8 @@ System Administrator. Permissions are the union of a person's roles
 
 - Head Usher and Assistant Head Usher: rota, events, reports, approvals,
   dashboard (operational offering totals), messages, ushers.
-- Treasurer: dues, payments, balances, reminders. **Head Usher has no dues
+- Treasurer: dues, payments, balances, reminders, on a Treasurer tab inside the
+  Ushers App; no Admin App. **Head Usher has no dues
   permission**; someone with both roles gets both.
 - System Administrator: the builder and tester. Ushers, roles (including
   Treasurer and System Administrator), settings, audit. Not an approver and
