@@ -33,7 +33,13 @@ until the server answers. Minibus (`coord/index.html` around lines
 6. **No signal** stays "No connection…", never a wrong-PIN message (it is
    already a separate branch; keep it).
 7. The Sign in button stays.
+7a. **Type to find your name**: once the list passes about 15 names, a
+   filter box above it narrows the list as you type.
 8. Do the same in `admin/index.html`, sharing the helpers.
+
+## Later, not in this PR
+Face ID or fingerprint (a passkey) instead of the PIN on your own phone.
+Needs thought first, because the PIN is also the signature on reports.
 
 ## Acceptance checks
 - Second visit on the same phone: the name is already chosen and the
@@ -43,4 +49,5 @@ until the server answers. Minibus (`coord/index.html` around lines
 - A wrong PIN empties the box and shows tries left.
 - With the server unreachable, the cached names still show.
 - Countersign and approve PIN boxes also auto-enter.
+- With 40 names, typing "jo" leaves only names containing "jo".
 - Tests READY; browser journey still passes.

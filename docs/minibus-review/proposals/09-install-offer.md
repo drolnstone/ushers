@@ -32,14 +32,21 @@ before the alerts question so they do not race.
 5. Admin → Ushers shows "Not installed" and the count. Check everything
    (brief 07) lists them under Still to do.
 6. The Admin App gets the same offer with its own icon and manifest.
+7. **Reminders** (Asim asked for these on 5 October): anyone not installed
+   on any phone gets a notification and an email with the steps, at most
+   once a week (dedupe key `install:<usher>:<iso-week>`), stopping once
+   installed. Sent from `clockTick` at `reminder_hour`, obeying quiet hours.
+8. Admin → Ushers gets **Send install steps**, for one person or for
+   everyone not yet installed.
+9. A one-page **How to install** guide (a page in the app, e.g.
+   `install.html`, with iPhone and Android pictures) that can be shared on
+   WhatsApp at onboarding. The reminder email links to it.
 
 ## Acceptance checks
 - In a desktop Chrome tab, the offer shows after sign-in; opened as an
   installed app, it never shows.
 - The alerts question never shows at the same moment as the install offer.
 - After opening once installed, Admin → Ushers drops "Not installed".
+- An usher not installed gets one reminder a week, and none once installed.
+- Send install steps reaches only the people chosen.
 - Tests READY; browser journey passes.
-
-## Question for Asim (default in brackets)
-Remind people who have not installed, by notification and email, at most
-weekly? (Not now; the chip and Check everything first.)
