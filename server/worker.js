@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.17";
+const SERVER_VERSION = "w0.3.18";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -85,6 +85,13 @@ const DEFAULT_CONFIG = {
   pin_lock_minutes: 5,
   offline_signing: true,              // a report signed with no signal may be sent later
   offline_max_hours: 72,
+  /* Repeating events: the department's fixed patterns, as rules rather than
+     dates typed in one at a time. Each is
+     { id, title, type, rule, time, paused }, and `rule` is one of
+     "weekly:sat", "first-saturday", "nth-weekday:2:sun", "last-friday",
+     or "yearly:09:first-saturday". */
+  event_rules: [],
+  rules_months_ahead: 12,             // how far ahead a rule's events are made
   release_late_days: 1,               // a "can't make it" this close to the day is marked late
   summary_roles: ["head_usher", "assistant_head_usher"],   // who gets the monthly summary
   summary_hour: 19,                   // London hour it goes, on the last Sunday of the month
@@ -768,6 +775,179 @@ function eventRow(e) {
 }
 
 /* A Sunday is one event per Sunday type, all sharing the Sunday's date. */
+/* ==========================================================================
+   REPEATING EVENTS — the department's fixed patterns as rules, the way
+   Thanksgiving Sunday already is. A rule's events carry its id, so changing
+   the rule moves the ones still to come and leaves the past alone.
+   ========================================================================== */
+
+const DOW_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const DOW_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const NTH_WORDS = ["", "first", "second", "third", "fourth", "fifth"];
+
+/* The nth (1 to 5) given weekday of a month, or the last one with nth 0.
+   Returns "" when the month has no fifth one. */
+function nthWeekdayOf(year, month, dow, nth) {
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const days = [];
+  for (let d = 1; d <= last; d++) {
+    if (new Date(Date.UTC(year, month - 1, d)).getUTCDay() === dow) days.push(d);
+  }
+  const d = nth === 0 ? days[days.length - 1] : days[nth - 1];
+  if (!d) return "";
+  return year + "-" + (month < 10 ? "0" : "") + month + "-" + (d < 10 ? "0" : "") + d;
+}
+
+/* A rule in words, for Settings and for an event's title. "" when the rule
+   makes no sense, which is how aConfigSet refuses one. */
+function ruleWords(rule) {
+  const r = String(rule || "").toLowerCase();
+  let m = /^weekly:([a-z]{3})$/.exec(r);
+  if (m && DOW_KEYS.indexOf(m[1]) !== -1) return "every " + DOW_NAMES[DOW_KEYS.indexOf(m[1])];
+  m = /^(first|second|third|fourth|fifth|last)-([a-z]+)$/.exec(r);
+  if (m) {
+    const dow = DOW_NAMES.findIndex((n) => n.toLowerCase() === m[2]);
+    if (dow !== -1) return "the " + m[1] + " " + DOW_NAMES[dow] + " of each month";
+  }
+  m = /^nth-weekday:([0-5]):([a-z]{3})$/.exec(r);
+  if (m && DOW_KEYS.indexOf(m[2]) !== -1) {
+    const n = Number(m[1]);
+    return "the " + (n === 0 ? "last" : NTH_WORDS[n]) + " " + DOW_NAMES[DOW_KEYS.indexOf(m[2])] + " of each month";
+  }
+  m = /^yearly:(\d{2}):(first|second|third|fourth|fifth|last)-([a-z]+)$/.exec(r);
+  if (m) {
+    const month = Number(m[1]);
+    const dow = DOW_NAMES.findIndex((n) => n.toLowerCase() === m[3]);
+    if (month >= 1 && month <= 12 && dow !== -1) {
+      return "the " + m[2] + " " + DOW_NAMES[dow] + " of " + monthName(m[1] === "01" ? "2026-01" : "2026-" + m[1]).split(" ")[0] + ", each year";
+    }
+  }
+  return "";
+}
+
+/* Every date a rule falls on between two keys, inclusive. */
+function ruleDates(rule, fromKey, toKey) {
+  const r = String(rule || "").toLowerCase();
+  const out = [];
+  const add = (k) => { if (k && k >= fromKey && k <= toKey) out.push(k); };
+  let m = /^weekly:([a-z]{3})$/.exec(r);
+  if (m) {
+    const dow = DOW_KEYS.indexOf(m[1]);
+    if (dow === -1) return out;
+    let k = fromKey;
+    k = keyAddDays(k, (dow - keyDow(k) + 7) % 7);
+    while (k <= toKey) { out.push(k); k = keyAddDays(k, 7); }
+    return out;
+  }
+  const monthly = /^(first|second|third|fourth|fifth|last)-([a-z]+)$/.exec(r);
+  const nth = /^nth-weekday:([0-5]):([a-z]{3})$/.exec(r);
+  const yearly = /^yearly:(\d{2}):(first|second|third|fourth|fifth|last)-([a-z]+)$/.exec(r);
+  let dow = -1, n = -1, onlyMonth = 0;
+  if (monthly) {
+    dow = DOW_NAMES.findIndex((x) => x.toLowerCase() === monthly[2]);
+    n = monthly[1] === "last" ? 0 : NTH_WORDS.indexOf(monthly[1]);
+  } else if (nth) {
+    dow = DOW_KEYS.indexOf(nth[2]);
+    n = Number(nth[1]);
+  } else if (yearly) {
+    dow = DOW_NAMES.findIndex((x) => x.toLowerCase() === yearly[3]);
+    n = yearly[2] === "last" ? 0 : NTH_WORDS.indexOf(yearly[2]);
+    onlyMonth = Number(yearly[1]);
+  } else return out;
+  if (dow === -1 || n === -1) return out;
+  let y = Number(fromKey.slice(0, 4)), mo = Number(fromKey.slice(5, 7));
+  const endY = Number(toKey.slice(0, 4)), endM = Number(toKey.slice(5, 7));
+  while (y < endY || (y === endY && mo <= endM)) {
+    if (!onlyMonth || mo === onlyMonth) add(nthWeekdayOf(y, mo, dow, n));
+    mo++;
+    if (mo > 12) { mo = 1; y++; }
+  }
+  return out;
+}
+
+/* The events a rule calls for, made once and then left alone, with the
+   rule's own id on each so the rule can move the ones still to come. */
+async function ensureRuleEvents(env, cfg, actorId, todayKey) {
+  const today = todayKey || londonKey(new Date());
+  const to = keyAddDays(today, Math.round(30.5 * (Number(cfg.rules_months_ahead) || 12)));
+  const st = [];
+  let made = 0;
+  for (const rule of (Array.isArray(cfg.event_rules) ? cfg.event_rules : [])) {
+    if (!rule || !rule.id || rule.paused) continue;
+    const type = cfg.event_types[rule.type] ? rule.type : "";
+    if (!type || !ruleWords(rule.rule)) continue;
+    for (const date of ruleDates(rule.rule, today, to)) {
+      const id = "R" + String(rule.id).toUpperCase().replace(/[^A-Z0-9]/g, "") + "-" + date.replace(/-/g, "");
+      const title = text(rule.title || cfg.event_types[type].label, 120);
+      const start = text(rule.time || cfg.event_types[type].start || "", 5);
+      const now = Date.now();
+      const r = await env.DB.prepare(
+        "INSERT OR IGNORE INTO events (id, type, title, date, start_time, sunday_key, thanksgiving, status, rule_id, created_by, created_at, updated_at) " +
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+      ).bind(id, type, title, date, start, "", 0, "scheduled", String(rule.id), actorId || "system", now, now).run();
+      if (r.meta && r.meta.changes) {
+        made++;
+        st.push(stOutbox(env, "EVENTS", eventRow({ id, type, title, date, start_time: start, sunday_key: "", thanksgiving: 0, status: "scheduled", updated_at: now }), "EVENT_ID"));
+      }
+    }
+  }
+  await run(env, st);
+  return made;
+}
+
+/* A rule changed in Settings: its events still to come follow the new
+   title and time, and anything it no longer calls for is cancelled. The
+   past is never touched. */
+async function applyRuleChanges(env, cfg, actorId) {
+  const today = londonKey(new Date());
+  const st = [];
+  const names = {};
+  for (const rule of (Array.isArray(cfg.event_rules) ? cfg.event_rules : [])) {
+    if (!rule || !rule.id) continue;
+    const type = cfg.event_types[rule.type] ? rule.type : "";
+    const title = text(rule.title || (type ? cfg.event_types[type].label : ""), 120);
+    const start = text(rule.time || (type ? cfg.event_types[type].start : "") || "", 5);
+    const wanted = rule.paused || !type || !ruleWords(rule.rule) ? []
+      : ruleDates(rule.rule, today, keyAddDays(today, Math.round(30.5 * (Number(cfg.rules_months_ahead) || 12))));
+    const rows = ((await env.DB.prepare(
+      "SELECT * FROM events WHERE rule_id=? AND date>=?").bind(String(rule.id), today).all()).results) || [];
+    for (const e of rows) {
+      const now = Date.now();
+      const off = wanted.indexOf(e.date) === -1;
+      if (off !== (e.status === "cancelled")) {
+        /* Off the pattern, or back on it. Anybody already on duty is told,
+           as they are for any other cancellation. */
+        const status = off ? "cancelled" : "scheduled";
+        st.push(env.DB.prepare("UPDATE events SET status=?, updated_at=? WHERE id=?").bind(status, now, e.id));
+        st.push(stOutbox(env, "EVENTS", eventRow(Object.assign({}, e, { status, updated_at: now })), "EVENT_ID"));
+        st.push(stAudit(env, actorId || "system", off ? "event.cancel" : "event.restore", "event", e.id,
+          { status: e.status }, { status }, off ? "The rule no longer calls for it" : "The rule calls for it again"));
+        if (e.date >= today) {
+          const on = ((await env.DB.prepare(
+            "SELECT u.* FROM appointments a JOIN ushers u ON u.id=a.usher_id WHERE a.event_id=? AND a.status='active' AND u.active=1"
+          ).bind(e.id).all()).results) || [];
+          for (const u of on) {
+            st.push(off
+              ? stNotify(env, cfg, u, "duty", "Cancelled: " + e.title, e.title + " on " + ukDate(e.date) + " will not take place.",
+                  "event", e.id, null, false, icsFor(e, "rule-" + e.id, "ushering", "CANCEL"))
+              : stNotify(env, cfg, u, "duty", "Back on: " + e.title, e.title + " on " + ukDate(e.date) + ". You are on duty again.",
+                  "event", e.id, null, false, icsFor(e, "rule-" + e.id, "ushering", "REQUEST")));
+          }
+        }
+      } else if (!off && (e.title !== title || (e.start_time || "") !== start)) {
+        st.push(env.DB.prepare("UPDATE events SET title=?, start_time=?, updated_at=? WHERE id=?").bind(title, start, now, e.id));
+        st.push(stOutbox(env, "EVENTS", eventRow(Object.assign({}, e, { title, start_time: start, updated_at: now })), "EVENT_ID"));
+        st.push(stAudit(env, actorId || "system", "event.update", "event", e.id,
+          { title: e.title, start: e.start_time }, { title, start }, "Changed with the rule"));
+      }
+    }
+    names[rule.id] = title;
+  }
+  await run(env, st);
+  await ensureRuleEvents(env, cfg, actorId);
+  return st.length;
+}
+
 async function ensureSunday(env, cfg, key, actorId) {
   if (!validKey(key) || keyDow(key) !== 0) fail(400, "not_sunday", "That date is not a Sunday.");
   const thanks = isThanksgiving(cfg, key) ? 1 : 0;
@@ -833,6 +1013,7 @@ async function aRota(env, cfg, b, me) {
   const edit = me.perms.has("rota.manage");
   if (edit) {
     for (let k = sundayOnOrAfter(from), i = 0; i < weeks; k = keyAddDays(k, 7), i++) await ensureSunday(env, cfg, k, me.usher.id);
+    await ensureRuleEvents(env, cfg, me.usher.id);
   }
   return Object.assign({ ok: true, canEdit: edit }, await rotaWindow(env, cfg, from, weeks, me, edit));
 }
@@ -2496,6 +2677,22 @@ async function aConfigSet(env, cfg, b, me) {
     fail(400, "type", "An hour is a whole number from 0 to 23.");
   }
   if ((k === "urgent_types" || k === "email_types") && v.some((x) => typeof x !== "string")) fail(400, "type", "Each entry is a notification type, in quotes.");
+  if (k === "event_rules") {
+    const seen = {};
+    if (v.length > 40) fail(400, "type", "At most 40 repeating events.");
+    for (const r of v) {
+      if (!r || !/^[A-Za-z0-9_-]{2,30}$/.test(String(r.id || ""))) fail(400, "type", "Each repeating event needs a short id of letters, numbers, - or _.");
+      if (seen[r.id]) fail(400, "type", "Two repeating events share the id " + r.id + ".");
+      seen[r.id] = 1;
+      if (!cfg.event_types[r.type] && !DEFAULT_CONFIG.event_types[r.type]) fail(400, "type", "The repeating event " + r.id + " needs a kind of event that exists.");
+      if (!ruleWords(r.rule)) {
+        fail(400, "type", "The repeating event " + r.id + " needs a pattern such as \"first-saturday\", \"weekly:wed\", " +
+          "\"nth-weekday:2:sun\", \"last-friday\" or \"yearly:09:first-saturday\".");
+      }
+      if (r.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(r.time))) fail(400, "type", "A time looks like 17:00.");
+      if (cfg.event_types[r.type] && cfg.event_types[r.type].sunday) fail(400, "type", "Sunday services are made by the rota, not by a repeating event.");
+    }
+  }
   const now = Date.now();
   await run(env, [
     env.DB.prepare("INSERT INTO config (k, v, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_by=excluded.updated_by, updated_at=excluded.updated_at")
@@ -2503,6 +2700,12 @@ async function aConfigSet(env, cfg, b, me) {
     stAudit(env, me.usher.id, "config.set", "config", k, cfg[k], v, text(b.reason, 200)),
     stOutbox(env, "CONFIG", { KEY: k, VALUE: JSON.stringify(v), UPDATED_BY: me.usher.id, UPDATED_AT: londonStamp(now) }, "KEY")
   ]);
+  /* A changed pattern moves the events still to come, and makes the ones it
+     now calls for. The past is left as it happened. */
+  if (k === "event_rules" || k === "rules_months_ahead") {
+    const fresh = await loadConfig(env);
+    await applyRuleChanges(env, fresh, me.usher.id);
+  }
   return { ok: true };
 }
 
@@ -2794,6 +2997,7 @@ async function clockTick(env, now) {
   if (hour >= cfg.reminder_hour && londonParts(at).dow === cfg.install_reminder_dow) {
     sent += await remindInstall(env, cfg, at);
   }
+  try { await ensureRuleEvents(env, cfg, "system", today); } catch (e) { console.log("rules", e && e.message); }
   try { sent += await summaryDue(env, cfg, at); } catch (e) { console.log("summary", e && e.message); }
   if (hour >= cfg.report_reminder_hour) {
     const rows = ((await env.DB.prepare(
@@ -3234,7 +3438,8 @@ const MIGRATIONS = [
   "CREATE TABLE IF NOT EXISTS sent_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, kind TEXT NOT NULL, type TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', to_count INTEGER NOT NULL DEFAULT 0, reached INTEGER NOT NULL DEFAULT 0, by_id TEXT NOT NULL DEFAULT '')",
   "CREATE INDEX IF NOT EXISTS sent_log_at ON sent_log(at)",
   "ALTER TABLE notifications ADD COLUMN ics_json TEXT",
-  "ALTER TABLE ushers ADD COLUMN installed_at INTEGER"
+  "ALTER TABLE ushers ADD COLUMN installed_at INTEGER",
+  "ALTER TABLE events ADD COLUMN rule_id TEXT DEFAULT ''"
 ];
 /* Changes made once, each remembered by name, on the audit like any other.
    A setting saved in Admin -> Settings replaces the whole default, so a rule

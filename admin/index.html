@@ -801,11 +801,63 @@
     }, failed);
   }
 
+  /* Repeating events, as patterns rather than dates typed one at a time:
+     the prayer meeting on the first Saturday, the retreat in September.
+     Pausing one stops the events still to come without losing the pattern. */
+  function repeatingCard(config, again) {
+    var rules = (config.event_rules || []).slice();
+    var out = h("div");
+    function save(next, what) {
+      C.clear(out);
+      C.api("config.set", { key: "event_rules", value: next, reason: what }).then(function (x) {
+        if (!x.ok) return out.appendChild(msg(x.message, "bad"));
+        out.appendChild(msg("Saved.", "ok"));
+        setTimeout(again, 700);
+      }, function () { out.appendChild(msg("No connection.", "bad")); });
+    }
+    var kinds = Object.keys(CONF.eventTypes).filter(function (k) { return !CONF.eventTypes[k].sunday; });
+    var id = h("input", { placeholder: "prayer" }), title = h("input", { placeholder: "Prayer Meeting" });
+    var kind = h("select", {}, kinds.map(function (k) { return h("option", { value: k }, CONF.eventTypes[k].label); }));
+    var pattern = h("select", {},
+      [["first-saturday", "the first Saturday of each month"], ["last-friday", "the last Friday of each month"],
+       ["nth-weekday:2:sun", "the second Sunday of each month"], ["weekly:wed", "every Wednesday"],
+       ["yearly:09:first-saturday", "the first Saturday of September, each year"]]
+        .map(function (x) { return h("option", { value: x[0] }, x[1]); }));
+    var time = h("input", { placeholder: "17:00" });
+    return h("div", { class: "card" }, h("h2", {}, "Repeating events"),
+      rules.length ? rules.map(function (r, i) {
+        return h("div", { class: "row" },
+          h("span", { class: "grow" }, (r.title || r.type) + " · " + (r.time || "no time") + " · " + (r.rule || "")),
+          r.paused ? h("span", { class: "chip warn" }, "Paused") : null,
+          h("button", { class: "ghost", onclick: function () {
+            var next = rules.slice();
+            next[i] = Object.assign({}, r, { paused: !r.paused });
+            save(next, (r.paused ? "Started again: " : "Paused: ") + r.id);
+          } }, r.paused ? "Start again" : "Pause"),
+          h("button", { class: "ghost", onclick: function () {
+            save(rules.filter(function (x, n) { return n !== i; }), "Deleted: " + r.id);
+          } }, "Delete"));
+      }) : h("p", { class: "muted" }, "None yet. The Sunday services come from the rota, not from here."),
+      h("h3", {}, "Add one"),
+      h("label", {}, "Short id"), id, h("label", {}, "Name"), title,
+      h("label", {}, "Kind of event"), kind, h("label", {}, "Pattern"), pattern,
+      h("label", {}, "Time"), time, h("p"),
+      h("button", { onclick: function () {
+        C.clear(out);
+        if (!id.value) return out.appendChild(msg("Give it a short id.", "bad"));
+        save(rules.concat([{ id: id.value, title: title.value, type: kind.value, rule: pattern.value, time: time.value, paused: false }]),
+             "Added: " + id.value);
+      } }, "Add"),
+      h("p", { class: "muted" }, "Events already past are never changed. Pausing or deleting one stops the ones still to come."),
+      out);
+  }
+
   function settings() {
     loading();
     C.api("config.get").then(function (j) {
       var parts = [h("h1", {}, "Settings")];
       if (window.UshersTesting && can("ushers.manage") && can("roles.grant_any")) parts.push(window.UshersTesting.card(CONF));
+      parts.push(repeatingCard(j.config, settings));
       parts.push(h("h2", {}, "Rules"), h("p", { class: "muted" }, "Values are JSON."));
       Object.keys(j.config).forEach(function (k) {
         var box = h("textarea", { rows: typeof j.config[k] === "object" && j.config[k] !== null ? "4" : "1" }, JSON.stringify(j.config[k], null, 1));

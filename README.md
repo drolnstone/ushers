@@ -220,6 +220,15 @@ has access and no authority.
   is told, and every change is audited. It is a contact line and nothing
   more: being in charge lends no permission, so the person named approves
   only what their own roles already allow.
+- **Repeating events.** The department's fixed patterns live in Settings as
+  rules rather than dates typed in one at a time: `{ id, title, type, rule,
+  time }`, where the pattern is `first-saturday`, `last-friday`,
+  `nth-weekday:2:sun`, `weekly:wed` or `yearly:09:first-saturday`. The
+  events are made a year ahead and carry the rule's id, so changing the
+  title or time moves the ones still to come and leaves the past as it
+  happened; pausing or deleting a rule cancels the coming ones, and starting
+  it again brings them back, telling anybody already on duty either way.
+  Sunday services are made by the rota, never by a rule.
 - **"I can't make it".** An usher can say beforehand that they cannot make
   a duty, with a reason and, if they like, a suggested cover who is never
   told anything. It goes through the same authorisation engine as everything

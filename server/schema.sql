@@ -96,6 +96,9 @@ CREATE TABLE IF NOT EXISTS events (
   thanksgiving  INTEGER DEFAULT 0,
   status        TEXT DEFAULT 'scheduled',  -- scheduled | cancelled
   notes         TEXT DEFAULT '',
+  -- made by a repeating rule in Settings (event_rules), so changing the
+  -- rule can move the ones still to come and leave the past alone.
+  rule_id       TEXT DEFAULT '',
   created_by    TEXT,
   created_at    INTEGER,
   updated_at    INTEGER
