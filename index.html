@@ -82,9 +82,13 @@
     document.getElementById("treasurerTab").hidden = true;
     var who = h("select", { id: "who" }, h("option", { value: "" }, "Choose your name"));
     var typed = h("input", { id: "whoTyped", placeholder: "e.g. John Smith", autocomplete: "name", hidden: true });
+    var find = h("input", { id: "whoFind", placeholder: "Type to find your name", hidden: true });
+    var notYou = h("button", { class: "ghost", id: "notYou", hidden: true, onclick: function () {
+      C.forgetWho(); who.value = ""; notYou.hidden = true; who.focus();
+    } }, "Not you?");
     var pin = h("input", { id: "pin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var out = h("div");
-    var go = h("button", { onclick: function () {
+    function submit() {
       out.textContent = "";
       var body = { pin: pin.value };
       if (!typed.hidden) body.name = typed.value; else body.usherId = who.value;
@@ -92,19 +96,50 @@
       go.disabled = true;
       C.api("login", body).then(function (j) {
         go.disabled = false;
-        if (!j.ok) { out.appendChild(msg(j.message + (j.left !== undefined ? " " + j.left + " tries left." : ""), "bad")); return; }
+        if (!j.ok) {
+          pin.value = ""; pin.focus();
+          out.appendChild(msg(j.message + (j.left !== undefined ? " " + j.left + " tries left." : ""), "bad"));
+          return;
+        }
         C.setToken(j.token);
         C.rememberPin(j.me.name, pin.value);
+        if (body.usherId) C.rememberWho(body.usherId, j.me.name);
         start();
       }, function (e) { go.disabled = false; out.appendChild(msg("No connection. Try again when you have signal.", "bad")); });
-    } }, "Sign in");
+    }
+    var go = h("button", { onclick: submit }, "Sign in");
+    C.pinBox(pin, submit);
+    /* Choosing a name moves straight to the PIN, so the number pad opens. */
+    who.addEventListener("change", function () { if (who.value) pin.focus(); });
+    find.addEventListener("input", function () { paintPeople(people, find.value); });
     show(h("h1", {}, "Sign in"),
-      h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), who, typed, h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
+      h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), find, who, typed, notYou,
+        h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
+
+    var people = [];
+    function paintPeople(list, filter) {
+      people = list || [];
+      var want = String(filter || "").trim().toLowerCase();
+      var shown = want ? people.filter(function (p) { return p.name.toLowerCase().indexOf(want) !== -1; }) : people;
+      var had = who.value;
+      C.clear(who);
+      who.appendChild(h("option", { value: "" }, "Choose your name"));
+      shown.forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
+      find.hidden = people.length < 15;
+      var last = C.lastWho();
+      var pick = shown.some(function (p) { return p.id === had; }) ? had
+        : (last && shown.some(function (p) { return p.id === last.id; }) ? last.id : "");
+      who.value = pick;
+      notYou.hidden = !pick;
+      if (pick && !pin.value) pin.focus();
+    }
+    paintPeople(C.peopleCached("ushers"));
     C.api("people").then(function (j) {
       if (j.firstSetup) return firstSetup();
-      if (j.typeName) { who.hidden = true; typed.hidden = false; return; }
-      (j.people || []).forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
-    }, function () { who.hidden = true; typed.hidden = false; });
+      if (j.typeName) { who.hidden = true; find.hidden = true; notYou.hidden = true; typed.hidden = false; return; }
+      C.peopleCache("ushers", j.people || []);
+      paintPeople(j.people || []);
+    }, function () { if (!people.length) { who.hidden = true; find.hidden = true; notYou.hidden = true; typed.hidden = false; } });
   }
 
   /* First-time setup: makes the first System Administrator. Shown only
@@ -394,6 +429,7 @@
       cs.addEventListener("change", function () { state.countersignerId = cs.value; saved.countersignerName = cs.options[cs.selectedIndex].text; keep(); });
     }
     var send = h("button", { onclick: function () { if (amend) sendAmendment(); else submit(); } }, amend ? "Sign and submit amendment" : "Sign and submit");
+    C.pinBox(pin, function () { if (amend) sendAmendment(); else submit(); }, CONF.pinMax);
     parts.push(h("div", { class: "card" }, h("h2", {}, "Sign"),
       ev.countersign ? [h("label", { for: "cs" }, "Countersigner"), cs] : null,
       h("label", { for: "sig" }, "Type your full name to sign"), sig,
@@ -563,6 +599,7 @@
         });
       });
     } }, "Countersign");
+    C.pinBox(pin, function () { btn.click(); }, CONF.pinMax);
     return h("div", { class: "card" }, h("h2", {}, "Countersign"),
       h("p", {}, "Check the report above. You are confirming it, not filling in another one."),
       h("label", { class: "check" }, agree, "I have reviewed this report and it is correct."),
@@ -741,11 +778,7 @@
        are in, so the PIN is keyed straight through. The last one stops
        there; Change PIN is still their own tap. */
     [old, nw, again].forEach(function (box, i, all) {
-      box.addEventListener("input", function () {
-        var v = box.value.replace(/\D/g, "").slice(0, max);
-        if (box.value !== v) box.value = v;
-        if (v.length === max && all[i + 1]) all[i + 1].focus();
-      });
+      C.pinBox(box, all[i + 1] ? function () { all[i + 1].focus(); } : null, max);
     });
     show(h("h1", {}, forced === true ? "Change your default PIN" : "Change PIN"),
       h("div", { class: "card" },

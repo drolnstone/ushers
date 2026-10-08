@@ -122,6 +122,14 @@ notified → Coordinator dashboard.
   "Alerts off".
 - **PDFs.** Any report has a PDF button (both apps). Admin → Reports makes a
   summary PDF for any period of up to 400 days.
+- **Signing in.** The name chosen last on this phone is already selected
+  (with "Not you?" to clear it) and the list the server last gave is shown
+  before the server answers, so the screen works with no signal. Choosing a
+  name moves to the PIN; the fourth digit signs in by itself after a short
+  pause, and so does Enter. A wrong PIN empties the box and says how many
+  tries are left. Past about fifteen names a box above the list narrows it
+  as you type. Every PIN box in both apps takes digits only. Approve and
+  Reject stay their own tap, since a PIN cannot say which was meant.
 - **Signing** is typing your full name, ticking to confirm, and your PIN.
 - **Offline.** Reports are saved on the phone as they are typed. A report
   signed with no signal is kept as "Saved on device — waiting for

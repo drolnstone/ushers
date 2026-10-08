@@ -110,9 +110,13 @@
     document.getElementById("title").textContent = "";
     var who = h("select", { id: "who" }, h("option", { value: "" }, "Choose your name"));
     var typed = h("input", { id: "whoTyped", placeholder: "e.g. John Smith", autocomplete: "name", hidden: true });
+    var find = h("input", { id: "whoFind", placeholder: "Type to find your name", hidden: true });
+    var notYou = h("button", { class: "ghost", id: "notYou", hidden: true, onclick: function () {
+      C.forgetWho(); who.value = ""; notYou.hidden = true; who.focus();
+    } }, "Not you?");
     var pin = h("input", { id: "pin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var out = h("div");
-    var go = h("button", { onclick: function () {
+    function submit() {
       out.textContent = "";
       var body = { pin: pin.value };
       if (!typed.hidden) body.name = typed.value; else body.usherId = who.value;
@@ -120,18 +124,49 @@
       go.disabled = true;
       C.api("login", body).then(function (j) {
         go.disabled = false;
-        if (!j.ok) { out.appendChild(msg(j.message + (j.left !== undefined ? " " + j.left + " tries left." : ""), "bad")); return; }
+        if (!j.ok) {
+          pin.value = ""; pin.focus();
+          out.appendChild(msg(j.message + (j.left !== undefined ? " " + j.left + " tries left." : ""), "bad"));
+          return;
+        }
         C.setToken(j.token);
+        C.rememberPin(j.me.name, pin.value);
+        if (body.usherId) C.rememberWho(body.usherId, j.me.name);
         start();
       }, function () { go.disabled = false; out.appendChild(msg("No connection. Try again when you have signal.", "bad")); });
-    } }, "Sign in");
+    }
+    var go = h("button", { onclick: submit }, "Sign in");
+    C.pinBox(pin, submit);
+    who.addEventListener("change", function () { if (who.value) pin.focus(); });
+    find.addEventListener("input", function () { paintPeople(people, find.value); });
     show(h("h1", {}, "Sign in to Admin"),
-      h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), who, typed, h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
+      h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), find, who, typed, notYou,
+        h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
+
+    var people = [];
+    function paintPeople(list, filter) {
+      people = list || [];
+      var want = String(filter || "").trim().toLowerCase();
+      var shown = want ? people.filter(function (p) { return p.name.toLowerCase().indexOf(want) !== -1; }) : people;
+      var had = who.value;
+      C.clear(who);
+      who.appendChild(h("option", { value: "" }, "Choose your name"));
+      shown.forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
+      find.hidden = people.length < 15;
+      var last = C.lastWho();
+      var pick = shown.some(function (p) { return p.id === had; }) ? had
+        : (last && shown.some(function (p) { return p.id === last.id; }) ? last.id : "");
+      who.value = pick;
+      notYou.hidden = !pick;
+      if (pick && !pin.value) pin.focus();
+    }
+    paintPeople(C.peopleCached("admin"));
     C.api("people", { app: "admin" }).then(function (j) {
       if (j.firstSetup) { C.clear(out); out.appendChild(msg("Nobody is set up yet. Open the Ushers App for First-time setup.")); return; }
-      if (j.typeName) { who.hidden = true; typed.hidden = false; return; }
-      (j.people || []).forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
-    }, function () { who.hidden = true; typed.hidden = false; });
+      if (j.typeName) { who.hidden = true; find.hidden = true; notYou.hidden = true; typed.hidden = false; return; }
+      C.peopleCache("admin", j.people || []);
+      paintPeople(j.people || []);
+    }, function () { if (!people.length) { who.hidden = true; find.hidden = true; notYou.hidden = true; typed.hidden = false; } });
   }
 
   function start() {
@@ -401,6 +436,9 @@
       pending.forEach(function (a) {
         var note = h("input", { placeholder: "e.g. Confirmed with the Head Usher" });
         var pin = pinInput("p-" + a.id), out = h("div");
+        /* Digits only; Approve and Reject stay their own tap, because the
+           PIN alone cannot say which one was meant. */
+        C.pinBox(pin, null);
         function decide(decision) {
           C.clear(out);
           C.api("authorisation.decide", { id: a.id, decision: decision, note: note.value, pin: pin.value }).then(function (x) {

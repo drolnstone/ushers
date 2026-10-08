@@ -18,9 +18,10 @@
    refused one. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.12";
+  var APP_VERSION = "v0.3.13";
   var CFG = window.USHERS_CONFIG || {};
-  var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:", saved: "ushers.saved.v1:" };
+  var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:", saved: "ushers.saved.v1:",
+            lastWho: "ushers.lastWho.v1", people: "ushers.people.v1:" };
 
   /* Storage that never throws; memory when the browser refuses. */
   var mem = {};
@@ -187,6 +188,40 @@
     if (!d || d.name !== name || !window.crypto || !crypto.subtle) return Promise.resolve(false);
     return derive(pin, d.salt).then(function (h) { return h === d.hash; });
   }
+
+  /* ---- PIN boxes and the sign-in screen -------------------------------- */
+
+  /* Every PIN box: digits only, and the last digit gets on with it, so a
+     four-digit PIN needs no tap. Enter does the same. The short wait lets
+     somebody correct a mistyped digit first. */
+  function pinBox(input, onFull, length) {
+    var timer = null, len = Number(length) || Number(input.getAttribute("maxlength")) || 4;
+    function clear() { if (timer) { clearTimeout(timer); timer = null; } }
+    input.addEventListener("input", function () {
+      var only = input.value.replace(/\D/g, "").slice(0, len);
+      if (only !== input.value) input.value = only;
+      clear();
+      if (only.length === len && onFull) {
+        timer = setTimeout(function () { timer = null; if (input.value === only) onFull(); }, 600);
+      }
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      clear();
+      if (onFull) onFull();
+    });
+    return input;
+  }
+
+  /* The name chosen last on this phone, so the next sign-in starts there. */
+  function lastWho() { return store.getJSON(K.lastWho, null); }
+  function rememberWho(id, name) { store.setJSON(K.lastWho, { id: id, name: name }); }
+  function forgetWho() { store.del(K.lastWho); }
+
+  /* The sign-in list as the server last gave it, so the screen is usable
+     before the server answers and with no signal at all. */
+  function peopleCached(app) { return store.getJSON(K.people + (app || "ushers"), null); }
+  function peopleCache(app, people) { store.setJSON(K.people + (app || "ushers"), people || []); }
 
   /* ---- drafts and the queue -------------------------------------------- */
 
@@ -611,6 +646,8 @@
   var core = window.UshersCore = {
     APP_VERSION: APP_VERSION, CFG: CFG, store: store, api: api, token: token, setToken: setToken, versions: versions,
     rememberPin: rememberPin, checkPinOnDevice: checkPinOnDevice,
+    pinBox: pinBox, lastWho: lastWho, rememberWho: rememberWho, forgetWho: forgetWho,
+    peopleCached: peopleCached, peopleCache: peopleCache,
     draftGet: draftGet, draftSave: draftSave, draftClear: draftClear, drafts: drafts,
     queue: queue, queueAdd: queueAdd, queueRemove: queueRemove, flush: flush, newId: newId, send: send, saved: savedGet, savedClear: savedClear,
     money: money, denomLabel: denomLabel, dateLabel: dateLabel, timeLabel: timeLabel, londonToday: londonToday,
