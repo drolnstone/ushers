@@ -224,7 +224,35 @@
       h("div", {}, duty),
       d.cancelled ? h("div", { class: "chip bad" }, "Cancelled") : null,
       d.reportDue && !d.cancelled ? h("div", { class: "row" }, statusChip(d.reportStatus, d.reportStatusLabel),
-        h("a", { class: "btn ghost", href: "#report/" + d.eventId }, d.reportStatus && d.reportStatus !== "draft" ? "View report" : "Open report")) : null);
+        h("a", { class: "btn ghost", href: "#report/" + d.eventId }, d.reportStatus && d.reportStatus !== "draft" ? "View report" : "Open report")) : null,
+      cantMake(d));
+  }
+
+  /* "I can't make it": the usher says so beforehand instead of simply not
+     being there. The Head Usher decides and finds the cover; nobody else is
+     told anything until then. */
+  function cantMake(d) {
+    if (!d.appointmentId || d.cancelled || d.date < C.londonToday()) return null;
+    if (d.released === "pending") return h("div", { class: "chip warn" }, "Asked to be let off");
+    if (d.released === "approved") return h("div", { class: "chip" }, "Off this duty");
+    var out = h("div");
+    var open = h("button", { class: "ghost" }, "I can't make it");
+    var why = h("input", { type: "text", placeholder: "Why you cannot make it" });
+    var box = h("div", { hidden: true }, why, h("p"),
+      h("div", { class: "row" }, h("button", { onclick: function () { ask(); } }, "Send to the Head Usher"),
+        h("button", { class: "ghost", onclick: function () { box.hidden = true; } }, "Keep the duty")),
+      h("p", { class: "muted" }, "The Head Usher decides and arranges the cover. Nobody else hears about it."),
+      out);
+    open.onclick = function () { box.hidden = !box.hidden; if (!box.hidden) why.focus(); };
+    function ask() {
+      C.clear(out);
+      C.api("authorisation.request", { kind: "duty_release", appointmentId: d.appointmentId, reason: why.value }).then(function (j) {
+        if (!j.ok) return out.appendChild(msg(j.message, "bad"));
+        out.appendChild(msg("Sent. The Head Usher will come back to you.", "ok"));
+        setTimeout(home, 900);
+      }, function () { out.appendChild(msg("No connection. Try again when you have signal.", "bad")); });
+    }
+    return h("div", {}, open, box);
   }
 
   function home() {

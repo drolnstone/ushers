@@ -109,7 +109,10 @@ CREATE TABLE IF NOT EXISTS appointments (
   event_id    TEXT NOT NULL,
   usher_id    TEXT NOT NULL,
   duty        TEXT NOT NULL,         -- ushering | counting | ...
-  status      TEXT DEFAULT 'active', -- active | removed
+  -- active: on duty. removed: taken off by a coordinator. released: they
+  -- asked to be let off and it was approved, and no cover has been named
+  -- yet, so the name stays on the record and the duty shows as a gap.
+  status      TEXT DEFAULT 'active', -- active | removed | released
   created_by  TEXT,
   created_at  INTEGER,
   removed_by  TEXT,

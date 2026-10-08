@@ -467,6 +467,19 @@
 
   /* ---- approvals -------------------------------------------------------- */
 
+  /* The cover drop-down: active people, each marked if they are already on
+     something that day and with when they last served. */
+  function coverPicker(a) {
+    var sel = h("select", {}, h("option", { value: "" }, "Nobody yet — arrange it later"));
+    (a.cover || []).forEach(function (u) {
+      sel.appendChild(h("option", { value: u.usherId }, u.name +
+        (u.onDutyThatDay ? " · already on that day" : "") +
+        (u.lastServed ? " · last served " + C.dateLabel(u.lastServed) : " · has not served yet")));
+    });
+    return { box: h("div", {}, h("label", {}, "Who covers it"), sel), value: function () { return sel.value; } };
+  }
+
+
   function approvals() {
     loading();
     Promise.all([C.api("authorisations.list", { status: "pending" }), C.api("authorisations.list", {})]).then(function (r) {
@@ -479,9 +492,16 @@
         /* Digits only; Approve and Reject stay their own tap, because the
            PIN alone cannot say which one was meant. */
         C.pinBox(pin, null);
+        /* A "can't make it" is decided and covered in one go where the
+           cover is known: the picker says who is already on something that
+           day and when each person last served, so a name is not chosen
+           blind. Approving without naming one leaves the duty open and the
+           request waiting for cover. */
+        var cover = a.cover ? coverPicker(a) : null;
         function decide(decision) {
           C.clear(out);
-          C.api("authorisation.decide", { id: a.id, decision: decision, note: note.value, pin: pin.value }).then(function (x) {
+          C.api("authorisation.decide", { id: a.id, decision: decision, note: note.value, pin: pin.value,
+                                          coverId: cover ? cover.value() : "" }).then(function (x) {
             if (!x.ok) return out.appendChild(msg(x.message + (x.left !== undefined ? " " + x.left + " tries left." : ""), "bad"));
             approvals();
           }, function () { out.appendChild(msg("No connection. Deciding needs a signal, so your PIN can be checked.", "bad")); });
@@ -491,11 +511,33 @@
           a.about.rostered ? h("div", {}, "Rostered: " + a.about.rostered) : null,
           a.reason ? h("div", { class: "muted" }, a.reason) : null,
           a.about.reportId ? h("a", { href: "#report/" + a.about.reportId }, "See the report") : null,
+          cover ? cover.box : null,
           a.canDecide ? [h("label", {}, "Note"), note, h("label", { for: "p-" + a.id }, "Your PIN"), pin, h("p"),
             h("div", { class: "row" }, h("button", { onclick: function () { decide("approve"); } }, "Approve"),
               h("button", { class: "danger", onclick: function () { decide("reject"); } }, "Reject"))]
             : h("div", { class: "muted" }, "Somebody else must decide this one."), out));
       });
+      /* Approved, nobody covering it yet: the duty is a gap until somebody
+         is named, so it is asked for here rather than left to be noticed. */
+      var waiting = r[1].authorisations.filter(function (a) { return a.needsCover; });
+      if (waiting.length) {
+        parts.push(h("h2", {}, "Cover still to arrange"));
+        waiting.forEach(function (a) {
+          var pin = pinInput("c-" + a.id), out = h("div"), pick = coverPicker(a);
+          C.pinBox(pin, null);
+          parts.push(h("div", { class: "card" }, h("b", {}, a.about.title ? a.about.title + " · " + C.dateLabel(a.about.date) : "A duty"),
+            h("div", {}, a.subject + " is off this duty."), pick.box,
+            h("label", { for: "c-" + a.id }, "Your PIN"), pin, h("p"),
+            h("button", { onclick: function () {
+              C.clear(out);
+              if (!pick.value()) return out.appendChild(msg("Choose who is covering it.", "bad"));
+              C.api("duty.cover", { id: a.id, coverId: pick.value(), pin: pin.value }).then(function (x) {
+                if (!x.ok) return out.appendChild(msg(x.message + (x.left !== undefined ? " " + x.left + " tries left." : ""), "bad"));
+                approvals();
+              }, function () { out.appendChild(msg("No connection. Naming the cover needs a signal, so your PIN can be checked.", "bad")); });
+            } }, "Save the cover"), out));
+        });
+      }
       if (all.length) {
         parts.push(h("h2", {}, "Decided"));
         parts.push(h("div", { class: "card" }, h("table", {}, all.map(function (a) {

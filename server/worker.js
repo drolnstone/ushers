@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.16";
+const SERVER_VERSION = "w0.3.17";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -85,6 +85,7 @@ const DEFAULT_CONFIG = {
   pin_lock_minutes: 5,
   offline_signing: true,              // a report signed with no signal may be sent later
   offline_max_hours: 72,
+  release_late_days: 1,               // a "can't make it" this close to the day is marked late
   summary_roles: ["head_usher", "assistant_head_usher"],   // who gets the monthly summary
   summary_hour: 19,                   // London hour it goes, on the last Sunday of the month
   install_reminder_dow: 3,            // Wednesday: the weekly nudge to install
@@ -979,7 +980,8 @@ const AUTH_KIND_LABELS = {
   countersign: "Countersign a report",
   report_submission: "Submit a report",
   report_amendment: "Amend a report",
-  duty_takeover: "Duty change"
+  duty_takeover: "Duty change",
+  duty_release: "Can't make a duty"
 };
 
 function authRow(a, names) {
@@ -1073,7 +1075,51 @@ async function authEffects(env, cfg, a, decider, names, opt) {
     st.push(env.DB.prepare("UPDATE authorisations SET status='consumed', consumed_at=? WHERE id=?").bind(now, a.id));
     after.status = "consumed"; after.consumed_at = now;
   }
+  if (a.kind === "duty_release") {
+    /* Let off the duty. With a cover named, the duty moves and both people
+       are told. Without one, the appointment is released and the request
+       stays approved, cover to be arranged: the name stays on the record so
+       it can be undone, and the duty shows as a gap because reminders and
+       counts read the status, not the name. */
+    const ap = await env.DB.prepare("SELECT * FROM appointments WHERE id=?").bind(a.target_id).first();
+    const cover = opt && opt.coverId ? await getUsher(env, opt.coverId) : null;
+    if (ap && ap.status === "active") {
+      const e = await getEvent(env, ap.event_id);
+      st.push(env.DB.prepare("UPDATE appointments SET status='released', removed_by=?, removed_at=? WHERE id=? AND status='active'")
+        .bind(decider.id, now, ap.id));
+      st.push(stOutbox(env, "APPOINTMENTS", apptRow(Object.assign({}, ap, { status: "released" }), e, names[ap.usher_id] || "", decider.id), "APPOINTMENT_ID"));
+      st.push(stAudit(env, decider.id, "appointment.release", "appointment", ap.id,
+        { usher: ap.usher_id, status: "active" }, { status: "released", cover: cover ? cover.id : "" }, "Authorisation " + a.id));
+      st.push(stNotify(env, cfg, await getUsher(env, ap.usher_id), "duty",
+        "You are off duty: " + e.title, e.title + " on " + ukDate(e.date) + ". " +
+        (cover ? names[cover.id] + " is covering it." : "A replacement is still to be arranged."), "event", e.id, null, false,
+        icsFor(e, ap.id, ap.duty, "CANCEL")));
+      if (cover) st.push(await coverStatements(env, cfg, e, ap, cover, decider, names, a.id));
+    }
+    if (cover) {
+      st.push(env.DB.prepare("UPDATE authorisations SET status='consumed', consumed_at=? WHERE id=?").bind(now, a.id));
+      after.status = "consumed"; after.consumed_at = now;
+    }
+  }
   return { statements: st, after };
+}
+
+/* The cover's own appointment and their notice, whether the cover is named
+   when the release is approved or arranged afterwards. */
+async function coverStatements(env, cfg, e, ap, cover, decider, names, authId) {
+  const now = Date.now();
+  const id = await nextId(env, "appointment", "AP", 5);
+  return [
+    env.DB.prepare("INSERT INTO appointments (id, event_id, usher_id, duty, status, created_by, created_at) VALUES (?,?,?,?,?,?,?)")
+      .bind(id, e.id, cover.id, ap.duty, "active", decider.id, now),
+    stOutbox(env, "APPOINTMENTS", apptRow({ id, usher_id: cover.id, duty: ap.duty, status: "active" }, e, cover.full_name, decider.id), "APPOINTMENT_ID"),
+    stAudit(env, decider.id, "appointment.cover", "appointment", id,
+      { released: ap.id, usher: ap.usher_id }, { usher: cover.id }, "Authorisation " + authId),
+    stNotify(env, cfg, cover, "duty", "You are on duty: " + e.title,
+      e.title + " on " + ukDate(e.date) + ", covering for " + (names[ap.usher_id] || "another usher") +
+      ". " + (ap.duty === "counting" ? "Offering counting." : "Ushering."), "event", e.id, null, false,
+      icsFor(e, id, ap.duty, "REQUEST"))
+  ];
 }
 
 /* A request that no longer applies. The approvers' "Approval needed" for it
@@ -1099,6 +1145,22 @@ function stConsume(env, a, names) {
   ];
 }
 
+/* Who could cover a released duty, in the order the coordinator thinks:
+   everybody active, marked if they are already on something that day and
+   with the last date they served, so a name is not picked blind. */
+async function coverChoices(env, appointmentId) {
+  const ap = await env.DB.prepare(
+    "SELECT a.*, e.date FROM appointments a JOIN events e ON e.id=a.event_id WHERE a.id=?").bind(appointmentId).first();
+  if (!ap) return [];
+  const rows = ((await env.DB.prepare(
+    "SELECT u.id, u.full_name, " +
+    "(SELECT count(*) FROM appointments x JOIN events ex ON ex.id=x.event_id WHERE x.usher_id=u.id AND x.status='active' AND ex.date=?) AS thatDay, " +
+    "(SELECT max(ex.date) FROM appointments x JOIN events ex ON ex.id=x.event_id WHERE x.usher_id=u.id AND x.status='active' AND ex.date<=?) AS lastServed " +
+    "FROM ushers u WHERE u.active=1 AND u.id<>? ORDER BY u.full_name COLLATE NOCASE"
+  ).bind(ap.date, londonKey(new Date()), ap.usher_id).all()).results) || [];
+  return rows.map((u) => ({ usherId: u.id, name: u.full_name, onDutyThatDay: !!u.thatDay, lastServed: u.lastServed || "" }));
+}
+
 async function aAuthList(env, cfg, b, me) {
   const mine = !me.perms.has("exceptions.approve") || b.mine;
   const status = ["pending", "approved", "rejected", "consumed", "cancelled"].indexOf(b.status) !== -1 ? b.status : "";
@@ -1118,6 +1180,10 @@ async function aAuthList(env, cfg, b, me) {
                  (cfg.self_approval || (a.requested_by !== me.usher.id && a.subject_id !== me.usher.id))
     };
     v.about = await authAbout(env, a, names);
+    if (a.kind === "duty_release" && (a.status === "pending" || a.status === "approved") && me.perms.has("rota.manage")) {
+      v.cover = await coverChoices(env, a.target_id);
+      v.needsCover = a.status === "approved";
+    }
     out.push(v);
   }
   return { ok: true, authorisations: out };
@@ -1167,6 +1233,24 @@ async function aAuthRequest(env, cfg, b, me) {
     await run(env, req.statements);
     return { ok: true, authorisationId: req.id, status: req.status };
   }
+  if (kind === "duty_release") {
+    const ap = await env.DB.prepare("SELECT * FROM appointments WHERE id=? AND status='active'").bind(text(b.appointmentId, 20)).first();
+    if (!ap) fail(404, "no_appointment", "That duty was not found.");
+    if (ap.usher_id !== me.usher.id) fail(403, "not_yours", "That duty is not yours.");
+    if (reason.length < 3) fail(400, "reason", "Say why you cannot make it.");
+    const e = await getEvent(env, ap.event_id);
+    const names = await namesMap(env);
+    /* No cut-off: a late one is still asked for, and marked late so the
+       coordinator can see it came in at the last minute. */
+    const late = e.date <= keyAddDays(londonKey(new Date()), cfg.release_late_days);
+    const suggested = b.suggestId ? await getUsher(env, text(b.suggestId, 20)) : null;
+    const req = await authRequest(env, cfg, { kind, subjectId: me.usher.id, targetType: "appointment", targetId: ap.id, me,
+      requestedBy: me.usher.id, reason: (late ? "Late. " : "") + reason + (suggested ? " Suggests " + suggested.full_name + "." : ""),
+      describe: (late ? "Late request. " : "") + me.usher.full_name + " cannot make " + e.title + " on " + ukDate(e.date) +
+        ". Reason: " + reason + (suggested ? " They suggest " + suggested.full_name + ", who has not been asked." : "") });
+    await run(env, req.statements);
+    return { ok: true, authorisationId: req.id, status: req.status, late };
+  }
   if (kind === "duty_takeover") {
     const ap = await env.DB.prepare("SELECT * FROM appointments WHERE id=? AND status='active'").bind(text(b.appointmentId, 20)).first();
     if (!ap) fail(404, "no_appointment", "That duty was not found.");
@@ -1183,6 +1267,30 @@ async function aAuthRequest(env, cfg, b, me) {
     return { ok: true, authorisationId: req.id, status: req.status };
   }
   fail(400, "kind", "Unknown request.");
+}
+
+/* Cover arranged after the release was approved: the gap is filled, the
+   request is finished, and both people are told. */
+async function aDutyCover(env, cfg, b, me) {
+  need(me, "rota.manage");
+  const a = await env.DB.prepare("SELECT * FROM authorisations WHERE id=? AND kind='duty_release'").bind(text(b.id, 20)).first();
+  if (!a) fail(404, "no_authorisation", "That request was not found.");
+  if (a.status !== "approved") fail(409, "not_approved", a.status === "consumed" ? "That duty is covered already." : "That request has not been approved.");
+  const ap = await env.DB.prepare("SELECT * FROM appointments WHERE id=?").bind(a.target_id).first();
+  if (!ap) fail(404, "no_appointment", "That duty was not found.");
+  const cover = await getUsher(env, text(b.coverId, 20));
+  if (!cover || !cover.active) fail(400, "cover", "Choose somebody from the list.");
+  if (cover.id === a.subject_id) fail(400, "cover", "Choose somebody else to cover it.");
+  await verifyPin(env, cfg, me.usher, b.pin);
+  const e = await getEvent(env, ap.event_id);
+  const names = await namesMap(env), now = Date.now();
+  const st = [await coverStatements(env, cfg, e, ap, cover, me.usher, names, a.id)];
+  st.push(stNotify(env, cfg, await getUsher(env, a.subject_id), "approval_decision", "Covered: " + e.title + " " + ukDate(e.date),
+    cover.full_name + " is covering that duty.", "event", e.id));
+  st.push(env.DB.prepare("UPDATE authorisations SET status='consumed', consumed_at=? WHERE id=? AND status='approved'").bind(now, a.id));
+  st.push(stOutbox(env, "AUTHORISATIONS", authRow(Object.assign({}, a, { status: "consumed", consumed_at: now }), names), "AUTH_ID"));
+  await run(env, st);
+  return { ok: true, cover: cover.full_name };
 }
 
 async function aAuthDecide(env, cfg, b, me) {
@@ -1213,15 +1321,36 @@ async function aAuthDecide(env, cfg, b, me) {
   /* A chosen countersigner hears once: "Please countersign" when approved
      (from authEffects). If not approved, the submitter chooses again. */
   if (a.kind !== "countersign") {
+    let body = approve ? "You can go ahead." : "Reason: " + (after.decision_note || "none given");
+    if (a.kind === "duty_release") {
+      /* Only the person who asked is told, whatever the answer: a suggested
+         cover was never asked, so a refusal reaches nobody else. And they
+         are told they are still on duty only if the rota still says so. */
+      if (approve) body = "You are off that duty.";
+      else {
+        const still = await env.DB.prepare("SELECT status FROM appointments WHERE id=?").bind(a.target_id).first();
+        body = "Reason: " + (after.decision_note || "none given") +
+               (still && still.status === "active" ? " You are still on duty." : "");
+      }
+    }
     st.push(stNotify(env, cfg, subject, "approval_decision", (approve ? "Approved: " : "Not approved: ") + what,
-      approve ? "You can go ahead." : "Reason: " + (after.decision_note || "none given"), a.target_type, a.target_id));
+      body, a.target_type, a.target_id));
   }
   if (requester) {
     st.push(stNotify(env, cfg, requester, "approval_decision", (approve ? "Approved: " : "Not approved: ") + what,
       approve ? names[a.subject_id] + " has been approved." : "Choose somebody else or ask the coordinator." + (after.decision_note ? " Reason: " + after.decision_note : ""), a.target_type, a.target_id));
   }
   if (approve) {
-    const fx = await authEffects(env, cfg, after, me.usher, names, { about });
+    /* A release may be approved with the cover named there and then, or
+       approved on its own and covered later. */
+    let coverId = "";
+    if (a.kind === "duty_release" && b.coverId) {
+      const c = await getUsher(env, text(b.coverId, 20));
+      if (!c || !c.active) fail(400, "cover", "Choose somebody from the list.");
+      if (c.id === a.subject_id) fail(400, "cover", "Choose somebody else to cover it.");
+      coverId = c.id;
+    }
+    const fx = await authEffects(env, cfg, after, me.usher, names, { about, coverId });
     st.push(fx.statements);
     Object.assign(after, fx.after);
   }
@@ -1819,7 +1948,6 @@ async function aSelectable(env, cfg, b, me) {
    HOME, HISTORY, NOTIFICATIONS — the ordinary usher
    ========================================================================== */
 
-/* "What am I doing?" */
 /* ==========================================================================
    IN CHARGE TODAY — the name an usher goes to when the Head Usher is away.
    A contact line and nothing else: it grants no permission, so the person
@@ -1882,6 +2010,7 @@ async function aInChargeSet(env, cfg, b, me) {
   return { ok: true, inCharge: await inChargeNow(env, cfg), told: on.length };
 }
 
+/* "What am I doing?" */
 async function aHome(env, cfg, b, me) {
   const today = londonKey(new Date());
   const thisSunday = sundayOnOrAfter(today);
@@ -1890,8 +2019,15 @@ async function aHome(env, cfg, b, me) {
     "SELECT a.id AS appointment_id, a.duty, e.*, r.status AS report_status, r.id AS report_id FROM appointments a JOIN events e ON e.id=a.event_id " +
     "LEFT JOIN reports r ON r.event_id=e.id WHERE a.usher_id=? AND a.status='active' AND e.date>=? AND e.date<=? ORDER BY e.date, e.start_time, e.id"
   ).bind(me.usher.id, keyAddDays(today, -6), until).all()).results) || [];
+  /* A "can't make it" already asked for, so the card says so rather than
+     offering to ask again. */
+  const asked = {};
+  for (const r of ((await env.DB.prepare(
+    "SELECT target_id, status FROM authorisations WHERE kind='duty_release' AND subject_id=? AND status IN ('pending','approved')"
+  ).bind(me.usher.id).all()).results) || []) asked[r.target_id] = r.status;
   const duty = (x) => ({
     eventId: x.id, title: x.title, date: x.date, start: x.start_time, duty: x.duty, thanksgiving: !!x.thanksgiving, type: x.type,
+    appointmentId: x.appointment_id, released: asked[x.appointment_id] || "",
     cancelled: x.status === "cancelled", reportStatus: x.report_status || "", reportStatusLabel: STATUS_LABELS[x.report_status] || "Not started",
     reportDue: !!(cfg.event_types[x.type] || {}).attendance || !!(cfg.event_types[x.type] || {}).offering
   });
@@ -3262,7 +3398,8 @@ const ACTIONS = {
   "notifications.count":    { fn: aNotificationsCount },
   "sent.list":              { fn: aSentList },
   "incharge.set":           { fn: aInChargeSet, write: true },
-  "install.steps":          { fn: aInstallSteps, write: true }
+  "install.steps":          { fn: aInstallSteps, write: true },
+  "duty.cover":             { fn: aDutyCover, write: true }
 };
 
 async function handle(request, env, ctx) {

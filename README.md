@@ -196,6 +196,8 @@ and to anyone with alerts on no phone as part of their digest.
 | Sent to *n*: *title* | the sender | straight after sending | app | how far it reached, including nobody | `10-what-went-out` |
 | Department dues reminder | members behind on the year | the Treasurer sends it | app, phone, email | money chasing stays with the Treasurer | `90-diary` |
 | *n* new notifications in the Ushers App | anyone with alerts on no phone | `unalerted_email_minutes` (60) after it was written | email, carrying any diary entries | alerts off must not mean unreachable | `07-health-people`, `08-email-links` |
+| Approval needed: Can't make a duty | Head Usher and Assistant | an usher says beforehand they cannot make it | app, phone (urgent), email | a duty nobody can do is better known about early | `12-cant-make-it` |
+| You are off duty / Covered: *event* | the usher who asked | it is approved, and again when cover is found | app, phone, email + cancellation | they need to know they are off it, and that it is covered | `12-cant-make-it` |
 | Summary for *month* / *year* | `summary_roles` (Head Usher, Assistant) and anyone holding the offering or dues permission | the last Sunday of the month from `summary_hour` (19), the year's as well in December | app, phone, email | the month's record arrives without anyone asking for it | `15-summary` |
 | Add Ushers to your phone | anybody not on a Home Screen | Wednesdays from `reminder_hour`, and when Admin sends the steps | app, phone, email | an uninstalled iPhone is woken by nothing | `09-install` |
 | In charge today: *name* | everybody on a duty that day | the name is changed | app, phone | they are the people who may need somebody this morning | `16-in-charge` |
@@ -218,6 +220,19 @@ has access and no authority.
   is told, and every change is audited. It is a contact line and nothing
   more: being in charge lends no permission, so the person named approves
   only what their own roles already allow.
+- **"I can't make it".** An usher can say beforehand that they cannot make
+  a duty, with a reason and, if they like, a suggested cover who is never
+  told anything. It goes through the same authorisation engine as everything
+  else, as the kind `duty_release`: the duty stays theirs until it is
+  answered. Approved with a cover named, the duty moves and both people are
+  told; approved with nobody named, the appointment is released and the
+  request waits in Approvals under "Cover still to arrange" — the name stays
+  on the record so it can be undone, while reminders, Check everything and
+  the dashboard read the status, so the Sunday shows as short. Refused, only
+  the person who asked hears, and they are told they are still on duty only
+  if the rota still says so. There is no cut-off: a request close to the day
+  is marked late. The cover picker names everybody active, marked if they
+  are already on something that day and with when they last served.
 - **The month's summary.** On the evening of the last Sunday of each month
   the app sends the month's figures itself: services and events, reports
   filed, countersigned and still waiting, attendance, and what is still to
