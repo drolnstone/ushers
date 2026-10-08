@@ -196,6 +196,7 @@ and to anyone with alerts on no phone as part of their digest.
 | Sent to *n*: *title* | the sender | straight after sending | app | how far it reached, including nobody | `10-what-went-out` |
 | Department dues reminder | members behind on the year | the Treasurer sends it | app, phone, email | money chasing stays with the Treasurer | `90-diary` |
 | *n* new notifications in the Ushers App | anyone with alerts on no phone | `unalerted_email_minutes` (60) after it was written | email, carrying any diary entries | alerts off must not mean unreachable | `07-health-people`, `08-email-links` |
+| Summary for *month* / *year* | `summary_roles` (Head Usher, Assistant) and anyone holding the offering or dues permission | the last Sunday of the month from `summary_hour` (19), the year's as well in December | app, phone, email | the month's record arrives without anyone asking for it | `15-summary` |
 | Add Ushers to your phone | anybody not on a Home Screen | Wednesdays from `reminder_hour`, and when Admin sends the steps | app, phone, email | an uninstalled iPhone is woken by nothing | `09-install` |
 | In charge today: *name* | everybody on a duty that day | the name is changed | app, phone | they are the people who may need somebody this morning | `16-in-charge` |
 | Test. | the phone that asked | Notifications → Send a test alert | phone | proves the chain without pretending to be real news | `80-bell`, `05-words` |
@@ -217,6 +218,15 @@ has access and no authority.
   is told, and every change is audited. It is a contact line and nothing
   more: being in charge lends no permission, so the person named approves
   only what their own roles already allow.
+- **The month's summary.** On the evening of the last Sunday of each month
+  the app sends the month's figures itself: services and events, reports
+  filed, countersigned and still waiting, attendance, and what is still to
+  come. December sends the year's as well. It is the same arithmetic as
+  Admin → Reports, from one function, so the two cannot drift apart. Money
+  is held back by permission, not by role: the offering figures go only to
+  holders of `offering.summary`, the dues position only to holders of
+  `dues.view_all`, and the System Administrator is sent nothing by this
+  route. Each one goes once, by its own dedupe key.
 - **PDFs.** Any report has a PDF button (both apps). Admin → Reports makes a
   summary PDF for any period of up to 400 days.
 - **Signing in.** The name chosen last on this phone is already selected

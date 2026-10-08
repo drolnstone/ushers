@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.15";
+const SERVER_VERSION = "w0.3.16";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -85,6 +85,8 @@ const DEFAULT_CONFIG = {
   pin_lock_minutes: 5,
   offline_signing: true,              // a report signed with no signal may be sent later
   offline_max_hours: 72,
+  summary_roles: ["head_usher", "assistant_head_usher"],   // who gets the monthly summary
+  summary_hour: 19,                   // London hour it goes, on the last Sunday of the month
   install_reminder_dow: 3,            // Wednesday: the weekly nudge to install
   duty_reminder_days: [2],            // days before an event
   reminder_hour: 18,                  // London hour reminders go
@@ -95,7 +97,7 @@ const DEFAULT_CONFIG = {
   rota_weeks_ahead: 8,
   push_types: null,                   // null = every notification also goes to phones with alerts on
   unalerted_email_minutes: 60,       // someone with alerts on no phone is emailed what is still unread after this long (0 = never)
-  email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "report_filed", "dues_reminder", "admin_message", "duty", "duty_reminder", "install"],
+  email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "report_filed", "dues_reminder", "admin_message", "duty", "duty_reminder", "install", "summary"],
   report_notify_roles: ["head_usher", "assistant_head_usher"]  // told of every report once it is filed
 };
 
@@ -2530,6 +2532,110 @@ async function aInstallSteps(env, cfg, b, me) {
   return { ok: true, sent: list.length, names: list.map((u) => u.full_name) };
 }
 
+/* ==========================================================================
+   MONTHLY AND YEARLY SUMMARY — sent by the app rather than asked for, on
+   the evening of the last Sunday of the month. Money is held back: the
+   services-and-attendance summary goes to the coordinators, and the
+   offering and dues figures only to whoever holds the permission to see
+   them. Nobody is sent a figure by this route that they could not open in
+   the app themselves.
+   ========================================================================== */
+
+/* The last Sunday of this key's month. */
+function lastSundayOfMonth(key) {
+  const p = key.slice(0, 7);
+  const last = new Date(Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5, 7)), 0));
+  const end = p + "-" + (last.getUTCDate() < 10 ? "0" : "") + last.getUTCDate();
+  return sundayOnOrBefore(end);
+}
+
+function monthName(key) {
+  const names = ["January", "February", "March", "April", "May", "June", "July",
+                 "August", "September", "October", "November", "December"];
+  return names[Number(key.slice(5, 7)) - 1] + " " + key.slice(0, 4);
+}
+
+/* The words of a summary. withMoney adds the offering figures, and nothing
+   else differs, so the two versions cannot drift apart. */
+function summaryWords(cfg, label, data, withMoney) {
+  const t = data.totals;
+  const sym = ((cfg.currencies || {})[cfg.default_currency] || {}).symbol || "";
+  const lines = [
+    label + ".",
+    "",
+    "Services and events: " + t.events + ".",
+    "Reports filed: " + t.reported + " (" + t.verified + " countersigned, " + t.waiting + " still waiting).",
+    "No report yet: " + t.missing + ".",
+    "Attendance: " + t.attendance + " in all (" + t.male + " men, " + t.female + " women, " + t.children + " children)."
+  ];
+  if (withMoney) {
+    lines.push("Offering: " + sym + pounds(t.offering).toFixed(2) + ".");
+    const cats = Object.keys(t.byCategory).sort();
+    for (const c of cats) lines.push("  " + c + ": " + sym + pounds(t.byCategory[c]).toFixed(2) + ".");
+  }
+  const missing = data.rows.filter((r) => !r.status || r.status === "draft");
+  if (missing.length) {
+    lines.push("");
+    lines.push("Still to come: " + missing.map((r) => r.title + " " + ukDate(r.date)).join("; ") + ".");
+  }
+  return lines.join("\n");
+}
+
+/* The dues position, for whoever may see it. */
+async function duesWords(env, cfg, year, todayKey) {
+  const ushers = ((await env.DB.prepare("SELECT * FROM ushers WHERE active=1").all()).results) || [];
+  const all = ((await env.DB.prepare("SELECT * FROM dues_payments WHERE year=?").bind(year).all()).results) || [];
+  const sym = ((cfg.currencies || {})[cfg.default_currency] || {}).symbol || "";
+  let paid = 0, outstanding = 0, behind = 0;
+  for (const u of ushers) {
+    const pos = duesPosition(cfg, all.filter((p) => p.usher_id === u.id), year, todayKey);
+    paid += pos.paid; outstanding += pos.outstanding;
+    if (pos.status === "Behind") behind++;
+  }
+  return "Dues " + year + ": " + sym + pounds(paid).toFixed(2) + " in, " + sym + pounds(outstanding).toFixed(2) +
+         " outstanding to date, " + behind + " behind.";
+}
+
+/* One summary, sent once. Returns how many people it reached. */
+async function sendSummary(env, cfg, from, to, label, key) {
+  const data = await periodData(env, cfg, from, to);
+  const roles = (Array.isArray(cfg.summary_roles) ? cfg.summary_roles : []).filter((r) => ROLES.indexOf(r) !== -1);
+  const coords = roles.length ? ((await env.DB.prepare(
+    "SELECT DISTINCT u.* FROM ushers u JOIN user_roles r ON r.usher_id=u.id WHERE u.active=1 AND r.role IN (" +
+    roles.map(() => "?").join(",") + ") ORDER BY u.full_name").bind(...roles).all()).results) || [] : [];
+  const money = await holders(env, cfg, "offering.summary");
+  const dues = await holders(env, cfg, "dues.view_all");
+  const everyone = {};
+  for (const u of coords.concat(money, dues)) everyone[u.id] = u;
+  let n = 0;
+  const todayKey = londonKey(new Date());
+  for (const id of Object.keys(everyone)) {
+    const u = await getUsher(env, id);
+    if (!u) continue;
+    const perms = permissionsFor(cfg, await rolesOf(env, u.id));
+    let body = summaryWords(cfg, label, data, perms.has("offering.summary"));
+    if (perms.has("dues.view_all")) body += "\n\n" + (await duesWords(env, cfg, Number(to.slice(0, 4)), todayKey));
+    if (await remind(env, cfg, u, "summary", label, body, "", "", "summary:" + key + ":" + u.id)) n++;
+  }
+  if (n) await run(env, [stSent(env, "email", "summary", label, n, n, "")]);
+  return n;
+}
+
+/* Sent on the evening of the last Sunday of the month, and the year's own
+   on the last Sunday of December. */
+async function summaryDue(env, cfg, at) {
+  const today = londonKey(at);
+  if (londonParts(at).hh < cfg.summary_hour) return 0;
+  if (today !== lastSundayOfMonth(today)) return 0;
+  const month = today.slice(0, 7);
+  let n = await sendSummary(env, cfg, month + "-01", today, "Summary for " + monthName(today), month);
+  if (Number(today.slice(5, 7)) === 12) {
+    const y = today.slice(0, 4);
+    n += await sendSummary(env, cfg, y + "-01-01", today, "Summary for " + y, y);
+  }
+  return n;
+}
+
 async function clockTick(env, now) {
   const cfg = await loadConfig(env);
   const at = now || new Date();
@@ -2552,6 +2658,7 @@ async function clockTick(env, now) {
   if (hour >= cfg.reminder_hour && londonParts(at).dow === cfg.install_reminder_dow) {
     sent += await remindInstall(env, cfg, at);
   }
+  try { sent += await summaryDue(env, cfg, at); } catch (e) { console.log("summary", e && e.message); }
   if (hour >= cfg.report_reminder_hour) {
     const rows = ((await env.DB.prepare(
       "SELECT e.id AS eid, e.title, e.date, e.type, a.id AS aid, u.* FROM events e JOIN appointments a ON a.event_id=e.id AND a.status='active' JOIN ushers u ON u.id=a.usher_id " +
@@ -2740,6 +2847,14 @@ async function aReportsPeriod(env, cfg, b, me) {
   const from = text(b.from, 10), to = text(b.to, 10);
   if (!validKey(from) || !validKey(to) || from > to) fail(400, "dates", "Choose a start and end date.");
   if (keyAddDays(from, 400) < to) fail(400, "dates", "Choose a period of at most 400 days.");
+  const data = await periodData(env, cfg, from, to);
+  return Object.assign({ ok: true, from, to }, data, { ministrationFields: cfg.ministration_fields || [],
+    offeringCategories: cfg.offering_categories, church: cfg.church_name, place: cfg.church_place, madeBy: me.usher.full_name });
+}
+
+/* The figures for a period, in one place: the Admin App's summary and the
+   monthly email are the same arithmetic, so they are the same code. */
+async function periodData(env, cfg, from, to) {
   const events = ((await env.DB.prepare(
     "SELECT * FROM events WHERE date>=? AND date<=? AND status<>'cancelled' ORDER BY date, start_time, id").bind(from, to).all()).results) || [];
   const reports = ((await env.DB.prepare(
@@ -2771,8 +2886,7 @@ async function aReportsPeriod(env, cfg, b, me) {
     for (const f of numFields) totals.ministration[f.key] = (totals.ministration[f.key] || 0) + (Number(row.ministration[f.key]) || 0);
     return row;
   });
-  return { ok: true, from, to, rows, totals, ministrationFields: cfg.ministration_fields || [], offeringCategories: cfg.offering_categories,
-           church: cfg.church_name, place: cfg.church_place, madeBy: me.usher.full_name };
+  return { rows, totals };
 }
 
 /* ==========================================================================
