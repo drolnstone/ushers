@@ -411,4 +411,6 @@ in Chromium at phone width and photographs each step; run it by hand.
 The full audit viewer, rolling rota engine, analytics, advanced dues
 carry-forward, notification preferences.
 
-See [DEPLOY.md](DEPLOY.md) to set it up.
+See [DEPLOY.md](DEPLOY.md) to set it up, [DEPLOY-LATEST.txt](DEPLOY-LATEST.txt)
+for the current release in the order to do it, and
+[HANDOVER.md](HANDOVER.md) to pick the work up.

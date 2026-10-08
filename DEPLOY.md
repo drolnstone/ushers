@@ -125,6 +125,10 @@ M. Open both apps once with signal and look at a few screens. Turn on
 
 ## Updating later
 
+The note for the current release, in the order to do it, is
+[DEPLOY-LATEST.txt](DEPLOY-LATEST.txt); every release keeps its own copy in
+`docs/deploy/`. The steps below are the same thing in general.
+
 1. Worker: Edit code → paste the new `server/worker.js` → Deploy. New tables
    and columns are added on its first call.
 2. Sheet: Extensions → Apps Script → paste the new `Code.gs` → Save →
