@@ -185,6 +185,7 @@ and to anyone with alerts on no phone as part of their digest.
 | Sent to *n*: *title* | the sender | straight after sending | app | how far it reached, including nobody | `10-what-went-out` |
 | Department dues reminder | members behind on the year | the Treasurer sends it | app, phone, email | money chasing stays with the Treasurer | `90-diary` |
 | *n* new notifications in the Ushers App | anyone with alerts on no phone | `unalerted_email_minutes` (60) after it was written | email, carrying any diary entries | alerts off must not mean unreachable | `07-health-people`, `08-email-links` |
+| In charge today: *name* | everybody on a duty that day | the name is changed | app, phone | they are the people who may need somebody this morning | `16-in-charge` |
 | Test. | the phone that asked | Notifications → Send a test alert | phone | proves the chain without pretending to be real news | `80-bell`, `05-words` |
 
 **Deliberately not alerted.** Whoever sets a rota is not told about it;
@@ -197,6 +198,13 @@ has access and no authority.
 
 ### The rest of the journey
 
+- **In charge today.** Home carries one line, "In charge today: <name>",
+  with a Call button when a number is held. It is the Head Usher unless
+  somebody else is named on the Admin dashboard, for today only (it lapses
+  at midnight London) or until changed back. Everybody on a duty that day
+  is told, and every change is audited. It is a contact line and nothing
+  more: being in charge lends no permission, so the person named approves
+  only what their own roles already allow.
 - **PDFs.** Any report has a PDF button (both apps). Admin → Reports makes a
   summary PDF for any period of up to 400 days.
 - **Signing in.** The name chosen last on this phone is already selected

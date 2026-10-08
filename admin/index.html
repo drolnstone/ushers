@@ -253,6 +253,7 @@
               s.reportId ? h("a", { class: "btn ghost", href: "#report/" + s.reportId }, "View") : null),
             s.ministration && mf && s.ministration[mf.key] ? h("div", { class: "muted" }, mf.label + ": " + s.ministration[mf.key]) : null);
         })));
+        parts.push(inChargeCard(d, load));
         parts.push(rotaCard(d.next, "Next Sunday"));
         if (d.olderOutstanding.length) {
           parts.push(h("div", { class: "card" }, h("h2", {}, "Older reports not submitted"), d.olderOutstanding.map(function (e) {
@@ -270,6 +271,45 @@
     }
     loading(); load();
     timer = setInterval(load, (C.CFG.refreshSeconds || 30) * 1000);
+  }
+
+  /* ---- in charge today -------------------------------------------------- */
+
+  /* A contact line, nothing more: whoever is named here gains no
+     permission, so the card says so where it is set. */
+  function inChargeCard(d, again) {
+    var ic = d.inCharge;
+    var head = h("div", { class: "row" }, h("h2", { class: "grow" }, "In charge today"),
+      ic ? h("span", {}, ic.name) : h("span", { class: "muted" }, "Nobody yet"));
+    if (!d.canSetInCharge) return h("div", { class: "card" }, head);
+    var out = h("div");
+    var who = h("select");
+    var open = h("button", { class: "ghost" }, "Change");
+    var box = h("div", { hidden: true },
+      h("p", { class: "muted" }, ic && ic.byDefault ? "The Head Usher, unless somebody else is named."
+        : ic && ic.today ? "Today only." : "Until changed back."),
+      who, h("p"),
+      h("div", { class: "row" },
+        h("button", { onclick: function () { set({ usherId: who.value, todayOnly: true }); } }, "Today only"),
+        h("button", { class: "ghost", onclick: function () { set({ usherId: who.value }); } }, "Until changed back"),
+        ic && !ic.byDefault ? h("button", { class: "ghost", onclick: function () { set({ clear: true }); } }, "Back to the Head Usher") : null),
+      h("p", { class: "muted" }, "A name to go to. It gives no approval or any other permission."),
+      out);
+    open.onclick = function () {
+      box.hidden = !box.hidden;
+      if (!who.options.length) activeUshers().then(function (people) {
+        people.forEach(function (u) { who.appendChild(h("option", { value: u.usherId, selected: ic && u.usherId === ic.usherId }, u.name)); });
+      });
+    };
+    function set(args) {
+      C.clear(out);
+      C.api("incharge.set", args).then(function (j) {
+        out.appendChild(j.ok ? msg(j.told ? "Saved. " + j.told + " on duty today told." : "Saved.", "ok") : msg(j.message, "bad"));
+        if (j.ok) setTimeout(again, 700);
+      }, function () { out.appendChild(msg("No connection.", "bad")); });
+    }
+    head.appendChild(open);
+    return h("div", { class: "card" }, head, box);
   }
 
   /* ---- rota ------------------------------------------------------------- */

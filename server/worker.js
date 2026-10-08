@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.13";
+const SERVER_VERSION = "w0.3.14";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -1804,6 +1804,68 @@ async function aSelectable(env, cfg, b, me) {
    ========================================================================== */
 
 /* "What am I doing?" */
+/* ==========================================================================
+   IN CHARGE TODAY — the name an usher goes to when the Head Usher is away.
+   A contact line and nothing else: it grants no permission, so the person
+   in charge approves only what their own roles already allow.
+   ========================================================================== */
+
+/* Who is in charge, as the apps show it: the saved name while it stands,
+   the Head Usher otherwise. "Today only" lapses at midnight London, so the
+   saved row is read against today's date rather than cleared by a clock. */
+async function inChargeNow(env, cfg) {
+  const today = londonKey(new Date());
+  let saved = null;
+  try { saved = JSON.parse(await setting(env, "in_charge") || "null"); } catch (e) { saved = null; }
+  if (saved && saved.usherId && (!saved.until || saved.until >= today)) {
+    const u = await getUsher(env, saved.usherId);
+    if (u && u.active) {
+      return { usherId: u.id, name: u.full_name, phone: u.phone || "", until: saved.until || "",
+               today: saved.until === today, standing: !saved.until, byDefault: false };
+    }
+  }
+  const hu = (((await env.DB.prepare(
+    "SELECT DISTINCT u.* FROM ushers u JOIN user_roles r ON r.usher_id=u.id WHERE u.active=1 AND r.role='head_usher' ORDER BY u.full_name"
+  ).all()).results) || [])[0];
+  if (!hu) return null;
+  return { usherId: hu.id, name: hu.full_name, phone: hu.phone || "", until: "", today: false, standing: true, byDefault: true };
+}
+
+async function aInChargeSet(env, cfg, b, me) {
+  need(me, "rota.manage");
+  const today = londonKey(new Date());
+  const before = await inChargeNow(env, cfg);
+  const st = [];
+  let now = null;
+  if (b.clear) {
+    st.push(env.DB.prepare("DELETE FROM settings WHERE k='in_charge'"));
+  } else {
+    const u = await getUsher(env, text(b.usherId, 40));
+    if (!u || !u.active) fail(400, "usher", "Choose somebody from the list.");
+    const until = b.todayOnly ? today : "";
+    st.push(env.DB.prepare("INSERT INTO settings (k, v) VALUES ('in_charge', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v")
+      .bind(JSON.stringify({ usherId: u.id, until, at: Date.now(), by: me.usher.id })));
+    now = { usherId: u.id, name: u.full_name, until };
+  }
+  st.push(stAudit(env, me.usher.id, "incharge.set", "usher", now ? now.usherId : "",
+    before ? { usherId: before.usherId, until: before.until } : null,
+    now ? { usherId: now.usherId, until: now.until } : null,
+    b.clear ? "Back to the Head Usher" : (b.todayOnly ? "Today only" : "Until changed back")));
+  /* Everybody on a duty today is told, since they are the people who may
+     need somebody this morning. */
+  const on = ((await env.DB.prepare(
+    "SELECT DISTINCT u.* FROM appointments a JOIN events e ON e.id=a.event_id JOIN ushers u ON u.id=a.usher_id " +
+    "WHERE e.date=? AND e.status<>'cancelled' AND a.status='active' AND u.active=1").bind(today).all()).results) || [];
+  const after = now ? now.name : ((await inChargeNow(env, cfg)) || {}).name || "";
+  for (const u of on) {
+    if (u.id === me.usher.id) continue;
+    st.push(stNotify(env, cfg, u, "in_charge", "In charge today: " + after,
+      "Go to " + after + " about anything on duty today.", "", ""));
+  }
+  await run(env, st);
+  return { ok: true, inCharge: await inChargeNow(env, cfg), told: on.length };
+}
+
 async function aHome(env, cfg, b, me) {
   const today = londonKey(new Date());
   const thisSunday = sundayOnOrAfter(today);
@@ -1834,9 +1896,11 @@ async function aHome(env, cfg, b, me) {
     signList.push({ reportId: x.id, title: x.title, date: x.date, submitter: names[x.submitter_id] || "", state });
   }
   const unread = await env.DB.prepare("SELECT count(*) AS n FROM notifications WHERE usher_id=? AND read_at IS NULL").bind(me.usher.id).first();
+  const inCharge = await inChargeNow(env, cfg);
   return {
     ok: true, today, thisSunday, thanksgiving: isThanksgiving(cfg, thisSunday), me: meView(me),
-    thisWeek, later, recent, toCountersign: signList, unread: unread ? unread.n : 0
+    thisWeek, later, recent, toCountersign: signList, unread: unread ? unread.n : 0,
+    inCharge: inCharge && Object.assign({}, inCharge, { isMe: inCharge.usherId === me.usher.id })
   };
 }
 
@@ -2091,7 +2155,8 @@ async function aDashboard(env, cfg, b, me) {
     ok: true, today, isSunday, currentLabel: isSunday ? "Today" : "Most recent Sunday",
     current, next: nextRota.sundays[0] || { sunday: next, services: [] },
     otherEvents: upcoming.events,
-    olderOutstanding: outstandingOld.map((e) => ({ eventId: e.id, title: e.title, date: e.date }))
+    olderOutstanding: outstandingOld.map((e) => ({ eventId: e.id, title: e.title, date: e.date })),
+    inCharge: await inChargeNow(env, cfg), canSetInCharge: me.perms.has("rota.manage")
   };
 }
 
@@ -2988,7 +3053,8 @@ const ACTIONS = {
   "push.what":              { auth: false, fn: aPushWhat },
   "push.test":              { fn: aPushTest },
   "notifications.count":    { fn: aNotificationsCount },
-  "sent.list":              { fn: aSentList }
+  "sent.list":              { fn: aSentList },
+  "incharge.set":           { fn: aInChargeSet, write: true }
 };
 
 async function handle(request, env, ctx) {

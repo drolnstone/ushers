@@ -233,6 +233,11 @@
       if (!j.ok) return show(msg(j.message, "bad"));
       C.bellSet(j.unread);
       var parts = [h("h1", {}, "What am I doing?")];
+      if (j.inCharge && !j.inCharge.isMe) {
+        parts.push(h("div", { class: "card" }, h("div", { class: "row" },
+          h("span", { class: "grow" }, h("b", {}, "In charge today: " + j.inCharge.name)),
+          j.inCharge.phone ? h("a", { class: "btn ghost", href: "tel:" + j.inCharge.phone }, "Call") : null)));
+      }
       var q = C.queue();
       if (q.length) {
         parts.push(h("div", { class: "card" }, h("b", {}, "Saved on this phone. Not sent yet."),
