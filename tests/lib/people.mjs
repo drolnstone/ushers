@@ -53,3 +53,15 @@ export async function at(when, fn) {
   globalThis.Date = FakeDate;
   try { return await fn(); } finally { globalThis.Date = RealDate; }
 }
+
+/* The instant whose London wall clock is this day and time, whichever side
+   of the clock change it falls on: a diary test is about the hour people
+   see, not about UTC. */
+export function londonAt(mod, key, hhmm) {
+  for (const off of [0, -1, 1, -2]) {
+    const d = new Date(Date.parse(key + "T" + hhmm + ":00Z") + off * 3600000);
+    const p = mod.londonParts(d);
+    if (mod.londonKey(d) === key && p.hh === Number(hhmm.slice(0, 2))) return d;
+  }
+  throw new Error("no London instant for " + key + " " + hhmm);
+}

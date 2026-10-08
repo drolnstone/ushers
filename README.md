@@ -158,6 +158,45 @@ notified → Coordinator dashboard.
   after `unalerted_email_minutes` (60; 0 turns it off), one email listing
   them, at most two days back and once each. Admin → Ushers marks them
   "Alerts off".
+
+### Every alert
+
+Who gets told what, when, and how. "App" is the Notifications tab in
+whichever app they use; "phone" is the push, which waits for quiet hours
+unless the type is urgent; "email" goes to anyone the type is emailed to,
+and to anyone with alerts on no phone as part of their digest.
+
+| What | Who | When | How | Why | Test |
+| --- | --- | --- | --- | --- | --- |
+| You are on duty: *event* | each usher added | the rota is set or changed | app, phone, email + diary entry | so nobody finds out on the day | `85-off-duty`, `11-duty-ics` |
+| You are no longer on duty: *event* | the usher taken off | the rota is changed | app, phone, email + cancellation | being taken off is news too | `85-off-duty` |
+| Cancelled: *event* / Back on: *event* | everyone still on it | the event is cancelled or restored | app, phone, email | nobody travels to a cancelled service | `85-off-duty` |
+| Duty reminder: *event* | everyone on it | `duty_reminder_days` (2) before, from `reminder_hour` (18) | app, phone, email + diary entry | the one reminder the Driver App found people rely on | `90-diary`, `11-duty-ics` |
+| Report not yet submitted: *event* | everyone on that duty | the event day from `report_reminder_hour` (15) | app, phone, email | the record is only as good as the day it is written | `90-diary` |
+| Please countersign: *event* | the chosen countersigner | a report is submitted, or approved for them | app, phone (urgent), email | a report waits on one person | `60-countersign-notify`, `08-email-links` |
+| Please countersign the amended report | the chosen countersigner | an amendment is submitted | app, phone (urgent), email | an amendment is signed like the first one | `60-countersign-notify` |
+| Approval needed: *kind* | Head Usher and Assistant | somebody chosen needs approval | app, phone (urgent), email | only an admin approves | `60-countersign-notify`, `08-email-links` |
+| Approved / Not approved: *what* | the person asked about, and whoever asked | an admin decides | app, phone, email | both ends of the request hear the answer | `60-countersign-notify` |
+| Verified: *event* | the submitter | it is countersigned | app, phone, email | their report is done | `60-countersign-notify`, `90-diary` |
+| Amended: *event* | the submitter | an amendment is filed | app, phone, email | the record changed under their name | `50-new` |
+| Filed: *event* | the submitter | a report waiting on a countersignature stops needing one | app, phone, email | it is not left pending for ever | `60-countersign-notify` |
+| Report filed: *event* | `report_notify_roles` (Head Usher, Assistant) | every report, as soon as it is filed | app, phone, email | Asim's rule: every report is notified and logged | `60-countersign-notify`, `90-diary` |
+| a message from Admin → Message | whoever is chosen | when it is sent | app, phone, email | the department's own announcements | `10-what-went-out` |
+| Sent to *n*: *title* | the sender | straight after sending | app | how far it reached, including nobody | `10-what-went-out` |
+| Department dues reminder | members behind on the year | the Treasurer sends it | app, phone, email | money chasing stays with the Treasurer | `90-diary` |
+| *n* new notifications in the Ushers App | anyone with alerts on no phone | `unalerted_email_minutes` (60) after it was written | email, carrying any diary entries | alerts off must not mean unreachable | `07-health-people`, `08-email-links` |
+| Test. | the phone that asked | Notifications → Send a test alert | phone | proves the chain without pretending to be real news | `80-bell`, `05-words` |
+
+**Deliberately not alerted.** Whoever sets a rota is not told about it;
+whoever files a report is not told of their own report; a refused
+countersigner hears "Please countersign" only if approved, so a refusal
+never reaches the person who was not yet asked; reminders skip cancelled
+events and inactive people; nothing about money is ever put in a subject
+line; and the System Administrator is sent nothing by role, since the role
+has access and no authority.
+
+### The rest of the journey
+
 - **PDFs.** Any report has a PDF button (both apps). Admin → Reports makes a
   summary PDF for any period of up to 400 days.
 - **Signing in.** The name chosen last on this phone is already selected
