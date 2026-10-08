@@ -121,6 +121,12 @@ notified → Coordinator dashboard.
   belongs to the appointment: a reminder updates the same entry instead of
   adding a second, and coming off the duty, or the event being cancelled,
   takes it out again. An event with no start time sends none.
+- **Tested against an old database.** `tests/fixtures/schema-w0.3.5.sql` is
+  the schema as it stood at an earlier release, kept old on purpose, with
+  `tests/suites/04-old-database.mjs` running the current Worker against it:
+  a whole Sunday, plus the newest features. Taking a line out of the
+  Worker's upgrade list turns the suite red. The code is always newer than
+  somebody's database, so that is the case worth testing.
 - **Words.** Prompts and instructions only: the screens say what to do and
   what happened, never how the app works. Every sentence cut for that
   reason is kept in `tests/suites/05-words.mjs`, which fails if one comes
