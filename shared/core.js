@@ -18,7 +18,7 @@
    refused one. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.16";
+  var APP_VERSION = "v0.3.17";
   var CFG = window.USHERS_CONFIG || {};
   var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:", saved: "ushers.saved.v1:",
             lastWho: "ushers.lastWho.v1", people: "ushers.people.v1:" };
@@ -372,12 +372,30 @@
     for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
     return out;
   }
-  function alertsSupported() { return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; }
-  function iPhoneNotInstalled() {
-    var ios = /iphone|ipad|ipod/i.test(navigator.userAgent || "");
-    var standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || navigator.standalone;
-    return ios && !standalone;
+  /* ---- adding Ushers to the phone --------------------------------------
+     On iPhone alerts do not work at all until the app is on the Home
+     Screen, so the offer to install comes first and the alerts question
+     waits behind it. Chrome offers to do it in one tap and says so through
+     beforeinstallprompt, which fires early and only once: it is caught here
+     at load and kept. */
+
+  var INSTALL = { prompt: null, asked: false };
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    INSTALL.prompt = e;
+  });
+  window.addEventListener("appinstalled", function () { INSTALL.prompt = null; });
+
+  /* Running from the Home Screen (or as an installed app on a desktop). */
+  function installed() {
+    try {
+      return !!((window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || navigator.standalone);
+    } catch (e) { return false; }
   }
+  function isIPhone() { return /iphone|ipad|ipod/i.test(navigator.userAgent || ""); }
+
+  function alertsSupported() { return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; }
+  function iPhoneNotInstalled() { return isIPhone() && !installed(); }
   function swReg() {
     var base = String(location.pathname).indexOf("/admin/") !== -1 ? "../" : "./";
     return navigator.serviceWorker.getRegistration(base).then(function (r) {
@@ -574,6 +592,46 @@
     askRoom();
   }
 
+  /* THE OFFER TO INSTALL, which comes before the alerts question so the two
+     never arrive on top of each other. Chrome does it in one tap; iPhone
+     gets the three steps, which is the only way there. "Not now" puts it
+     away for this visit, exactly as the alerts question does. */
+  var INSTALL_KEY = "ushers.installAsked.v1";
+  function installAskedThisVisit() { try { return sessionStorage.getItem(INSTALL_KEY) === token(); } catch (e) { return false; } }
+  function markInstallAsked() { try { sessionStorage.setItem(INSTALL_KEY, token()); } catch (e) {} }
+  function installClose(not) {
+    var a = document.getElementById("installAsk");
+    if (a) a.parentNode.removeChild(a);
+    askRoom();
+    if (not) markInstallAsked();
+  }
+  /* Resolves true when it has had its say and the alerts question may
+     follow, false while the offer is on the screen. */
+  function installAsk(done) {
+    if (installed() || installAskedThisVisit() || document.getElementById("installAsk")) return false;
+    var one = !!INSTALL.prompt;
+    var go = h("button", { type: "button", onclick: function () {
+      if (!one) return installClose(true) || done();
+      go.disabled = true;
+      var p = INSTALL.prompt;
+      INSTALL.prompt = null;
+      p.prompt();
+      p.userChoice.then(function () { installClose(true); done(); }, function () { installClose(true); done(); });
+    } }, one ? "Install" : "OK");
+    document.body.appendChild(h("div", { id: "installAsk", class: "ask", role: "dialog", "aria-labelledby": "installAskTitle" },
+      h("b", { id: "installAskTitle" }, "Add Ushers to your phone?"),
+      one ? h("p", {}, "It opens like any other app, works with no signal, and can alert you about duties and countersignatures.")
+          : h("div", {}, h("p", {}, "Alerts only reach your phone once Ushers is on the Home Screen:"),
+              h("ol", { class: "steps" }, h("li", {}, isIPhone() ? "Tap Share at the foot of the screen." : "Open the browser menu."),
+                h("li", {}, "Choose Add to Home Screen."),
+                h("li", {}, "Open Ushers from the Home Screen."))),
+      h("div", { class: "row" }, go,
+        h("button", { type: "button", class: "ghost", onclick: function () { installClose(true); done(); } }, "Not now"),
+        h("a", { class: "btn ghost", href: (String(location.pathname).indexOf("/admin/") !== -1 ? "../" : "./") + "install.html" }, "How"))));
+    askRoom();
+    return true;
+  }
+
   /* Called once signed in. opts.key is the server's public key ("me"),
      opts.notes the Notifications screen's address, opts.onNew(opened) is
      told when something new arrives or the bell opens the screen it is on. */
@@ -584,13 +642,20 @@
     var b = document.getElementById("bell");
     if (b && !b._wired) { b._wired = true; b.addEventListener("click", bellTap); }
     bellPaint();
-    bellState().then(function (s) { if (BELL.on && (s === "off" || s === "install")) alertAsk(s); });
+    bellState().then(function (s) {
+      if (!BELL.on || (s !== "off" && s !== "install")) return;
+      /* Install first; the alerts question follows once that has had its
+         say, so the two never share the screen. */
+      if (installAsk(function () { if (BELL.on) bellState().then(function (s2) { if (s2 === "off" || s2 === "install") alertAsk(s2); }); })) return;
+      alertAsk(s);
+    });
     bellCheck();
     if (BELL.timer) clearInterval(BELL.timer);
     BELL.timer = setInterval(function () { if (!document.hidden) bellCheck(); }, Math.max(15, Number(CFG.refreshSeconds) || 30) * 1000);
   }
   function bellStop() {
     askClose(false);
+    installClose(false);
     BELL.on = false; BELL.unread = 0; BELL.state = "";
     if (BELL.timer) { clearInterval(BELL.timer); BELL.timer = null; }
     bellPaint(); appBadge(0);
@@ -652,7 +717,7 @@
     queue: queue, queueAdd: queueAdd, queueRemove: queueRemove, flush: flush, newId: newId, send: send, saved: savedGet, savedClear: savedClear,
     money: money, denomLabel: denomLabel, dateLabel: dateLabel, timeLabel: timeLabel, londonToday: londonToday,
     h: h, clear: clear, foot: foot, onSignedOut: null, onQueueChange: null,
-    alertsSupported: alertsSupported, alertsState: alertsState, alertsOn: alertsOn, alertsOff: alertsOff, alertsTest: alertsTest, iPhoneNotInstalled: iPhoneNotInstalled,
+    alertsSupported: alertsSupported, alertsState: alertsState, alertsOn: alertsOn, alertsOff: alertsOff, alertsTest: alertsTest, iPhoneNotInstalled: iPhoneNotInstalled, installed: installed, installAsk: installAsk,
     bellStart: bellStart, bellStop: bellStop, bellCheck: bellCheck, bellSet: bellSet, bellState: bellState, toast: toast,
     loadPdf: loadPdf
   };

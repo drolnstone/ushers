@@ -20,7 +20,7 @@
    Menu: Ushering > Set up the sheet (once), then Check everything.
    ========================================================================== */
 
-var SHEET_VERSION = "v0.3.3";
+var SHEET_VERSION = "v0.3.4";
 
 /* The tabs and the headers each starts with. A missing header is added at
    the end; a header is never renamed or moved by this script, and a column
@@ -495,6 +495,7 @@ function peopleLines(people, bad, todo, fine) {
   (people.reportsOverdue || []).forEach(function (r) { bad.push("Report still missing: " + r); });
   if ((people.alertsOff || []).length) todo.push("No alerts yet for: " + names(people.alertsOff));
   if ((people.defaultPin || []).length) todo.push("Still on the default PIN: " + names(people.defaultPin));
+  if ((people.notInstalled || []).length) todo.push("Ushers not on a phone yet for: " + names(people.notInstalled));
   fine.push("Alerts on: " + people.alertsOn + " of " + people.ushers);
   if (!(people.sundayGaps || []).length) fine.push("Sunday " + people.sunday + " is fully rostered");
   if (!(people.reportsOverdue || []).length) fine.push("No reports outstanding");

@@ -175,7 +175,7 @@
   function start() {
     if (!C.token()) return signIn();
     loading();
-    C.api("me").then(function (j) {
+    C.api("me", { installed: C.installed() }).then(function (j) {
       if (!j.ok) return signIn();
       ME = j.me; CONF = j.config; PUSH_KEY = j.pushKey || "";
       document.getElementById("title").textContent = ME.name;

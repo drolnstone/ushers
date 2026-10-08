@@ -150,6 +150,17 @@ notified → Coordinator dashboard.
   the app comes back into view, and at once when a phone alert lands.
   Anything new is shown in a strip at the foot of the screen. Notifications
   → Send a test alert (`push.test`) proves the chain end to end.
+- **Adding Ushers to the phone.** Once signed in where the app is not on the
+  Home Screen, the offer to install comes first and the alerts question waits
+  behind it, so the two never share the screen. Chrome does it in one tap
+  (`beforeinstallprompt`, caught at load); an iPhone gets the three steps,
+  which is the only way there. `install.html` is a one-page guide with the
+  steps drawn into the page, shareable at onboarding. The app tells the server
+  whether it is running from a Home Screen, which is kept as the date they
+  first did: Admin → Ushers marks anyone left "Not installed" and counts
+  "Installed: n of m", Check everything lists them, they are nudged by app and
+  email every Wednesday evening until they have it, and the Head Usher can
+  send the steps to one person or to everybody left.
 - **Nobody left unalerted.** Once signed in on a phone where alerts are off,
   the person is asked straight out to turn them on, on every sign-in and
   every time the app is opened afresh, for as long as alerts stay off ("Not
@@ -185,6 +196,7 @@ and to anyone with alerts on no phone as part of their digest.
 | Sent to *n*: *title* | the sender | straight after sending | app | how far it reached, including nobody | `10-what-went-out` |
 | Department dues reminder | members behind on the year | the Treasurer sends it | app, phone, email | money chasing stays with the Treasurer | `90-diary` |
 | *n* new notifications in the Ushers App | anyone with alerts on no phone | `unalerted_email_minutes` (60) after it was written | email, carrying any diary entries | alerts off must not mean unreachable | `07-health-people`, `08-email-links` |
+| Add Ushers to your phone | anybody not on a Home Screen | Wednesdays from `reminder_hour`, and when Admin sends the steps | app, phone, email | an uninstalled iPhone is woken by nothing | `09-install` |
 | In charge today: *name* | everybody on a duty that day | the name is changed | app, phone | they are the people who may need somebody this morning | `16-in-charge` |
 | Test. | the phone that asked | Notifications → Send a test alert | phone | proves the chain without pretending to be real news | `80-bell`, `05-words` |
 

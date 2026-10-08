@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.14";
+const SERVER_VERSION = "w0.3.15";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -85,6 +85,7 @@ const DEFAULT_CONFIG = {
   pin_lock_minutes: 5,
   offline_signing: true,              // a report signed with no signal may be sent later
   offline_max_hours: 72,
+  install_reminder_dow: 3,            // Wednesday: the weekly nudge to install
   duty_reminder_days: [2],            // days before an event
   reminder_hour: 18,                  // London hour reminders go
   report_reminder_hour: 15,           // on the event day
@@ -94,7 +95,7 @@ const DEFAULT_CONFIG = {
   rota_weeks_ahead: 8,
   push_types: null,                   // null = every notification also goes to phones with alerts on
   unalerted_email_minutes: 60,       // someone with alerts on no phone is emailed what is still unread after this long (0 = never)
-  email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "report_filed", "dues_reminder", "admin_message", "duty", "duty_reminder"],
+  email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "report_filed", "dues_reminder", "admin_message", "duty", "duty_reminder", "install"],
   report_notify_roles: ["head_usher", "assistant_head_usher"]  // told of every report once it is filed
 };
 
@@ -342,6 +343,12 @@ function linkFor(n, isAdmin) {
   if (n.ref_type === "authorisation") return "admin/#approvals";
   if (n.ref_type === "event") return "#report/" + n.ref_id;
   return "#notes";
+}
+
+/* The one-page guide to adding Ushers to a phone, shareable at onboarding. */
+function installGuide(cfg) {
+  const base = String(cfg.app_url || "").replace(/\/+$/, "");
+  return base ? base + "/install.html" : "";
 }
 
 /* The whole address of that screen, for an email. */
@@ -678,8 +685,15 @@ async function aLogout(env, cfg, b, me) {
 async function aMe(env, cfg, b, me) {
   let pushKey = "";
   try { pushKey = (await vapidKeys(env)).pub; } catch (e) {}
+  /* The app says whether it is running from the Home Screen. Once true for
+     any phone it stays true: the question is whether this person has ever
+     got as far as installing it, not what they are holding now. */
+  if (b.installed && !me.usher.installed_at) {
+    try { await env.DB.prepare("UPDATE ushers SET installed_at=? WHERE id=? AND installed_at IS NULL").bind(Date.now(), me.usher.id).run(); } catch (e) {}
+  }
   const alerts = await env.DB.prepare("SELECT count(*) AS n FROM push_subs WHERE usher_id=?").bind(me.usher.id).first();
-  return { ok: true, me: meView(me), config: publicConfig(cfg), today: londonKey(new Date()), pushKey, alertPhones: alerts ? alerts.n : 0 };
+  return { ok: true, me: meView(me), config: publicConfig(cfg), today: londonKey(new Date()), pushKey,
+           alertPhones: alerts ? alerts.n : 0, installGuide: installGuide(cfg) };
 }
 
 function publicConfig(cfg) {
@@ -2172,8 +2186,10 @@ async function aUshersList(env, cfg, b, me) {
   ).all()).results) || [];
   return { ok: true, ushers: rows.map((u) => ({
     usherId: u.id, name: u.full_name, email: u.email, phone: u.phone, active: !!u.active, hasPin: !!u.pin_hash, alerts: Number(u.alerts) || 0,
+    installed: !!u.installed_at,
     roles: String(u.roles || "").split(",").filter(Boolean) })),
-    canManage: me.perms.has("ushers.manage"), canGrantAny: me.perms.has("roles.grant_any") };
+    canManage: me.perms.has("ushers.manage"), canGrantAny: me.perms.has("roles.grant_any"),
+    canSend: me.perms.has("notifications.send") };
 }
 
 async function aUsherSave(env, cfg, b, me) {
@@ -2454,6 +2470,66 @@ async function remind(env, cfg, u, type, title, body, refType, refId, dedupe, ic
   return true;
 }
 
+/* THE STEPS, written once. Deliberately plain: the app is added to the
+   phone's Home Screen and opened from there, and that is all an usher has
+   to do. */
+function installSteps(cfg) {
+  const guide = installGuide(cfg);
+  return "iPhone: open Ushers in Safari, tap Share, then Add to Home Screen, then open Ushers from the Home Screen.\n" +
+         "Android: open Ushers in Chrome and tap Install, or Menu then Add to Home screen.\n" +
+         "Alerts about duties, reminders and countersignatures only reach a phone once this is done." +
+         (guide ? "\n\nThe steps with pictures: " + guide : "");
+}
+
+/* Anyone who has never opened it from a Home Screen is sent the steps, at
+   most once a week, and never again once they have. */
+async function remindInstall(env, cfg, at) {
+  const week = isoWeek(at);
+  let n = 0;
+  for (const u of await peopleNotInstalled(env)) {
+    const usher = await getUsher(env, u.id);
+    if (await remind(env, cfg, usher, "install", "Add Ushers to your phone", installSteps(cfg), "", "", "install:" + u.id + ":" + week)) n++;
+  }
+  return n;
+}
+
+/* The week as the calendar has it (ISO), so "once a week" means once in a
+   week and not once in any seven days. */
+function isoWeek(date) {
+  const p = londonParts(date);
+  const d = new Date(Date.UTC(p.y, p.m - 1, p.d));
+  const dow = (d.getUTCDay() + 6) % 7;             /* Monday = 0 */
+  d.setUTCDate(d.getUTCDate() - dow + 3);          /* the Thursday of that week */
+  const first = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const fdow = (first.getUTCDay() + 6) % 7;
+  first.setUTCDate(first.getUTCDate() - fdow + 3);
+  const week = 1 + Math.round((d - first) / (7 * 86400000));
+  return d.getUTCFullYear() + "-W" + (week < 10 ? "0" : "") + week;
+}
+
+/* Admin -> Ushers: send the steps now, to one person or to everybody who
+   has not installed it. */
+async function aInstallSteps(env, cfg, b, me) {
+  need(me, "notifications.send");
+  const want = Array.isArray(b.usherIds) ? b.usherIds.map((x) => text(x, 20)) : [];
+  const pool = await peopleNotInstalled(env);
+  const list = [];
+  for (const u of (want.length ? pool.filter((x) => want.indexOf(x.id) !== -1) : pool)) {
+    const usher = await getUsher(env, u.id);
+    if (usher) list.push(usher);
+  }
+  if (!list.length) fail(400, "nobody", want.length ? "That person has it already." : "Everybody has it already.");
+  const off = (await peopleAlertsOff(env)).map((u) => u.id);
+  const emails = list.filter((u) => off.indexOf(u.id) !== -1 && String(u.email || "").trim()).length;
+  await run(env, [
+    list.map((u) => stNotify(env, cfg, u, "install", "Add Ushers to your phone", installSteps(cfg), "", "")),
+    stSent(env, "push", "install", "Add Ushers to your phone", list.length, list.length - emails, me.usher.id),
+    stSent(env, "email", "install", "Add Ushers to your phone", list.length, emails, me.usher.id),
+    stAudit(env, me.usher.id, "install.steps", "notification", "", null, { to: list.map((u) => u.id) }, "")
+  ]);
+  return { ok: true, sent: list.length, names: list.map((u) => u.full_name) };
+}
+
 async function clockTick(env, now) {
   const cfg = await loadConfig(env);
   const at = now || new Date();
@@ -2472,6 +2548,9 @@ async function clockTick(env, now) {
           icsFor({ date: x.date, start_time: x.start_time, title: x.title }, x.aid, x.duty))) sent++;
       }
     }
+  }
+  if (hour >= cfg.reminder_hour && londonParts(at).dow === cfg.install_reminder_dow) {
+    sent += await remindInstall(env, cfg, at);
   }
   if (hour >= cfg.report_reminder_hour) {
     const rows = ((await env.DB.prepare(
@@ -2569,6 +2648,15 @@ async function reportsOverdue(env, cfg, todayKey) {
 
 /* What Check everything says about people. Names are personal, so this is
    only given to the sheet, which holds the SHEET_TOKEN. */
+/* Active people who have never opened Ushers from a Home Screen. On iPhone
+   alerts do not work until they have, so these are the people an alert
+   would never reach. */
+async function peopleNotInstalled(env) {
+  return ((await env.DB.prepare(
+    "SELECT id, full_name, email FROM ushers WHERE active=1 AND installed_at IS NULL ORDER BY full_name COLLATE NOCASE"
+  ).all()).results) || [];
+}
+
 async function healthPeople(env, cfg) {
   const today = londonKey(new Date());
   const thisSunday = sundayOnOrAfter(today);
@@ -2582,6 +2670,7 @@ async function healthPeople(env, cfg) {
     alertsOff: off.map(name),
     unreachable: (await peopleUnreachable(env)).map(name),
     defaultPin: (await peopleDefaultPin(env)).map(name),
+    notInstalled: (await peopleNotInstalled(env)).map(name),
     sunday: thisSunday,
     sundayGaps: (await sundayGaps(env, cfg, thisSunday)).map((g) =>
       g.exact ? g.title + ": " + g.on + " of " + g.want : g.title + ": nobody on duty"),
@@ -2894,7 +2983,8 @@ const MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS queued_done_at ON queued_done(at)",
   "CREATE TABLE IF NOT EXISTS sent_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, kind TEXT NOT NULL, type TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', to_count INTEGER NOT NULL DEFAULT 0, reached INTEGER NOT NULL DEFAULT 0, by_id TEXT NOT NULL DEFAULT '')",
   "CREATE INDEX IF NOT EXISTS sent_log_at ON sent_log(at)",
-  "ALTER TABLE notifications ADD COLUMN ics_json TEXT"
+  "ALTER TABLE notifications ADD COLUMN ics_json TEXT",
+  "ALTER TABLE ushers ADD COLUMN installed_at INTEGER"
 ];
 /* Changes made once, each remembered by name, on the audit like any other.
    A setting saved in Admin -> Settings replaces the whole default, so a rule
@@ -2922,6 +3012,9 @@ const ONCE = [
       const add = ["duty", "duty_reminder"].filter((t) => v.indexOf(t) === -1);
       return add.length ? v.concat(add) : null;
     } },
+  { name: "email_install_steps", key: "email_types",
+    why: "The steps for adding Ushers to a phone are emailed as well, since an uninstalled phone is woken by nothing",
+    change: (v) => Array.isArray(v) && v.indexOf("install") === -1 ? v.concat(["install"]) : null },
   { name: "file_uncountersigned_reports", run: fileUncountersigned }
 ];
 
@@ -3054,7 +3147,8 @@ const ACTIONS = {
   "push.test":              { fn: aPushTest },
   "notifications.count":    { fn: aNotificationsCount },
   "sent.list":              { fn: aSentList },
-  "incharge.set":           { fn: aInChargeSet, write: true }
+  "incharge.set":           { fn: aInChargeSet, write: true },
+  "install.steps":          { fn: aInstallSteps, write: true }
 };
 
 async function handle(request, env, ctx) {

@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS ushers (
   -- 1 = the PIN was set for them (the default PIN); at the next sign-in they
   -- are asked once whether to keep it, before anything else.
   pin_must_change INTEGER DEFAULT 0,
+  -- when this person first opened Ushers from a phone's Home Screen; on
+  -- iPhone alerts do not work until they have, so an empty column is a
+  -- person no alert can reach.
+  installed_at INTEGER,
   created_at  INTEGER,
   updated_at  INTEGER
 );

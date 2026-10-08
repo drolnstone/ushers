@@ -171,7 +171,7 @@
 
   function start() {
     if (!C.token()) return signIn();
-    C.api("me").then(function (j) {
+    C.api("me", { installed: C.installed() }).then(function (j) {
       if (!j.ok) return start();
       ME = j.me; CONF = j.config; PUSH_KEY = j.pushKey || "";
       /* Just given the default PIN: the Ushers App asks whether to change it. */
@@ -521,6 +521,18 @@
         return;
       }
       var parts = [h("h1", {}, "Ushers")];
+      /* Who has the app on a phone at all. On iPhone no alert reaches a
+         phone until they do, so the count is worth a line of its own. */
+      var notOn = j.ushers.filter(function (u) { return u.active && !u.installed; });
+      var onCount = j.ushers.filter(function (u) { return u.active; }).length - notOn.length;
+      var steps = h("div");
+      parts.push(h("div", { class: "card" }, h("div", { class: "row" },
+          h("b", { class: "grow" }, "Installed: " + onCount + " of " + (onCount + notOn.length)),
+          notOn.length && j.canSend ? h("button", { class: "ghost", onclick: function () { sendSteps(null, steps); } },
+            "Send install steps to all " + notOn.length) : null),
+        notOn.length ? h("div", { class: "muted" }, notOn.map(function (u) { return u.name; }).join(", ") + " have not added it to a phone yet.")
+          : h("div", { class: "muted" }, "Everybody has it on a phone."),
+        steps));
       if (j.canManage) parts.push(h("p", { class: "muted" }, "To make someone Head Usher, Assistant Head Usher" +
         (j.canGrantAny ? ", Treasurer or System Administrator" : "") + ", or to remove someone, tap Edit details and roles under their name."));
       if (j.canManage) parts.push(usherForm(null, j));
@@ -530,15 +542,26 @@
         if (i === on.length) parts.push(h("h2", {}, "Removed"), h("p", { class: "muted" }, "They cannot sign in. To bring someone back, tap Edit details and roles and tick Active."));
         parts.push(h("div", { class: "card" }, h("div", { class: "row" }, h("b", { class: "grow" }, u.name), u.active ? null : h("span", { class: "chip bad" }, "Removed"),
             u.hasPin ? null : h("span", { class: "chip warn" }, "No PIN"),
-            u.active && !u.alerts ? h("span", { class: "chip warn", title: "No phone has alerts on: they are emailed instead" }, "Alerts off") : null),
+            u.active && !u.alerts ? h("span", { class: "chip warn", title: "No phone has alerts on: they are emailed instead" }, "Alerts off") : null,
+            u.active && !u.installed ? h("span", { class: "chip warn", title: "Ushers is not on a Home Screen for them, so alerts cannot reach their phone" }, "Not installed") : null),
           h("div", {}, u.roles.map(function (r) { return h("span", { class: "chip" }, labelOf(r)); })),
           h("div", { class: "muted" }, [u.email, u.phone].filter(Boolean).join(" · ")),
+          u.active && !u.installed && j.canSend ? (function () { var o = h("div");
+            return h("div", {}, h("button", { class: "ghost", onclick: function () { sendSteps(u.usherId, o); } }, "Send install steps"), o); })() : null,
           canEdit(u, j) ? h("a", { class: "btn ghost", href: "#ushers/" + encodeURIComponent(u.usherId) }, "Edit details and roles")
             : j.canManage ? h("p", { class: "muted" }, "Only a System Administrator can change or remove a Treasurer or System Administrator.") : null));
       });
       show.apply(null, parts);
     }, failed);
   }
+  /* The steps go to one person, or to everybody who has not installed it. */
+  function sendSteps(usherId, out) {
+    C.clear(out);
+    C.api("install.steps", usherId ? { usherIds: [usherId] } : {}).then(function (j) {
+      out.appendChild(j.ok ? msg("Sent to " + j.sent + ": " + j.names.join(", "), "ok") : msg(j.message, "bad"));
+    }, function () { out.appendChild(msg("No connection.", "bad")); });
+  }
+
   /* Mirrors the server: without roles.grant_any, nobody who is Treasurer or
      System Administrator can be edited, have their PIN reset or be removed. */
   function canEdit(u, j) {

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Add Ushers to your phone</title>
+<meta name="theme-color" content="#5b2a86">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<script>
+(function () {
+  var t = "auto";
+  try { t = localStorage.getItem("ushers.theme.v1") || "auto"; } catch (e) {}
+  var m = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+  document.documentElement.setAttribute("data-theme", t !== "auto" ? t : ((m && m.matches) ? "dark" : "light"));
+})();
+</script>
+<link rel="stylesheet" href="shared/style.css">
+<style>
+  /* The pictures are drawn here rather than loaded, so the page works with
+     no signal and nothing to download. */
+  .shot { display: block; margin: 8px 0 4px; max-width: 260px; }
+  .shot rect, .shot path, .shot circle { vector-effect: non-scaling-stroke; }
+</style>
+</head>
+<body>
+<header class="bar"><div class="brand"><b>Ushers</b></div></header>
+<main id="main" class="wrap">
+
+<h1>Add Ushers to your phone</h1>
+<p class="muted">It then opens like any other app, works with no signal, and
+can alert you about duties, reminders and countersignatures. Alerts on an
+iPhone only work once this is done.</p>
+
+<div class="card">
+  <h2>iPhone and iPad</h2>
+  <ol class="steps">
+    <li>Open Ushers in Safari.</li>
+    <li>Tap <b>Share</b> at the foot of the screen.
+      <svg class="shot" viewBox="0 0 240 70" role="img" aria-label="The Share button sits in the row at the foot of Safari">
+        <rect x="1" y="1" width="238" height="68" rx="10" fill="none" stroke="currentColor" opacity=".35"/>
+        <path d="M40 46V28m0-18 0 0m0 0-9 9m9-9 9 9" fill="none" stroke="currentColor" stroke-width="2"/>
+        <rect x="26" y="30" width="28" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="2"/>
+        <text x="74" y="42" font-size="14" fill="currentColor">Share</text>
+      </svg>
+    </li>
+    <li>Scroll down and choose <b>Add to Home Screen</b>, then tap <b>Add</b>.</li>
+    <li>Close Safari and open <b>Ushers</b> from the Home Screen.</li>
+    <li>Tap the bell and allow alerts.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2>Android</h2>
+  <ol class="steps">
+    <li>Open Ushers in Chrome.</li>
+    <li>Tap <b>Install</b> if it offers; otherwise tap the menu (three dots)
+      and choose <b>Add to Home screen</b>.</li>
+    <li>Open <b>Ushers</b> from the Home Screen.</li>
+    <li>Tap the bell and allow alerts.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2>If something is in the way</h2>
+  <p class="muted">No Share button: you are not in Safari. Open the same
+  address in Safari and start again. No alerts after installing: open Ushers
+  from the Home Screen, not from the browser, then tap the bell. Alerts
+  blocked: allow notifications for Ushers in the phone's own settings.</p>
+</div>
+
+<p><a class="btn" href="./">Open Ushers</a></p>
+<p class="muted">Your PIN is what signs you in and what signs a report. Nobody
+needs it but you.</p>
+
+</main>
+</body>
+</html>
