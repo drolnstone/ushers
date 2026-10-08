@@ -121,6 +121,12 @@ notified → Coordinator dashboard.
   belongs to the appointment: a reminder updates the same entry instead of
   adding a second, and coming off the duty, or the event being cancelled,
   takes it out again. An event with no start time sends none.
+- **Sabotage.** `node tests/sabotage.mjs` takes each past fix back out of a
+  scratch copy of the repo, one at a time, and expects that fix's own suite
+  to go red; anything that stays green is named, and so is any entry whose
+  code has moved, so the file cannot quietly stop testing anything. All 19
+  entries are caught today. It is not part of `run-tests.mjs`, because it
+  runs a suite per entry.
 - **Tested against an old database.** `tests/fixtures/schema-w0.3.5.sql` is
   the schema as it stood at an earlier release, kept old on purpose, with
   `tests/suites/04-old-database.mjs` running the current Worker against it:
@@ -393,6 +399,7 @@ using the Driver App's London time helpers, never the phone's clock zone.
 
     node tests/run-tests.mjs              everything
     node tests/run-tests.mjs journey      one suite
+    node tests/sabotage.mjs               takes each fix back out and expects its suite to go red
 
 The Worker runs against a real SQLite database through a D1 shim, and Code.gs
 against a fake of Apps Script (both from the Driver App). The journey suite

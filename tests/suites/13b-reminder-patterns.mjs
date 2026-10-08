@@ -67,7 +67,7 @@ export default async function ({ root }) {
   s.test("pausing one stops it, and nothing else", async (a) => {
     await at(londonAt(mod, "2026-10-06", "09:00"), async () => {
       a.ok((await D.call("config.set", { key: "reminder_patterns", value: {
-        SUN_FIRST: [{ days: 6, hour: 12, paused: true }, { days: 5, hour: 12 }]
+        SUN_FIRST: [{ days: 3, hour: 12, paused: true }, { days: 5, hour: 12 }]
       } }, await D.as("admin"))).ok);
     });
     await at(londonAt(mod, "2026-10-06", "12:30"), async () => {
@@ -76,10 +76,11 @@ export default async function ({ root }) {
       a.eq(n, 2, "the five-day one went");
       a.eq(remindersOf("A").length, before + 1);
     });
-    /* The paused one's day comes round for another event: still nothing. */
-    await at(londonAt(mod, "2026-10-05", "12:30"), async () => {
+    /* And when the paused one's own day comes round, nothing goes at all. */
+    await at(londonAt(mod, "2026-10-08", "12:30"), async () => {
       const before = remindersOf("A").length;
-      await mod.clockTick(D.env, londonAt(mod, "2026-10-05", "12:30"));
+      const n = await mod.clockTick(D.env, londonAt(mod, "2026-10-08", "12:30"));
+      a.eq(n, 0, "three days before, and the pattern is paused");
       a.eq(remindersOf("A").length, before, "the paused pattern sends nothing");
     });
   });

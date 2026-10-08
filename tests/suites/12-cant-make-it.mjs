@@ -136,6 +136,23 @@ export default async function ({ root }) {
     });
   });
 
+  s.test("and if they have been taken off the rota meanwhile, it does not say they are still on", async (a) => {
+    await at(londonAt(mod, "2026-10-06", "11:00"), async () => {
+      const r = await D.call("authorisation.request", { kind: "duty_release", appointmentId: appt(SECOND, "D").id, reason: "Exams" }, await D.as("D"));
+      a.ok(r.ok, JSON.stringify(r));
+      /* The Head Usher reworks the rota before answering, which takes her
+         off it anyway. */
+      a.ok((await D.call("rota.set", { eventId: SECOND, usherIds: [D.ID.B, D.ID.C] }, await D.as("hu"))).ok);
+      a.ok(!appt(SECOND, "D"), "off the rota");
+      const dec = await D.call("authorisation.decide", { id: r.authorisationId, decision: "reject", note: "Already sorted", pin: "1234" }, await D.as("hu"));
+      a.ok(dec.ok, JSON.stringify(dec));
+      const told = notesOf(D.env, D.ID.D).find((n) => n.title.indexOf("Not approved: Can't make a duty") === 0);
+      a.ok(told, "she is still told the answer");
+      a.has(told.body, "Already sorted");
+      a.not(/still on duty/.test(told.body), "but not that she is still on a duty she is off");
+    });
+  });
+
   s.test("a request on the day is marked late, and still asked for", async (a) => {
     await at(londonAt(mod, SUN, "07:00"), async () => {
       const r = await D.call("authorisation.request", { kind: "duty_release", appointmentId: appt(FIRST, "D").id, reason: "Taken ill" }, await D.as("D"));
