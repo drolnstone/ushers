@@ -48,6 +48,8 @@ export default async function ({ root }) {
     a.ok((await call("push.subscribe", { endpoint: ep }, T.A)).ok);
     a.eq((await call("notifications.count", {}, T.A)).alertPhones, 1);
     a.eq((await call("push.test", { endpoint: ep }, T.hu)).error, "not_subscribed", "nobody can buzz someone else's phone");
+    /* Quiet hours off, so this holds whatever hour the tests run at. */
+    for (const key of ["quiet_from", "quiet_to"]) a.ok((await call("config.set", { key, value: 0 }, T.admin)).ok);
     a.ok((await call("notify.send", { title: "Real one", body: "x", usherIds: [ID.A] }, T.hu)).ok);
     await call.settle();
     outbound.length = 0;

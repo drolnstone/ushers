@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.7";
+const SERVER_VERSION = "w0.3.8";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -87,6 +87,9 @@ const DEFAULT_CONFIG = {
   duty_reminder_days: [2],            // days before an event
   reminder_hour: 18,                  // London hour reminders go
   report_reminder_hour: 15,           // on the event day
+  quiet_from: 21,                     // London hour phone alerts go quiet (same as quiet_to = never quiet)
+  quiet_to: 8,                        // London hour they start again; what waited goes then
+  urgent_types: ["countersign_request", "approval_request"],  // still wake phones in quiet hours
   rota_weeks_ahead: 8,
   push_types: null,                   // null = every notification also goes to phones with alerts on
   unalerted_email_minutes: 60,       // someone with alerts on no phone is emailed what is still unread after this long (0 = never)
@@ -2210,6 +2213,10 @@ async function aConfigSet(env, cfg, b, me) {
     }
   }
   if (k === "report_notify_roles" && v.some((x) => ROLES.indexOf(x) === -1)) fail(400, "type", "Each entry must be one of: " + ROLES.join(", ") + ".");
+  if ((k === "quiet_from" || k === "quiet_to" || k === "reminder_hour" || k === "report_reminder_hour") && !(Number.isInteger(v) && v >= 0 && v <= 23)) {
+    fail(400, "type", "An hour is a whole number from 0 to 23.");
+  }
+  if ((k === "urgent_types" || k === "email_types") && v.some((x) => typeof x !== "string")) fail(400, "type", "Each entry is a notification type, in quotes.");
   const now = Date.now();
   await run(env, [
     env.DB.prepare("INSERT INTO config (k, v, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_by=excluded.updated_by, updated_at=excluded.updated_at")
@@ -2364,6 +2371,7 @@ async function emailUnalerted(env, cfg, nowMs) {
   const mins = Number(cfg.unalerted_email_minutes) || 0;
   if (mins <= 0) return 0;
   const now = nowMs || Date.now();
+  if (quietNow(cfg, now)) return 0;
   const rows = ((await env.DB.prepare(
     "SELECT n.id, n.usher_id, n.title, n.body, n.created_at FROM notifications n JOIN ushers u ON u.id=n.usher_id " +
     "WHERE n.emailed=0 AND n.read_at IS NULL AND n.created_at<=? AND n.created_at>? AND u.active=1 AND COALESCE(u.email,'')<>'' " +
@@ -2497,14 +2505,36 @@ async function pushOne(env, sub, keys, selfOrigin) {
   }
 }
 
-/* Every notification not yet sent to phones, from the last two hours. Each
+/* QUIET HOURS. From quiet_from to quiet_to, London time, phones are woken
+   only for urgent_types; everything else is in the app at once and wakes
+   the phone when quiet hours end. quiet_from equal to quiet_to: never quiet. */
+function quietHours(cfg) {
+  const from = Number(cfg.quiet_from), to = Number(cfg.quiet_to);
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from === to || from < 0 || from > 23 || to < 0 || to > 23) return 0;
+  return (to - from + 24) % 24;
+}
+function quietNow(cfg, at) {
+  if (!quietHours(cfg)) return false;
+  const hh = londonParts(at instanceof Date ? at : new Date(at == null ? Date.now() : at)).hh;
+  const from = Number(cfg.quiet_from), to = Number(cfg.quiet_to);
+  return from < to ? hh >= from && hh < to : hh >= from || hh < to;
+}
+
+/* Every notification not yet sent to phones, from the last two hours (and
+   the quiet hours before them, so what waited overnight still goes). Each
    is marked before sending, so two writes close together never push twice.
+   In quiet hours only urgent ones are taken; the rest stay unmarked.
    Returns how many phones were woken. */
 async function pushPending(env, cfg, selfOrigin) {
   cfg = cfg || await loadConfig(env);
-  const since = Date.now() - 2 * 3600000;
+  const since = Date.now() - (quietHours(cfg) + 2) * 3600000;
+  const urgent = Array.isArray(cfg.urgent_types) ? cfg.urgent_types.map(String) : [];
+  const quiet = quietNow(cfg, Date.now());
+  if (quiet && !urgent.length) return 0;
   const rows = ((await env.DB.prepare(
-    "SELECT id, usher_id, type FROM notifications WHERE pushed_at IS NULL AND created_at>? ORDER BY created_at LIMIT 100").bind(since).all()).results) || [];
+    "SELECT id, usher_id, type FROM notifications WHERE pushed_at IS NULL AND created_at>?" +
+    (quiet ? " AND type IN (" + urgent.map(() => "?").join(",") + ")" : "") + " ORDER BY created_at LIMIT 100"
+  ).bind(since, ...(quiet ? urgent : [])).all()).results) || [];
   if (!rows.length) return 0;
   const now = Date.now();
   await run(env, rows.map((n) => env.DB.prepare("UPDATE notifications SET pushed_at=? WHERE id=? AND pushed_at IS NULL").bind(now, n.id)));

@@ -26,7 +26,10 @@ export async function department(mod, root, people, envOver) {
     if (!l.ok) throw new Error("login " + name + ": " + JSON.stringify(l));
     T[k] = l.token;
   }
-  return { env, call, T, ID };
+  /* A fresh sign-in, for a suite that has moved the clock past the
+     sessions made at the start. */
+  const as = async (k) => (await call("login", { usherId: ID[k], pin: k === "admin" ? "9999" : "1234" })).token;
+  return { env, call, T, ID, as };
 }
 
 /* The notifications one person holds, newest first. */

@@ -486,6 +486,8 @@ export default async function ({ root }) {
     a.eq((await call("push.subscribe", { endpoint: "http://insecure" }, T.A)).error, "endpoint");
     a.ok((await call("push.subscribe", { endpoint: ep }, T.A)).ok);
     a.eq((await call("me", {}, T.A)).alertPhones, 1);
+    /* Quiet hours off, so this holds whatever hour the tests run at. */
+    for (const key of ["quiet_from", "quiet_to"]) a.ok((await call("config.set", { key, value: 0 }, T.admin)).ok);
     await call.settle();
     outbound.length = 0;
     a.ok((await call("notify.send", { title: "Meeting on Tuesday", body: "All ushers please", usherIds: [ID.A] }, T.hu)).ok);

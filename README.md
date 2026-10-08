@@ -98,6 +98,11 @@ notified → Coordinator dashboard.
   notification then also wakes the phone. As in the Driver App, the push
   carries nothing: the phone asks the server what it is for. On iPhone it
   works once Ushers is added to the Home Screen and opened from there.
+- **Quiet hours.** Between `quiet_from` (21) and `quiet_to` (8), London
+  time, phones are woken only for `urgent_types` (a countersign request, an
+  approval request). Everything else is in the app at once and wakes the
+  phone when quiet hours end. The email to anyone with alerts on no phone
+  waits too. Setting the two hours the same turns quiet hours off.
 - **The bell.** Both apps have a bell in the banner once signed in, as the
   Driver App's coordinator app. Hollow while alerts are off on this phone:
   a tap turns them on. Filled once they are on: a tap opens Notifications.
