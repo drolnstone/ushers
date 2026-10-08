@@ -18,7 +18,7 @@
    refused one. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.13";
+  var APP_VERSION = "v0.3.14";
   var CFG = window.USHERS_CONFIG || {};
   var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:", saved: "ushers.saved.v1:",
             lastWho: "ushers.lastWho.v1", people: "ushers.people.v1:" };
@@ -112,8 +112,8 @@
     if (!b) return;
     b.hidden = !offline;
     b.textContent = !offline ? "" : "No signal. " +
-      (link.savedAt ? "Showing what this device saved on " + timeLabel(link.savedAt) + ". " : "") +
-      "Changes you make are kept on this device and sent when the signal is back.";
+      (link.savedAt ? "Saved on this phone on " + timeLabel(link.savedAt) + ". " : "") +
+      "Changes are saved on this phone, not sent yet.";
   }
 
   /* Calls the server. Resolves with the answer, ok or not; rejects only when
@@ -144,7 +144,7 @@
       if (!err || !err.network) throw err;
       queueAdd({ id: body.queueId, action: action, label: label || action, body: body });
       if (core.onQueueChange) core.onQueueChange();
-      return { ok: true, queued: true, message: "No signal. Saved on this device; it is sent when the signal is back." };
+      return { ok: true, queued: true, message: "Saved on this phone. Not sent yet." };
     });
   }
 

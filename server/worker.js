@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.8";
+const SERVER_VERSION = "w0.3.9";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -2387,7 +2387,7 @@ async function emailUnalerted(env, cfg, nowMs) {
     const list = by[id];
     const subject = list.length === 1 ? list[0].title : list.length + " new notifications in the Ushers App";
     const body = list.map((n) => "• " + n.title + (n.body ? "\n  " + n.body : "")).join("\n\n") +
-      "\n\nOpen the Ushers App to see them. To be told on your phone instead, tap the bell at the top of the app and turn alerts on.";
+      "\n\nOpen the Ushers App to see them.";
     st.push(stOutbox(env, "@email", { to: u.email, subject: text(subject, 140), body: body.slice(0, 3000) }));
     for (const n of list) st.push(env.DB.prepare("UPDATE notifications SET emailed=2 WHERE id=? AND emailed=0").bind(n.id));
   }
@@ -2589,7 +2589,7 @@ async function aPushWhat(env, cfg, b) {
   if (test) {
     await env.DB.prepare("DELETE FROM settings WHERE k=?").bind(tkey).run();
     if (Date.now() - (Number(test) || 0) < 5 * 60000) {
-      return { ok: true, title: "Alerts are working", body: "This phone will be told the moment anything new arrives.", tag: "test", url: "./#notes", unread };
+      return { ok: true, title: "Test.", body: "", tag: "test", url: "./#notes", unread };
     }
   }
   const n = await env.DB.prepare(

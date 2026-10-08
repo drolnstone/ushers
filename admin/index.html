@@ -73,7 +73,7 @@
     C.foot(document.getElementById("foot"));
   }
   function loading() { show(h("p", { class: "muted" }, "Loading…")); }
-  function failed(e) { show(msg(e && e.network ? "No connection, and this screen has not been opened on this device before. It shows once the signal is back." : String(e && e.message || e), "bad")); }
+  function failed(e) { show(msg(e && e.network ? "No connection. This screen has not been opened on this phone yet." : String(e && e.message || e), "bad")); }
   function money(p) { return C.money(p); }
   function chip(code, label) { return h("span", { class: "chip status-" + (code || "") }, label || "Not started"); }
   function pinInput(id) { return h("input", { id: id, type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" }); }
@@ -86,13 +86,13 @@
   function paintQueue() {
     var q = C.queue(), b = document.getElementById("queueBanner");
     b.hidden = !q.length;
-    b.textContent = q.length ? q.length + " saved on this device, waiting for connection" +
+    b.textContent = q.length ? q.length + " saved on this phone. Not sent yet" +
       (q.some(function (x) { return x.lastError; }) ? ". One was refused: see why at the top of the page." : "") : "";
   }
   function queueCard() {
     var q = C.queue();
     if (!q.length) return null;
-    return h("div", { class: "card" }, h("b", {}, "Saved on this device, waiting for connection"),
+    return h("div", { class: "card" }, h("b", {}, "Saved on this phone. Not sent yet."),
       q.map(function (x) {
         return h("div", { class: "row" }, h("span", { class: "grow" }, x.label),
           x.lastError ? h("span", { class: "chip bad" }, x.lastError) : h("span", { class: "chip warn" }, "Waiting"),
@@ -550,8 +550,8 @@
           var bad = (rs || []).filter(function (x) { return !x.ok; })[0];
           if (bad) throw new Error(bad.message);
           if (queued || (rs || []).some(function (x) { return x.queued; })) {
-            return out.appendChild(msg("No signal. Saved on this device; it is sent when the signal is back." +
-              (rolesLater ? " They are added as an Usher: give the other roles once they appear in the list." : ""), "ok"));
+            return out.appendChild(msg("Saved on this phone. Not sent yet." +
+              (rolesLater ? " Added as an Usher: give the other roles once they appear in the list." : ""), "ok"));
           }
           location.hash = "#ushers"; ushers();
         }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
@@ -572,7 +572,7 @@
       u && u.active ? h("button", { class: "danger", onclick: function () {
         C.clear(out);
         if (!confirm("Remove " + u.name + "?\n\nThey will no longer be able to sign in, every role but Usher is taken away and they come off every duty from today. " +
-          "Their reports and dues stay on the record. You can bring them back by ticking Active.")) return;
+          "Reports and dues kept.")) return;
         C.send("usher.remove", { usherId: u.usherId }, "Remove " + u.name).then(function (x) {
           if (!x.ok) throw new Error(x.message);
           if (x.queued) return out.appendChild(msg(x.message, "ok"));
@@ -676,14 +676,14 @@
     C.api("config.get").then(function (j) {
       var parts = [h("h1", {}, "Settings")];
       if (window.UshersTesting && can("ushers.manage") && can("roles.grant_any")) parts.push(window.UshersTesting.card(CONF));
-      parts.push(h("h2", {}, "Rules"), h("p", { class: "muted" }, "Each rule is stored on the server and written to the CONFIG tab. Values are JSON."));
+      parts.push(h("h2", {}, "Rules"), h("p", { class: "muted" }, "Values are JSON."));
       Object.keys(j.config).forEach(function (k) {
         var box = h("textarea", { rows: typeof j.config[k] === "object" && j.config[k] !== null ? "4" : "1" }, JSON.stringify(j.config[k], null, 1));
         var out = h("span");
         parts.push(h("div", { class: "card" }, h("b", {}, k), box, h("p"), h("button", { class: "ghost", onclick: function () {
           var v;
           try { v = JSON.parse(box.value); } catch (e) { out.textContent = " Not valid JSON."; return; }
-          C.send("config.set", { key: k, value: v }, "Setting: " + k).then(function (x) { out.textContent = x.queued ? " Saved on this device; sent when the signal is back." : x.ok ? " Saved." : " " + x.message; });
+          C.send("config.set", { key: k, value: v }, "Setting: " + k).then(function (x) { out.textContent = x.queued ? " Saved on this phone. Not sent yet." : x.ok ? " Saved." : " " + x.message; });
         } }, "Save"), out));
       });
       show.apply(null, parts);

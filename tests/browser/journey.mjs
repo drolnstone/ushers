@@ -114,7 +114,7 @@ await page.selectOption("#cs", { label: "Mary Jones" });
 await page.fill("#sig", "John Smith"); await page.check("#agree"); await page.fill("#spin", "1234");
 await context.setOffline(true);
 await page.click("text=Sign and submit");
-await page.waitForSelector("text=Saved on device");
+await page.waitForSelector("text=Saved on this phone");
 await shot("a-offline-saved");
 await context.setOffline(false);
 await page.evaluate(() => window.UshersCore.flush());

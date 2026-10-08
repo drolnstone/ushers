@@ -59,7 +59,7 @@
   function msg(text, kind) { return h("div", { class: "msg " + (kind || "") }, text); }
   function show() { C.clear(main); main.appendChild(h.apply(null, ["div", {}].concat(Array.prototype.slice.call(arguments)))); C.foot(document.getElementById("foot")); }
   function loading() { show(h("p", { class: "muted" }, "Loading…")); }
-  function offline(err) { show(msg(err && err.network ? "No connection, and this screen has not been opened on this phone before. It shows once the signal is back." : String(err), "bad")); }
+  function offline(err) { show(msg(err && err.network ? "No connection. This screen has not been opened on this phone yet." : String(err), "bad")); }
   function statusChip(code, label) { return h("span", { class: "chip status-" + (code || "") }, label || "Not started"); }
 
   C.onSignedOut = function () { ME = null; signIn(); };
@@ -68,7 +68,7 @@
   function paintQueue() {
     var q = C.queue(), b = document.getElementById("queueBanner");
     b.hidden = !q.length;
-    b.textContent = q.length ? q.length + " saved on this phone — waiting for connection" +
+    b.textContent = q.length ? q.length + " saved on this phone. Not sent yet" +
       (q.some(function (x) { return x.lastError; }) ? ". One was refused: open Home to see why." : "") : "";
   }
 
@@ -165,7 +165,7 @@
       }, function () { go.disabled = false; out.appendChild(msg("No connection.", "bad")); });
     } }, "Create the System Administrator");
     show(h("h1", {}, "First-time setup"),
-      h("p", { class: "muted" }, "Nobody is set up yet. This makes the first System Administrator, who then adds everyone else."),
+      h("p", { class: "muted" }, "Nobody is set up yet."),
       h("div", { class: "card" }, h("label", { for: "bt" }, "Setup token"), tok, h("label", { for: "bn" }, "Your full name"), name,
         h("label", { for: "bp1" }, "Choose a PIN (4 digits)"), p1, h("label", { for: "bp2" }, "PIN again"), p2, h("p"), go, out));
   }
@@ -235,7 +235,7 @@
       var parts = [h("h1", {}, "What am I doing?")];
       var q = C.queue();
       if (q.length) {
-        parts.push(h("div", { class: "card" }, h("b", {}, "Saved on this phone — waiting for connection"),
+        parts.push(h("div", { class: "card" }, h("b", {}, "Saved on this phone. Not sent yet."),
           q.map(function (x) {
             return h("div", { class: "row" }, h("span", { class: "grow" }, x.label),
               x.lastError ? h("span", { class: "chip bad" }, x.lastError) : h("span", { class: "chip warn" }, "Waiting"),
@@ -463,7 +463,7 @@
           C.queueAdd({ id: body.submissionId, eventId: ev.id, action: "report.submit", label: ev.title + " · " + C.dateLabel(ev.date),
                        body: Object.assign({ offline: true, signedAt: Date.now() }, body) });
           paintQueue();
-          show(h("h1", {}, ev.title), msg("Saved on device — waiting for connection. It will be sent automatically.", "ok"), h("a", { class: "btn", href: "#home" }, "Home"));
+          show(h("h1", {}, ev.title), msg("Saved on this phone. Not sent yet.", "ok"), h("a", { class: "btn", href: "#home" }, "Home"));
         });
       });
     }
@@ -498,13 +498,13 @@
         h("p", { class: "muted" }, a.approver ? "As an approver you can amend it straight away." + (r.parts && r.parts.countersign ? " It will still need countersigning." : "") : "Your request to amend this report was approved."),
         h("button", { class: "ghost", onclick: function () { editReport(j, r); } }, "Amend report"));
     }
-    if (a.approval === "pending") return h("div", { class: "card" }, h("h3", {}, "Amend this report"), msg("You have asked to amend it. You will be told when it is decided."));
+    if (a.approval === "pending") return h("div", { class: "card" }, h("h3", {}, "Amend this report"), msg("Asked."));
     var reason = h("input", { id: "amend-why", placeholder: "e.g. The Tithe was counted twice" });
     return h("div", { class: "card" }, h("h3", {}, "Something wrong?"),
       h("label", { for: "amend-why" }, "Ask to amend this report: what needs changing?"), reason, h("p"),
       h("button", { class: "ghost", onclick: function () {
         C.send("authorisation.request", { kind: "report_amendment", reportId: r.id, reason: reason.value }, "Ask to amend " + j.event.title).then(function (x) {
-          C.clear(out).appendChild(msg(x.queued ? x.message : x.ok ? "Asked. You will be told when it is decided." : x.message, x.ok ? "ok" : "bad"));
+          C.clear(out).appendChild(msg(x.queued ? x.message : x.ok ? "Asked." : x.message, x.ok ? "ok" : "bad"));
         }, function () { C.clear(out).appendChild(msg("No connection.", "bad")); });
       } }, "Ask to amend"), out);
   }
@@ -513,11 +513,11 @@
     var reason = h("input", { id: "why", placeholder: "e.g. I did this duty in place of John" });
     var out = h("div");
     var box = h("div", { class: "card" }, h("b", {}, "You are not on the rota for this."),
-      j.submitApproval === "pending" ? msg("You have asked for approval. You will be told when it is decided.") : [
+      j.submitApproval === "pending" ? msg("Asked.") : [
         h("label", { for: "why" }, "Why are you submitting this report?"), reason, h("p"),
         h("button", { onclick: function () {
           C.send("authorisation.request", { kind: "report_submission", eventId: j.event.id, reason: reason.value }, "Ask to submit " + j.event.title).then(function (r) {
-            C.clear(out).appendChild(msg(r.queued ? r.message : r.ok ? "Asked. You will be told when it is decided." : r.message, r.ok ? "ok" : "bad"));
+            C.clear(out).appendChild(msg(r.queued ? r.message : r.ok ? "Asked." : r.message, r.ok ? "ok" : "bad"));
           }, function () { C.clear(out).appendChild(msg("No connection.", "bad")); });
         } }, "Ask for approval")], out);
     return box;
@@ -595,13 +595,13 @@
           if (!ok || !CONF.offlineSigning) return out.appendChild(msg("No connection. Countersign when you have signal.", "bad"));
           C.queueAdd({ id: sid, action: "report.countersign", label: "Countersign " + j.event.title, body: Object.assign({ offline: true, signedAt: Date.now() }, body) });
           paintQueue();
-          out.appendChild(msg("Saved on device — waiting for connection.", "ok"));
+          out.appendChild(msg("Saved on this phone. Not sent yet.", "ok"));
         });
       });
     } }, "Countersign");
     C.pinBox(pin, function () { btn.click(); }, CONF.pinMax);
     return h("div", { class: "card" }, h("h2", {}, "Countersign"),
-      h("p", {}, "Check the report above. You are confirming it, not filling in another one."),
+      h("p", {}, "Check the report above."),
       h("label", { class: "check" }, agree, "I have reviewed this report and it is correct."),
       h("label", { for: "csig" }, "Type your full name to sign"), sig, h("label", { for: "cpin" }, "PIN"), pin, h("p"), btn, out);
   }
@@ -693,7 +693,7 @@
           .map(function (x) { return h("div", { class: "stat" }, h("b", {}, x[1]), h("span", {}, x[0])); })),
           h("p"), h("button", { class: "ghost", onclick: function (e) {
             e.target.disabled = true;
-            C.send("dues.remind", {}, "Remind everyone behind on dues").then(function (x) { e.target.textContent = x.queued ? "Saved; reminders go when the signal is back" : x.ok ? "Reminders sent: " + x.sent : x.message; });
+            C.send("dues.remind", {}, "Remind everyone behind on dues").then(function (x) { e.target.textContent = x.queued ? "Saved on this phone. Not sent yet." : x.ok ? "Reminders sent: " + x.sent : x.message; });
           } }, "Remind everyone who is behind"))];
       parts.push(h("div", { class: "card" }, h("table", {}, h("tr", {}, h("th", {}, "Name"), h("th", { class: "num" }, "Paid"), h("th", { class: "num" }, "Outstanding"), h("th", {}, "Status")),
         j.members.map(function (m) {

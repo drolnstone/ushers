@@ -94,6 +94,11 @@ notified → Coordinator dashboard.
   ATTENDANCE, MINISTRATION and OFFERING have a row per version with
   `CURRENT` = Yes or No: filter on Yes before adding up. A countersignature
   made for an older version is refused.
+- **Words.** Prompts and instructions only: the screens say what to do and
+  what happened, never how the app works. Every sentence cut for that
+  reason is kept in `tests/suites/05-words.mjs`, which fails if one comes
+  back, and the same suite checks each status label against the record it
+  is read from.
 - **Phone alerts.** Notifications → Turn on alerts (either app). Every new
   notification then also wakes the phone. As in the Driver App, the push
   carries nothing: the phone asks the server what it is for. On iPhone it
@@ -132,8 +137,8 @@ notified → Coordinator dashboard.
   Reject stay their own tap, since a PIN cannot say which was meant.
 - **Signing** is typing your full name, ticking to confirm, and your PIN.
 - **Offline.** Reports are saved on the phone as they are typed. A report
-  signed with no signal is kept as "Saved on device — waiting for
-  connection" and sent automatically. The PIN is then checked on the phone
+  signed with no signal is kept as "Saved on this phone. Not sent yet" and
+  sent when the signal is back. The PIN is then checked on the phone
   against a salted hash kept from the last sign-in, and the record says so
   (`SUBMIT_PIN_CHECK = device`). `offline_signing` turns this off.
   The Submission ID is made on the phone, so a retry is filed once.
