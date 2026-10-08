@@ -94,6 +94,11 @@ notified → Coordinator dashboard.
   ATTENDANCE, MINISTRATION and OFFERING have a row per version with
   `CURRENT` = Yes or No: filter on Yes before adding up. A countersignature
   made for an older version is refused.
+- **Emails carry a link.** Every email ends with the address of the screen
+  it is about, built from `app_url`: a report, Approvals, Notifications. It
+  is the same screen the phone alert opens, from one place in the code.
+  Looking costs nothing: a link only opens the app, carries no token and
+  does nothing by itself; the PIN is what acts.
 - **Words.** Prompts and instructions only: the screens say what to do and
   what happened, never how the app works. Every sentence cut for that
   reason is kept in `tests/suites/05-words.mjs`, which fails if one comes

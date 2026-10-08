@@ -80,7 +80,7 @@ export default async function ({ root }) {
     a.eq(sent.length, 1);
     a.eq(sent[0].to, "hu@example.org", "only the person with no phone alerts");
     a.has(sent[0].body, "Prayer meeting moved");
-    a.has(sent[0].body, "Open the Ushers App to see them.");
+    a.has(sent[0].body, "https://drolnstone.github.io/ushers/#notes", "a link to the screen it is about");
     a.eq(await mod.emailUnalerted(env, await mod.loadConfig(env), Date.now() + 120 * 60000), 0, "and only once");
   });
 

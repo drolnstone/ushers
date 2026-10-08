@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.9";
+const SERVER_VERSION = "w0.3.10";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -72,6 +72,7 @@ const DEFAULT_CONFIG = {
   countersign_roles: ["head_usher", "assistant_head_usher"],
   countersign_rostered: true,         // anyone on duty at that event may countersign
   self_approval: false,               // may an approver decide somebody else's request about themselves?
+  app_url: "https://drolnstone.github.io/ushers/",  // where the apps are; a link in every email
   church_name: "RCCG Dominion Assembly",
   church_place: "Liverpool - Ushering Department",
   role_permissions: null,             // null = ROLE_PERMISSIONS below
@@ -331,9 +332,29 @@ function stAuthLog(env, usherId, what, detail) {
   return stOutbox(env, "AUTH_LOG", { LOG_ID: uuid(), AT: londonStamp(Date.now()), USHER_ID: usherId || "", EVENT: what, DETAIL: text(detail, 200) }, "LOG_ID");
 }
 
+/* The screen a notification belongs to. One place, used by the phone alert
+   and by the email, so a link in an email always opens what the push
+   opens. Looking costs nothing: a link only opens the app, and the PIN is
+   what acts. Nothing in a link acts, and no link carries a token. */
+function linkFor(n, isAdmin) {
+  if (n.ref_type === "report" && n.type === "report_filed" && isAdmin) return "admin/#report/" + n.ref_id;
+  if (n.ref_type === "report") return "#rep/" + n.ref_id;
+  if (n.ref_type === "authorisation") return "admin/#approvals";
+  if (n.ref_type === "event") return "#report/" + n.ref_id;
+  return "#notes";
+}
+
+/* The whole address of that screen, for an email. */
+function linkTo(cfg, n, isAdmin) {
+  const base = String(cfg.app_url || "").replace(/\/+$/, "");
+  if (!base) return "";
+  return base + "/" + linkFor(n, isAdmin);
+}
+
 /* A notification, its sheet row, and an email when the type is important
-   and the person has an address. */
-function stNotify(env, cfg, usher, type, title, body, refType, refId, dedupe) {
+   and the person has an address. isAdmin: the person holds admin.app, so
+   an emailed link opens the Admin App's screen. */
+function stNotify(env, cfg, usher, type, title, body, refType, refId, dedupe, isAdmin) {
   if (!usher) return [];
   const id = uuid(), at = Date.now();
   const email = cfg.email_types.indexOf(type) !== -1 && usher.email ? 1 : 0;
@@ -347,7 +368,9 @@ function stNotify(env, cfg, usher, type, title, body, refType, refId, dedupe) {
     }, "NOTIFICATION_ID")
   ];
   if (email) {
-    out.push(stOutbox(env, "@email", { to: usher.email, subject: text(title, 140), body: text(body, 1000) }));
+    const link = linkTo(cfg, { type, ref_type: refType || "", ref_id: String(refId || "") }, isAdmin);
+    out.push(stOutbox(env, "@email", { to: usher.email, subject: text(title, 140),
+      body: text(body, 1000) + (link ? "\n\nOpen: " + link : "") }));
   }
   return out;
 }
@@ -432,7 +455,8 @@ async function stReportFiled(env, cfg, rec, e, title, lead, skip) {
   const st = [];
   for (const u of (r.results || [])) {
     if ((skip || []).indexOf(u.id) !== -1) continue;
-    st.push(stNotify(env, cfg, u, "report_filed", title + ": " + e.title + " " + ukDate(e.date), body, "report", rec.id));
+    /* They hold admin.app, so the link opens the Admin App's copy. */
+    st.push(stNotify(env, cfg, u, "report_filed", title + ": " + e.title + " " + ukDate(e.date), body, "report", rec.id, null, true));
   }
   return st;
 }
@@ -973,7 +997,7 @@ async function authRequest(env, cfg, o) {
   for (const u of approvers) {
     if (!cfg.self_approval && (u.id === o.requestedBy || u.id === o.subjectId)) continue;
     st.push(stNotify(env, cfg, u, "approval_request", "Approval needed: " + AUTH_KIND_LABELS[a.kind],
-      o.describe || (names[a.subject_id] + " needs approval."), "authorisation", id));
+      o.describe || (names[a.subject_id] + " needs approval."), "authorisation", id, null, true));
   }
   return { id, statements: st, status: "pending" };
 }
@@ -2373,7 +2397,7 @@ async function emailUnalerted(env, cfg, nowMs) {
   const now = nowMs || Date.now();
   if (quietNow(cfg, now)) return 0;
   const rows = ((await env.DB.prepare(
-    "SELECT n.id, n.usher_id, n.title, n.body, n.created_at FROM notifications n JOIN ushers u ON u.id=n.usher_id " +
+    "SELECT n.id, n.usher_id, n.type, n.title, n.body, n.ref_type, n.ref_id, n.created_at FROM notifications n JOIN ushers u ON u.id=n.usher_id " +
     "WHERE n.emailed=0 AND n.read_at IS NULL AND n.created_at<=? AND n.created_at>? AND u.active=1 AND COALESCE(u.email,'')<>'' " +
     "AND NOT EXISTS (SELECT 1 FROM push_subs p WHERE p.usher_id=n.usher_id) ORDER BY n.created_at LIMIT 200"
   ).bind(now - mins * 60000, now - 48 * 3600000).all()).results) || [];
@@ -2386,8 +2410,11 @@ async function emailUnalerted(env, cfg, nowMs) {
     if (!u || !u.email) continue;
     const list = by[id];
     const subject = list.length === 1 ? list[0].title : list.length + " new notifications in the Ushers App";
-    const body = list.map((n) => "• " + n.title + (n.body ? "\n  " + n.body : "")).join("\n\n") +
-      "\n\nOpen the Ushers App to see them.";
+    const isAdmin = permissionsFor(cfg, await rolesOf(env, u.id)).has("admin.app");
+    const body = list.map((n) => {
+      const link = linkTo(cfg, n, isAdmin);
+      return "• " + n.title + (n.body ? "\n  " + n.body : "") + (link ? "\n  " + link : "");
+    }).join("\n\n") + (cfg.app_url ? "" : "\n\nOpen the Ushers App to see them.");
     st.push(stOutbox(env, "@email", { to: u.email, subject: text(subject, 140), body: body.slice(0, 3000) }));
     for (const n of list) st.push(env.DB.prepare("UPDATE notifications SET emailed=2 WHERE id=? AND emailed=0").bind(n.id));
   }
@@ -2596,12 +2623,8 @@ async function aPushWhat(env, cfg, b) {
     "SELECT * FROM notifications WHERE usher_id=? AND read_at IS NULL ORDER BY created_at DESC LIMIT 1").bind(sub.usher_id).first();
   if (!n) return Object.assign(plain, { unread });
   const extra = unread > 1 ? " (" + (unread - 1) + " more in the app)" : "";
-  let url = "./#notes";
-  if (n.ref_type === "report" && n.type === "report_filed" && permissionsFor(cfg, await rolesOf(env, sub.usher_id)).has("admin.app")) url = "./admin/#report/" + n.ref_id;
-  else if (n.ref_type === "report") url = "./#rep/" + n.ref_id;
-  else if (n.ref_type === "authorisation") url = "./admin/#approvals";
-  else if (n.ref_type === "event") url = "./#report/" + n.ref_id;
-  return { ok: true, title: n.title, body: (n.body || "") + extra, tag: "n|" + n.id, url, unread };
+  const isAdmin = permissionsFor(cfg, await rolesOf(env, sub.usher_id)).has("admin.app");
+  return { ok: true, title: n.title, body: (n.body || "") + extra, tag: "n|" + n.id, url: "./" + linkFor(n, isAdmin), unread };
 }
 
 /* The bell's test, from the Driver App's testpush: one push to this phone,
