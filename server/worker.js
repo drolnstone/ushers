@@ -809,11 +809,17 @@ async function aRotaSet(env, cfg, b, me) {
   const now = Date.now(), st = [];
   const usherOf = {};
   for (const id of ids) usherOf[id] = await getUsher(env, id);
+  /* Someone taken off a duty still to come is told, so they do not turn up. */
+  const tell = e.status !== "cancelled" && e.date >= londonKey(new Date());
   for (const a of current) {
     if (ids.indexOf(a.usher_id) !== -1) continue;
     st.push(env.DB.prepare("UPDATE appointments SET status='removed', removed_by=?, removed_at=? WHERE id=?").bind(me.usher.id, now, a.id));
     st.push(stAudit(env, me.usher.id, "appointment.remove", "appointment", a.id, { event: e.id, usher: a.usher_id, duty }, null, text(b.reason, 200)));
     st.push(stOutbox(env, "APPOINTMENTS", apptRow(Object.assign({}, a, { status: "removed" }), e, names[a.usher_id] || "", me.usher.id), "APPOINTMENT_ID"));
+    if (tell) {
+      st.push(stNotify(env, cfg, await getUsher(env, a.usher_id), "duty", "You are no longer on duty: " + e.title,
+        e.title + " on " + ukDate(e.date) + ". You have been taken off " + (duty === "counting" ? "offering counting." : "ushering."), "event", e.id));
+    }
   }
   const have = current.map((a) => a.usher_id);
   for (const id of ids) {
@@ -871,11 +877,26 @@ async function aEventCancel(env, cfg, b, me) {
   need(me, "events.manage");
   const e = await getEvent(env, b.eventId);
   const after = Object.assign({}, e, { status: b.restore ? "scheduled" : "cancelled", updated_at: Date.now() });
-  await run(env, [
+  const st = [
     env.DB.prepare("UPDATE events SET status=?, updated_at=? WHERE id=?").bind(after.status, after.updated_at, e.id),
     stAudit(env, me.usher.id, b.restore ? "event.restore" : "event.cancel", "event", e.id, { status: e.status }, { status: after.status }, text(b.reason, 200)),
     stOutbox(env, "EVENTS", eventRow(after), "EVENT_ID")
-  ]);
+  ];
+  /* Everyone on duty is told the event is off, or back on, once each, for
+     an event today or later. Nothing is said when nothing changed. */
+  if (after.status !== e.status && e.date >= londonKey(new Date())) {
+    const told = {};
+    for (const a of await activeAppointments(env, [e.id])) {
+      if (told[a.usher_id]) continue;
+      told[a.usher_id] = 1;
+      const u = await getUsher(env, a.usher_id);
+      if (!u || !u.active) continue;
+      st.push(b.restore
+        ? stNotify(env, cfg, u, "duty", "Back on: " + e.title, e.title + " on " + ukDate(e.date) + ". You are on duty again.", "event", e.id)
+        : stNotify(env, cfg, u, "duty", "Cancelled: " + e.title, e.title + " on " + ukDate(e.date) + " will not take place.", "event", e.id));
+    }
+  }
+  await run(env, st);
   return { ok: true };
 }
 

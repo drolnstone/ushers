@@ -41,7 +41,9 @@ notified → Coordinator dashboard.
   Second Service (offering counting, exactly `second_service_counters`, 2).
   Both services have the same whole report.
   Being on both is not a conflict. The first Sunday of each month is
-  Thanksgiving Sunday.
+  Thanksgiving Sunday. Someone taken off a duty still to come is told
+  ("You are no longer on duty"), and everyone on duty is told when an
+  event is cancelled ("Cancelled: …") or brought back ("Back on: …").
 - **Report.** One per event, one submitter, and everything about the
   service: attendance (male, female, children) with the total worked out;
   the ministration record (minister, sermon title, Bible text, praise and
