@@ -199,6 +199,7 @@ and to anyone with alerts on no phone as part of their digest.
 | Approval needed: Can't make a duty | Head Usher and Assistant | an usher says beforehand they cannot make it | app, phone (urgent), email | a duty nobody can do is better known about early | `12-cant-make-it` |
 | You are off duty / Covered: *event* | the usher who asked | it is approved, and again when cover is found | app, phone, email + cancellation | they need to know they are off it, and that it is covered | `12-cant-make-it` |
 | Summary for *month* / *year* | `summary_roles` (Head Usher, Assistant) and anyone holding the offering or dues permission | the last Sunday of the month from `summary_hour` (19), the year's as well in December | app, phone, email | the month's record arrives without anyone asking for it | `15-summary` |
+| Reminder: *event* | everybody on that duty, or one role | each pattern in `reminder_patterns`, at its own hour | app, phone, email + diary entry | the department's own rhythm, not just the standard reminder | `13b-reminder-patterns` |
 | Add Ushers to your phone | anybody not on a Home Screen | Wednesdays from `reminder_hour`, and when Admin sends the steps | app, phone, email | an uninstalled iPhone is woken by nothing | `09-install` |
 | In charge today: *name* | everybody on a duty that day | the name is changed | app, phone | they are the people who may need somebody this morning | `16-in-charge` |
 | Test. | the phone that asked | Notifications → Send a test alert | phone | proves the chain without pretending to be real news | `80-bell`, `05-words` |
@@ -220,6 +221,20 @@ has access and no authority.
   is told, and every change is audited. It is a contact line and nothing
   more: being in charge lends no permission, so the person named approves
   only what their own roles already allow.
+- **Extra reminders per kind of event.** Beyond the one standard duty
+  reminder, `reminder_patterns` holds a list per kind of event:
+  `{ days, hour, role, paused }`, counted from the event's own date, sent by
+  the clock, deduped like every other reminder and quiet at night. A pattern
+  with a role reaches only the people holding it; a paused one sends
+  nothing; a cancelled event reminds nobody.
+- **Messages.** Admin → Message chooses who it goes to (everybody, everybody
+  on duty this Sunday, the First Service ushers, the counters, the Head
+  Ushers, or people picked by name), whether it goes now or at a time, and
+  whether it sits on Home until a date. Who it goes to is read when it goes,
+  not when it was written, so a message set for Sunday morning reaches
+  whoever is on duty then. Each one is kept, so the screen shows "Seen by n
+  of m" from what people have actually opened, with a nudge for the ones who
+  have not, which reaches only them.
 - **Repeating events.** The department's fixed patterns live in Settings as
   rules rather than dates typed in one at a time: `{ id, title, type, rule,
   time }`, where the pattern is `first-saturday`, `last-friday`,

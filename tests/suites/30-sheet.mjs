@@ -106,7 +106,7 @@ export default async function ({ root }) {
     const map = ctx.headerMap(sh);
     const names = sh.getRange(2, map.FULL_NAME, sh.getLastRow() - 1, 1).getValues().map((x) => x[0]);
     a.same(names, ["Sam Admin", "John Smith"]);
-    a.eq(gas.mail[0].to, "sam@example.org");
+    a.same(gas.mail.map((m) => m.to).sort(), ["john@example.org", "sam@example.org"]);
     for (const tab of Object.keys(ctx.TABS)) a.eq(gas.ss.getSheetByName(tab).protections.length, 1, tab + " protected after the drain");
   });
 

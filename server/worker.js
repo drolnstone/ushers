@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.18";
+const SERVER_VERSION = "w0.3.19";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -91,6 +91,11 @@ const DEFAULT_CONFIG = {
      "weekly:sat", "first-saturday", "nth-weekday:2:sun", "last-friday",
      or "yearly:09:first-saturday". */
   event_rules: [],
+  /* Extra reminders per kind of event, beyond the standard duty reminder:
+     { days: -6, hour: 12, role: "", paused: false }, where days is counted
+     from the event's own date (0 is the day itself) and role, when given,
+     narrows it to the people holding that role. */
+  reminder_patterns: {},
   rules_months_ahead: 12,             // how far ahead a rule's events are made
   release_late_days: 1,               // a "can't make it" this close to the day is marked late
   summary_roles: ["head_usher", "assistant_head_usher"],   // who gets the monthly summary
@@ -2230,10 +2235,17 @@ async function aHome(env, cfg, b, me) {
   }
   const unread = await env.DB.prepare("SELECT count(*) AS n FROM notifications WHERE usher_id=? AND read_at IS NULL").bind(me.usher.id).first();
   const inCharge = await inChargeNow(env, cfg);
+  /* Pinned messages: on Home until their date, for the people they went
+     to, so a notice does not have to be found in the list again. */
+  const pinned = ((await env.DB.prepare(
+    "SELECT m.id, m.title, m.body, m.pinned_until FROM messages m JOIN notifications n ON n.ref_type='message' AND n.ref_id=m.id " +
+    "WHERE n.usher_id=? AND m.sent_at IS NOT NULL AND m.pinned_until>=? ORDER BY m.sent_at DESC LIMIT 5"
+  ).bind(me.usher.id, today).all()).results) || [];
   return {
     ok: true, today, thisSunday, thanksgiving: isThanksgiving(cfg, thisSunday), me: meView(me),
     thisWeek, later, recent, toCountersign: signList, unread: unread ? unread.n : 0,
-    inCharge: inCharge && Object.assign({}, inCharge, { isMe: inCharge.usherId === me.usher.id })
+    inCharge: inCharge && Object.assign({}, inCharge, { isMe: inCharge.usherId === me.usher.id }),
+    pinned: pinned.map((m) => ({ title: m.title, body: m.body, until: m.pinned_until }))
   };
 }
 
@@ -2275,35 +2287,148 @@ async function aNotificationsRead(env, cfg, b, me) {
 }
 
 /* A message from the coordinator to some or all ushers. */
-async function aNotifySend(env, cfg, b, me) {
-  need(me, "notifications.send");
-  const title = text(b.title, 140), body = text(b.body, 1000);
-  if (!title) fail(400, "title", "A title is needed.");
-  let list;
-  if (b.all) list = ((await env.DB.prepare("SELECT * FROM ushers WHERE active=1").all()).results) || [];
-  else {
-    list = [];
-    for (const id of (Array.isArray(b.usherIds) ? b.usherIds : []).slice(0, 500)) {
+/* WHO A MESSAGE IS FOR. Resolved when it goes, not when it is written, so
+   a message scheduled for Sunday morning reaches whoever is on duty then
+   rather than whoever was on the rota when it was typed. */
+const AUDIENCES = {
+  all: "everybody",
+  sunday: "everybody on duty this Sunday",
+  first: "the First Service ushers this Sunday",
+  counters: "the offering counters this Sunday",
+  admins: "the Head Usher and Assistant Head Usher",
+  chosen: "the people chosen"
+};
+
+async function audienceOf(env, cfg, audience, usherIds) {
+  const sunday = sundayOnOrAfter(londonKey(new Date()));
+  const onSunday = async (type) => ((await env.DB.prepare(
+    "SELECT DISTINCT u.* FROM appointments a JOIN events e ON e.id=a.event_id JOIN ushers u ON u.id=a.usher_id " +
+    "WHERE e.sunday_key=? AND e.status<>'cancelled' AND a.status='active' AND u.active=1" +
+    (type ? " AND e.type=?" : "") + " ORDER BY u.full_name COLLATE NOCASE"
+  ).bind(...(type ? [sunday, type] : [sunday])).all()).results) || [];
+  if (audience === "sunday") return await onSunday("");
+  if (audience === "first") return await onSunday("SUN_FIRST");
+  if (audience === "counters") return await onSunday("SUN_SECOND");
+  if (audience === "admins") return await holders(env, cfg, "admin.app");
+  if (audience === "chosen") {
+    const out = [];
+    for (const id of (Array.isArray(usherIds) ? usherIds : String(usherIds || "").split(",")).slice(0, 500)) {
       const u = await getUsher(env, text(id, 20));
-      if (u && u.active) list.push(u);
+      if (u && u.active) out.push(u);
     }
+    return out;
   }
-  if (!list.length) fail(400, "nobody", "Choose who to send it to.");
-  /* How far it reaches: a phone with alerts on, an email address, or
-     neither. Counted before sending, from the same lists the sending code
-     uses, and told to the sender as one notification. */
+  return ((await env.DB.prepare("SELECT * FROM ushers WHERE active=1 ORDER BY full_name COLLATE NOCASE").all()).results) || [];
+}
+
+/* Send one message now: the notifications, the two "what went out" lines,
+   and the sender's own receipt. */
+async function deliverMessage(env, cfg, m, sender) {
+  const list = await audienceOf(env, cfg, m.audience, m.usher_ids);
   const off = (await peopleAlertsOff(env)).map((u) => u.id);
   const phones = list.filter((u) => off.indexOf(u.id) === -1).length;
   const emails = list.filter((u) => off.indexOf(u.id) !== -1 && String(u.email || "").trim()).length;
   const nowhere = list.length - phones - emails;
-  await run(env, [list.map((u) => stNotify(env, cfg, u, "admin_message", title, body, "", "")),
-    stSent(env, "push", "admin_message", title, list.length, phones, me.usher.id),
-    stSent(env, "email", "admin_message", title, list.length, emails, me.usher.id),
-    stAudit(env, me.usher.id, "notify.send", "notification", "", null, { to: list.map((u) => u.id), title }, ""),
-    stNotify(env, cfg, me.usher, "sent_report", "Sent to " + list.length + ": " + title,
+  const now = Date.now();
+  const st = [
+    list.map((u) => stNotify(env, cfg, u, "admin_message", m.title, m.body, "message", m.id)),
+    env.DB.prepare("UPDATE messages SET sent_at=? WHERE id=? AND sent_at IS NULL").bind(now, m.id),
+    stSent(env, "push", "admin_message", m.title, list.length, phones, m.created_by || ""),
+    stSent(env, "email", "admin_message", m.title, list.length, emails, m.created_by || "")
+  ];
+  if (sender) {
+    st.push(stNotify(env, cfg, sender, "sent_report", "Sent to " + list.length + ": " + m.title,
       phones + " phone" + (phones === 1 ? "" : "s") + ", " + emails + " email" + (emails === 1 ? "" : "s") +
-      ", " + nowhere + " unreachable.", "", "")]);
-  return { ok: true, sent: list.length, phones, emails, unreachable: nowhere };
+      ", " + nowhere + " unreachable.", "message", m.id));
+  }
+  await run(env, st);
+  return { sent: list.length, phones, emails, unreachable: nowhere };
+}
+
+/* Scheduled messages, from the clock. */
+async function sendDueMessages(env, cfg, nowMs) {
+  const rows = ((await env.DB.prepare(
+    "SELECT * FROM messages WHERE sent_at IS NULL AND send_at<=? ORDER BY send_at LIMIT 20").bind(nowMs || Date.now()).all()).results) || [];
+  let n = 0;
+  for (const m of rows) {
+    const sender = m.created_by ? await getUsher(env, m.created_by) : null;
+    await deliverMessage(env, cfg, m, sender);
+    n++;
+  }
+  return n;
+}
+
+/* How many have read it, and who has not. */
+async function messageSeen(env, id) {
+  const rows = ((await env.DB.prepare(
+    "SELECT usher_id, read_at FROM notifications WHERE ref_type='message' AND ref_id=? AND type='admin_message'").bind(String(id)).all()).results) || [];
+  return { to: rows.length, seen: rows.filter((r) => r.read_at).length,
+           unseen: rows.filter((r) => !r.read_at).map((r) => r.usher_id) };
+}
+
+async function aMessageList(env, cfg, b, me) {
+  need(me, "notifications.send");
+  const rows = ((await env.DB.prepare("SELECT * FROM messages ORDER BY created_at DESC LIMIT 40").all()).results) || [];
+  const names = await namesMap(env);
+  const out = [];
+  for (const m of rows) {
+    const seen = await messageSeen(env, m.id);
+    out.push({ id: m.id, title: m.title, body: m.body, audience: m.audience, audienceLabel: AUDIENCES[m.audience] || m.audience,
+      sendAt: m.send_at, sentAt: m.sent_at, pinnedUntil: m.pinned_until || "", by: names[m.created_by] || "",
+      to: seen.to, seen: seen.seen, unseen: seen.unseen.length });
+  }
+  return { ok: true, messages: out, audiences: Object.keys(AUDIENCES).map((k) => ({ key: k, label: AUDIENCES[k] })) };
+}
+
+/* Those who have not read it are told again, and nobody else. */
+async function aMessageRemind(env, cfg, b, me) {
+  need(me, "notifications.send");
+  const m = await env.DB.prepare("SELECT * FROM messages WHERE id=?").bind(text(b.id, 20)).first();
+  if (!m) fail(404, "no_message", "That message was not found.");
+  if (!m.sent_at) fail(409, "not_sent", "That message has not gone yet.");
+  const seen = await messageSeen(env, m.id);
+  if (!seen.unseen.length) fail(400, "nobody", "Everybody has read it.");
+  const st = [];
+  for (const id of seen.unseen) {
+    const u = await getUsher(env, id);
+    if (u && u.active) st.push(stNotify(env, cfg, u, "admin_message", m.title, m.body, "message", m.id, "remind:" + m.id + ":" + id));
+  }
+  st.push(stSent(env, "push", "admin_message", "Reminder: " + m.title, seen.unseen.length, seen.unseen.length, me.usher.id));
+  await run(env, st);
+  return { ok: true, sent: seen.unseen.length };
+}
+
+async function aNotifySend(env, cfg, b, me) {
+  need(me, "notifications.send");
+  const title = text(b.title, 140), body = text(b.body, 1000);
+  if (!title) fail(400, "title", "A title is needed.");
+  /* Who it is for, when it goes, and whether it sits on Home for a while.
+     "all: true" is what the first Message screen sent, and still works. */
+  const audience = b.all ? "all" : (AUDIENCES[text(b.audience, 20)] ? text(b.audience, 20) : (b.usherIds ? "chosen" : "all"));
+  const pinnedUntil = b.pinnedUntil ? text(b.pinnedUntil, 10) : "";
+  if (pinnedUntil && (!validKey(pinnedUntil) || pinnedUntil < londonKey(new Date()))) fail(400, "pinned", "Pin it to Home until a date today or later.");
+  const sendAt = Number(b.sendAt) || 0;
+  if (sendAt && sendAt > Date.now() + 400 * 86400000) fail(400, "when", "Choose a time within the next year.");
+  const id = await nextId(env, "message", "M", 4);
+  const now = Date.now();
+  const m = { id, title, body, audience, usher_ids: audience === "chosen" ? (Array.isArray(b.usherIds) ? b.usherIds : []).join(",") : "",
+              send_at: sendAt || now, pinned_until: pinnedUntil, created_by: me.usher.id, created_at: now };
+  await run(env, [
+    env.DB.prepare("INSERT INTO messages (id, title, body, audience, usher_ids, send_at, pinned_until, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+      .bind(m.id, m.title, m.body, m.audience, m.usher_ids, m.send_at, m.pinned_until, m.created_by, m.created_at),
+    stAudit(env, me.usher.id, "notify.send", "message", id, null,
+      { title, audience, sendAt: m.send_at, pinnedUntil }, text(b.reason, 200))
+  ]);
+  if (sendAt > now + 60000) {
+    return { ok: true, messageId: id, scheduled: true, sendAt: m.send_at, audience, audienceLabel: AUDIENCES[audience] };
+  }
+  const list = await audienceOf(env, cfg, audience, m.usher_ids);
+  if (!list.length) fail(400, "nobody", "Nobody is in that group at the moment.");
+  /* How far it reaches: a phone with alerts on, an email address, or
+     neither. Counted from the same lists the sending code uses, and told to
+     the sender as one notification. */
+  const out = await deliverMessage(env, cfg, m, me.usher);
+  return Object.assign({ ok: true, messageId: id, audience, audienceLabel: AUDIENCES[audience] }, out);
 }
 
 /* ==========================================================================
@@ -2677,6 +2802,21 @@ async function aConfigSet(env, cfg, b, me) {
     fail(400, "type", "An hour is a whole number from 0 to 23.");
   }
   if ((k === "urgent_types" || k === "email_types") && v.some((x) => typeof x !== "string")) fail(400, "type", "Each entry is a notification type, in quotes.");
+  if (k === "reminder_patterns") {
+    for (const type of Object.keys(v || {})) {
+      if (!cfg.event_types[type] && !DEFAULT_CONFIG.event_types[type]) fail(400, "type", "No kind of event called " + type + ".");
+      const list = v[type];
+      if (!Array.isArray(list)) fail(400, "type", "Each kind of event takes a list of reminders.");
+      if (list.length > 8) fail(400, "type", "At most eight reminders for one kind of event.");
+      for (const pat of list) {
+        if (!pat || !Number.isInteger(Number(pat.days)) || Number(pat.days) < 0 || Number(pat.days) > 60) {
+          fail(400, "type", "Each reminder needs days before the event, from 0 (the day itself) to 60.");
+        }
+        if (!Number.isInteger(Number(pat.hour)) || Number(pat.hour) < 0 || Number(pat.hour) > 23) fail(400, "type", "An hour is a whole number from 0 to 23.");
+        if (pat.role && ROLES.indexOf(pat.role) === -1) fail(400, "type", "A reminder's role must be one of: " + ROLES.join(", ") + ".");
+      }
+    }
+  }
   if (k === "event_rules") {
     const seen = {};
     if (v.length > 40) fail(400, "type", "At most 40 repeating events.");
@@ -2994,10 +3134,31 @@ async function clockTick(env, now) {
       }
     }
   }
+  /* The patterns for a kind of event, each one sent once. */
+  for (const type of Object.keys(cfg.reminder_patterns || {})) {
+    for (const pat of (Array.isArray(cfg.reminder_patterns[type]) ? cfg.reminder_patterns[type] : [])) {
+      if (!pat || pat.paused) continue;
+      const days = Number(pat.days) || 0, atHour = Number(pat.hour) || 0;
+      if (hour < atHour) continue;
+      const day = keyAddDays(today, days);     /* days before the event */
+      const rows = ((await env.DB.prepare(
+        "SELECT a.id AS aid, a.duty, e.id AS eid, e.title, e.date, e.start_time, u.* FROM appointments a JOIN events e ON e.id=a.event_id JOIN ushers u ON u.id=a.usher_id " +
+        "WHERE e.date=? AND e.type=? AND e.status<>'cancelled' AND a.status='active' AND u.active=1").bind(day, type).all()).results) || [];
+      for (const x of rows) {
+        if (pat.role && (await rolesOf(env, x.id)).indexOf(pat.role) === -1) continue;
+        const when = days === 0 ? "today" : days === 1 ? "tomorrow" : "in " + days + " days";
+        if (await remind(env, cfg, x, "duty_reminder", "Reminder: " + x.title,
+          x.title + " is " + when + (x.start_time ? " at " + x.start_time : "") + ". You are on duty.",
+          "event", x.eid, "pattern:" + x.aid + ":" + days + ":" + atHour,
+          icsFor({ date: x.date, start_time: x.start_time, title: x.title }, x.aid, x.duty))) sent++;
+      }
+    }
+  }
   if (hour >= cfg.reminder_hour && londonParts(at).dow === cfg.install_reminder_dow) {
     sent += await remindInstall(env, cfg, at);
   }
   try { await ensureRuleEvents(env, cfg, "system", today); } catch (e) { console.log("rules", e && e.message); }
+  try { sent += await sendDueMessages(env, cfg, at.getTime()); } catch (e) { console.log("messages", e && e.message); }
   try { sent += await summaryDue(env, cfg, at); } catch (e) { console.log("summary", e && e.message); }
   if (hour >= cfg.report_reminder_hour) {
     const rows = ((await env.DB.prepare(
@@ -3439,7 +3600,9 @@ const MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS sent_log_at ON sent_log(at)",
   "ALTER TABLE notifications ADD COLUMN ics_json TEXT",
   "ALTER TABLE ushers ADD COLUMN installed_at INTEGER",
-  "ALTER TABLE events ADD COLUMN rule_id TEXT DEFAULT ''"
+  "ALTER TABLE events ADD COLUMN rule_id TEXT DEFAULT ''",
+  "CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT DEFAULT '', audience TEXT NOT NULL DEFAULT 'all', usher_ids TEXT DEFAULT '', send_at INTEGER, sent_at INTEGER, pinned_until TEXT DEFAULT '', created_by TEXT, created_at INTEGER)",
+  "CREATE INDEX IF NOT EXISTS messages_due ON messages(sent_at, send_at)"
 ];
 /* Changes made once, each remembered by name, on the audit like any other.
    A setting saved in Admin -> Settings replaces the whole default, so a rule
@@ -3604,7 +3767,9 @@ const ACTIONS = {
   "sent.list":              { fn: aSentList },
   "incharge.set":           { fn: aInChargeSet, write: true },
   "install.steps":          { fn: aInstallSteps, write: true },
-  "duty.cover":             { fn: aDutyCover, write: true }
+  "duty.cover":             { fn: aDutyCover, write: true },
+  "messages.list":          { fn: aMessageList },
+  "message.remind":         { fn: aMessageRemind, write: true }
 };
 
 async function handle(request, env, ctx) {

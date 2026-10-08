@@ -266,6 +266,11 @@
           h("span", { class: "grow" }, h("b", {}, "In charge today: " + j.inCharge.name)),
           j.inCharge.phone ? h("a", { class: "btn ghost", href: "tel:" + j.inCharge.phone }, "Call") : null)));
       }
+      /* Pinned by the Head Usher: it stays here until its date rather than
+         being found again in the notifications list. */
+      (j.pinned || []).forEach(function (m) {
+        parts.push(h("div", { class: "card" }, h("b", {}, m.title), m.body ? h("div", {}, m.body) : null));
+      });
       var q = C.queue();
       if (q.length) {
         parts.push(h("div", { class: "card" }, h("b", {}, "Saved on this phone. Not sent yet."),

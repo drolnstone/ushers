@@ -319,6 +319,23 @@ CREATE TABLE IF NOT EXISTS settings (
 /* WHAT WENT OUT. One row per batch of phone alerts or emails, so the Head
    Usher can see whether a message went and how many it reached, including a
    batch that reached nobody. No money figures here. */
+/* MESSAGES from Admin -> Message. Kept because a message can be scheduled,
+   pinned to Home for a while, and counted as read, none of which a
+   notification on its own can answer. */
+CREATE TABLE IF NOT EXISTS messages (
+  id            TEXT PRIMARY KEY,
+  title         TEXT NOT NULL,
+  body          TEXT DEFAULT '',
+  audience      TEXT NOT NULL DEFAULT 'all',  -- all | sunday | first | counters | admins | chosen
+  usher_ids     TEXT DEFAULT '',              -- for 'chosen', comma separated
+  send_at       INTEGER,                      -- when it should go (now, or later)
+  sent_at       INTEGER,                      -- when it went; empty while it waits
+  pinned_until  TEXT DEFAULT '',              -- London date it stays on Home until
+  created_by    TEXT,
+  created_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS messages_due ON messages(sent_at, send_at);
+
 CREATE TABLE IF NOT EXISTS sent_log (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   at           INTEGER NOT NULL,

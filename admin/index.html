@@ -776,18 +776,73 @@
   /* ---- message ---------------------------------------------------------- */
 
   function message() {
-    var title = h("input", { placeholder: "e.g. Ushers meeting after service" });
-    var body = h("textarea", { rows: "4", placeholder: "e.g. Please stay for ten minutes after the Second Service." });
-    var out = h("div");
-    show(h("h1", {}, "Message the ushers"), h("div", { class: "card" }, h("label", {}, "Title"), title, h("label", {}, "Message"), body, h("p"),
-      h("button", { onclick: function () {
-        C.clear(out);
-        C.send("notify.send", { all: true, title: title.value, body: body.value }, "Message: " + (title.value || "to all ushers")).then(function (x) {
-          out.appendChild(x.queued ? msg(x.message, "ok") : x.ok
-            ? msg("Sent to " + x.sent + ": " + x.phones + " phones, " + x.emails + " emails, " + x.unreachable + " unreachable.", "ok")
-            : msg(x.message, "bad"));
-        });
-      } }, "Send to all active ushers"), out));
+    loading();
+    Promise.all([C.api("messages.list"), activeUshers()]).then(function (r) {
+      var j = r[0], people = r[1];
+      var title = h("input", { placeholder: "e.g. Ushers meeting after service" });
+      var body = h("textarea", { rows: "4", placeholder: "e.g. Please stay for ten minutes after the Second Service." });
+      var out = h("div");
+      /* Who it is for is read when it goes, not when it is written, so a
+         message set for Sunday morning reaches whoever is on duty then. */
+      var who = h("select", {}, (j.audiences || []).map(function (x) { return h("option", { value: x.key }, x.label); }));
+      var chosen = {};
+      var picked = h("div", { class: "people", hidden: true }, people.map(function (u) {
+        return h("label", { class: "check" }, h("input", { type: "checkbox",
+          onchange: function (e) { chosen[u.usherId] = e.target.checked; } }), u.name);
+      }));
+      who.onchange = function () { picked.hidden = who.value !== "chosen"; };
+      var when = h("select", {}, h("option", { value: "" }, "Now"), h("option", { value: "later" }, "At a time I choose"));
+      var at = h("input", { type: "datetime-local" });
+      var atRow = h("div", { hidden: true }, h("label", {}, "When it goes"), at);
+      when.onchange = function () { atRow.hidden = when.value !== "later"; };
+      var pin = h("input", { type: "date" });
+      show(h("h1", {}, "Message the ushers"),
+        h("div", { class: "card" },
+          h("label", {}, "Title"), title, h("label", {}, "Message"), body,
+          h("label", {}, "Who it goes to"), who, picked,
+          h("label", {}, "When"), when, atRow,
+          h("label", {}, "Keep it on Home until (optional)"), pin, h("p"),
+          h("button", { onclick: function () {
+            C.clear(out);
+            var args = { title: title.value, body: body.value, audience: who.value, pinnedUntil: pin.value || "" };
+            if (who.value === "chosen") args.usherIds = Object.keys(chosen).filter(function (k) { return chosen[k]; });
+            if (when.value === "later") {
+              if (!at.value) return out.appendChild(msg("Choose when it goes.", "bad"));
+              args.sendAt = new Date(at.value).getTime();
+            }
+            C.send("notify.send", args, "Message: " + (title.value || "to the ushers")).then(function (x) {
+              out.appendChild(x.queued ? msg(x.message, "ok") : !x.ok ? msg(x.message, "bad")
+                : x.scheduled ? msg("Set for " + C.timeLabel(x.sendAt) + ", to " + x.audienceLabel + ".", "ok")
+                : msg("Sent to " + x.sent + " (" + x.audienceLabel + "): " + x.phones + " phones, " +
+                      x.emails + " emails, " + x.unreachable + " unreachable.", "ok"));
+              if (x.ok && !x.queued) setTimeout(message, 1200);
+            });
+          } }, "Send"), out),
+        messagesSoFar(j));
+    }, failed);
+  }
+
+  /* What has been sent, how many have read it, and the ones still waiting
+     to go. "Seen by" counts the people who opened it, not the phones it
+     reached. */
+  function messagesSoFar(j) {
+    if (!j.messages || !j.messages.length) return h("p", { class: "muted" }, "Nothing sent yet.");
+    return h("div", {}, h("h2", {}, "Sent and waiting"), j.messages.map(function (m) {
+      var out = h("div");
+      return h("div", { class: "card" },
+        h("div", { class: "row" }, h("b", { class: "grow" }, m.title),
+          m.sentAt ? h("span", { class: "chip" }, "Seen by " + m.seen + " of " + m.to)
+            : h("span", { class: "chip warn" }, "Goes " + C.timeLabel(m.sendAt))),
+        h("div", { class: "muted" }, "To " + m.audienceLabel + (m.by ? " · " + m.by : "") +
+          (m.pinnedUntil ? " · on Home until " + C.dateLabel(m.pinnedUntil) : "")),
+        m.body ? h("div", { class: "muted" }, m.body) : null,
+        m.sentAt && m.unseen ? h("button", { class: "ghost", onclick: function () {
+          C.clear(out);
+          C.api("message.remind", { id: m.id }).then(function (x) {
+            out.appendChild(x.ok ? msg("Reminded " + x.sent + ".", "ok") : msg(x.message, "bad"));
+          }, function () { out.appendChild(msg("No connection.", "bad")); });
+        } }, "Remind the " + m.unseen + " who have not read it") : null, out);
+    }));
   }
 
   /* ---- audit and settings ---------------------------------------------- */
