@@ -20,7 +20,7 @@
    Menu: Ushering > Set up the sheet (once), then Check everything.
    ========================================================================== */
 
-var SHEET_VERSION = "v0.3.1";
+var SHEET_VERSION = "v0.3.4";
 
 /* The tabs and the headers each starts with. A missing header is added at
    the end; a header is never renamed or moved by this script, and a column
@@ -72,6 +72,34 @@ function sendMail(o) {
   if (name && !m.name) m.name = name;
   if (reply && !m.replyTo) m.replyTo = reply;
   return MailApp.sendEmail(m);
+}
+
+/* A CALENDAR ENTRY for a duty email, so the duty lands in the usher's own
+   diary. Timed, never all-day: an all-day entry puts the alarm at midnight,
+   which is the lesson the Driver App learnt. The UID is the appointment, so
+   a re-send updates the same entry; METHOD:CANCEL takes it out again. */
+function icsFile(ics, name) {
+  if (!ics || !ics.uid || !ics.date || !ics.start) return null;
+  var day = String(ics.date).replace(/-/g, "");
+  var at = function (hhmm) { return day + "T" + String(hhmm).replace(":", "") + "00"; };
+  var method = ics.method === "CANCEL" ? "CANCEL" : "REQUEST";
+  var lines = [
+    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//RCCG Dominion Assembly//Ushering//EN",
+    "CALSCALE:GREGORIAN", "METHOD:" + method,
+    "BEGIN:VEVENT",
+    "UID:" + ics.uid,
+    "DTSTAMP:" + Utilities.formatDate(new Date(), "Europe/London", "yyyyMMdd'T'HHmmss"),
+    "SEQUENCE:" + (method === "CANCEL" ? 1 : 0),
+    "STATUS:" + (method === "CANCEL" ? "CANCELLED" : "CONFIRMED"),
+    "DTSTART;TZID=Europe/London:" + at(ics.start),
+    "DTEND;TZID=Europe/London:" + at(ics.end || ics.start),
+    "SUMMARY:" + String(ics.title || "Ushering duty").replace(/[\r\n]+/g, " ")
+  ];
+  if (method !== "CANCEL") {
+    lines = lines.concat(["BEGIN:VALARM", "TRIGGER:-P1D", "ACTION:DISPLAY", "DESCRIPTION:Ushering duty tomorrow", "END:VALARM"]);
+  }
+  lines = lines.concat(["END:VEVENT", "END:VCALENDAR"]);
+  return Utilities.newBlob(lines.join("\r\n") + "\r\n", "text/calendar", name || "duty.ics");
 }
 
 /* ---- header-driven access (reused from the Driver App) ------------------ */
@@ -286,7 +314,15 @@ function drain() {
              lapses. A row with no address is acknowledged and not counted. */
           try {
             if (r.row && r.row.to) {
-              sendMail({ to: r.row.to, subject: r.row.subject, body: r.row.body });
+              var m = { to: r.row.to, subject: r.row.subject, body: r.row.body };
+              var list = r.row.ics instanceof Array ? r.row.ics : [r.row.ics];
+              var files = list.map(function (ics, i) {
+                /* Two entries in one email need two names, or a mail client
+                   shows only the first. */
+                return icsFile(ics, list.length > 1 ? "duty-" + (i + 1) + ".ics" : "duty.ics");
+              }).filter(function (f) { return !!f; });
+              if (files.length) m.attachments = files;
+              sendMail(m);
               emailed++;
             }
             done.push(r.id);
@@ -396,40 +432,73 @@ function drainFromMenu() {
 }
 
 /* ✓ and ✗ lines, as the Driver App's health check. */
+/* CHECK EVERYTHING, in three blocks: what needs attention today, what is
+   still to do, and what is fine. Only the first block counts as a fault.
+   The people lines come from the server, which builds them from the same
+   queries it sends by, so the report cannot certify the silence it exists
+   to catch. */
 function healthLines() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet(), out = [];
-  out.push((prop("WORKER_URL") ? "✓" : "✗") + " WORKER_URL is set");
-  out.push((prop("SHEET_TOKEN") ? "✓" : "✗") + " SHEET_TOKEN is set");
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var bad = [], todo = [], fine = [];
+  (prop("WORKER_URL") ? fine : bad).push("WORKER_URL is set");
+  (prop("SHEET_TOKEN") ? fine : bad).push("SHEET_TOKEN is set");
   var have = tagged(ss), open = [];
   Object.keys(TABS).forEach(function (n) {
     var sh = ss.getSheetByName(n);
-    if (!sh) { out.push("✗ The " + n + " tab is missing"); return; }
+    if (!sh) { bad.push("The " + n + " tab is missing"); return; }
     if (!have[n]) open.push(n);
     var map = headerMap(sh);
     var missing = TABS[n].filter(function (h) { return !map[h]; });
-    if (missing.length) out.push("✗ " + n + " is missing " + missing.join(", "));
+    if (missing.length) bad.push(n + " is missing " + missing.join(", "));
   });
-  out.push(open.length ? "✗ Not protected: " + open.join(", ") : "✓ Every tab is protected");
+  if (open.length) bad.push("Not protected: " + open.join(", "));
+  else fine.push("Every tab is protected");
   if (prop("WORKER_URL") && prop("SHEET_TOKEN")) {
     try {
-      var res = UrlFetchApp.fetch(prop("WORKER_URL").replace(/\/+$/, "") + "/api/health", { muteHttpExceptions: true });
+      var res = UrlFetchApp.fetch(prop("WORKER_URL").replace(/\/+$/, "") + "/api/health",
+        { method: "post", contentType: "application/json", muteHttpExceptions: true,
+          payload: JSON.stringify({ sheetToken: prop("SHEET_TOKEN") }) });
       var h = JSON.parse(res.getContentText());
-      out.push("✓ The server answers (" + h.server + ")");
-      out.push((h.checks && h.checks.pinPepper ? "✓" : "✗") + " The server has PIN_PEPPER");
-      out.push((h.checks && h.checks.sheetToken ? "✓" : "✗") + " The server has SHEET_TOKEN");
-      out.push((h.checks && h.checks.sheetKnock ? "✓" : "✗") + " The server has SHEET_WEBAPP_URL, so it knocks after a save");
+      fine.push("The server answers (" + h.server + ")");
+      (h.checks && h.checks.pinPepper ? fine : bad).push("The server has PIN_PEPPER");
+      (h.checks && h.checks.sheetToken ? fine : bad).push("The server has SHEET_TOKEN");
+      (h.checks && h.checks.sheetKnock ? fine : bad).push("The server has SHEET_WEBAPP_URL, so it knocks after a save");
       var drained = h.checks ? Number(h.checks.sheetLastDrained) || 0 : 0;
-      out.push(drained ? "✓ The sheet last collected " + agoWords(drained) : "✗ The sheet has never collected from the server");
+      if (drained) fine.push("The sheet last collected " + agoWords(drained));
+      else bad.push("The sheet has never collected from the server");
       /* The Cron Trigger runs every five minutes, so a quarter of an hour
          without a tick means it has stopped. */
       var tick = h.checks ? Number(h.checks.clockLastTick) || 0 : 0;
-      out.push(!tick ? "✗ The server's clock has never run. Add the Cron Trigger to the Worker in Cloudflare" :
-        Date.now() - tick > 15 * 60000 ? "✗ The server's clock last ran " + agoWords(tick) + ". Check the Worker's Cron Trigger" :
-        "✓ The server's clock last ran " + agoWords(tick));
-      out.push("Waiting to come to the sheet: " + (h.checks ? h.checks.waitingForSheet : "?"));
-    } catch (err) { out.push("✗ The server did not answer"); }
+      if (!tick) bad.push("The server's clock has never run. Add the Cron Trigger to the Worker in Cloudflare");
+      else if (Date.now() - tick > 15 * 60000) bad.push("The server's clock last ran " + agoWords(tick) + ". Check the Worker's Cron Trigger");
+      else fine.push("The server's clock last ran " + agoWords(tick));
+      fine.push("Waiting to come to the sheet: " + (h.checks ? h.checks.waitingForSheet : "?"));
+      peopleLines(h.people, bad, todo, fine);
+    } catch (err) { bad.push("The server did not answer"); }
   }
-  return out;
+  var out = [];
+  if (bad.length) { out.push("NEEDS ATTENTION"); bad.forEach(function (l) { out.push("  ✗ " + l); }); }
+  if (todo.length) { out.push(bad.length ? "" : null); out.push("STILL TO DO"); todo.forEach(function (l) { out.push("  • " + l); }); }
+  if (fine.length) { out.push(""); out.push("FINE"); fine.forEach(function (l) { out.push("  ✓ " + l); }); }
+  if (!bad.length) out.unshift("Nothing needs attention.", "");
+  return out.filter(function (l) { return l !== null; });
+}
+
+/* The people the server named. Anyone nothing can reach, a short Sunday or
+   an overdue report needs attention now; alerts off and a default PIN are
+   for whenever there is time. */
+function peopleLines(people, bad, todo, fine) {
+  if (!people) return;
+  var names = function (list) { return (list || []).join(", "); };
+  if ((people.unreachable || []).length) bad.push("Nothing can reach: " + names(people.unreachable) + " (no phone alerts and no email)");
+  (people.sundayGaps || []).forEach(function (g) { bad.push("Sunday " + people.sunday + " is short — " + g); });
+  (people.reportsOverdue || []).forEach(function (r) { bad.push("Report still missing: " + r); });
+  if ((people.alertsOff || []).length) todo.push("No alerts yet for: " + names(people.alertsOff));
+  if ((people.defaultPin || []).length) todo.push("Still on the default PIN: " + names(people.defaultPin));
+  if ((people.notInstalled || []).length) todo.push("Ushers not on a phone yet for: " + names(people.notInstalled));
+  fine.push("Alerts on: " + people.alertsOn + " of " + people.ushers);
+  if (!(people.sundayGaps || []).length) fine.push("Sunday " + people.sunday + " is fully rostered");
+  if (!(people.reportsOverdue || []).length) fine.push("No reports outstanding");
 }
 
 /* "just now", "12 minutes ago", "3 hours ago", "2 days ago". */

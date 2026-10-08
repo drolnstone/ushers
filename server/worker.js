@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.7";
+const SERVER_VERSION = "w0.3.19";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -72,6 +72,7 @@ const DEFAULT_CONFIG = {
   countersign_roles: ["head_usher", "assistant_head_usher"],
   countersign_rostered: true,         // anyone on duty at that event may countersign
   self_approval: false,               // may an approver decide somebody else's request about themselves?
+  app_url: "https://drolnstone.github.io/ushers/",  // where the apps are; a link in every email
   church_name: "RCCG Dominion Assembly",
   church_place: "Liverpool - Ushering Department",
   role_permissions: null,             // null = ROLE_PERMISSIONS below
@@ -84,13 +85,32 @@ const DEFAULT_CONFIG = {
   pin_lock_minutes: 5,
   offline_signing: true,              // a report signed with no signal may be sent later
   offline_max_hours: 72,
+  /* Repeating events: the department's fixed patterns, as rules rather than
+     dates typed in one at a time. Each is
+     { id, title, type, rule, time, paused }, and `rule` is one of
+     "weekly:sat", "first-saturday", "nth-weekday:2:sun", "last-friday",
+     or "yearly:09:first-saturday". */
+  event_rules: [],
+  /* Extra reminders per kind of event, beyond the standard duty reminder:
+     { days: -6, hour: 12, role: "", paused: false }, where days is counted
+     from the event's own date (0 is the day itself) and role, when given,
+     narrows it to the people holding that role. */
+  reminder_patterns: {},
+  rules_months_ahead: 12,             // how far ahead a rule's events are made
+  release_late_days: 1,               // a "can't make it" this close to the day is marked late
+  summary_roles: ["head_usher", "assistant_head_usher"],   // who gets the monthly summary
+  summary_hour: 19,                   // London hour it goes, on the last Sunday of the month
+  install_reminder_dow: 3,            // Wednesday: the weekly nudge to install
   duty_reminder_days: [2],            // days before an event
   reminder_hour: 18,                  // London hour reminders go
   report_reminder_hour: 15,           // on the event day
+  quiet_from: 21,                     // London hour phone alerts go quiet (same as quiet_to = never quiet)
+  quiet_to: 8,                        // London hour they start again; what waited goes then
+  urgent_types: ["countersign_request", "approval_request"],  // still wake phones in quiet hours
   rota_weeks_ahead: 8,
   push_types: null,                   // null = every notification also goes to phones with alerts on
   unalerted_email_minutes: 60,       // someone with alerts on no phone is emailed what is still unread after this long (0 = never)
-  email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "report_filed", "dues_reminder", "admin_message"],
+  email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "report_filed", "dues_reminder", "admin_message", "duty", "duty_reminder", "install", "summary"],
   report_notify_roles: ["head_usher", "assistant_head_usher"]  // told of every report once it is filed
 };
 
@@ -328,23 +348,71 @@ function stAuthLog(env, usherId, what, detail) {
   return stOutbox(env, "AUTH_LOG", { LOG_ID: uuid(), AT: londonStamp(Date.now()), USHER_ID: usherId || "", EVENT: what, DETAIL: text(detail, 200) }, "LOG_ID");
 }
 
+/* The screen a notification belongs to. One place, used by the phone alert
+   and by the email, so a link in an email always opens what the push
+   opens. Looking costs nothing: a link only opens the app, and the PIN is
+   what acts. Nothing in a link acts, and no link carries a token. */
+function linkFor(n, isAdmin) {
+  if (n.ref_type === "report" && n.type === "report_filed" && isAdmin) return "admin/#report/" + n.ref_id;
+  if (n.ref_type === "report") return "#rep/" + n.ref_id;
+  if (n.ref_type === "authorisation") return "admin/#approvals";
+  if (n.ref_type === "event") return "#report/" + n.ref_id;
+  return "#notes";
+}
+
+/* The one-page guide to adding Ushers to a phone, shareable at onboarding. */
+function installGuide(cfg) {
+  const base = String(cfg.app_url || "").replace(/\/+$/, "");
+  return base ? base + "/install.html" : "";
+}
+
+/* The whole address of that screen, for an email. */
+function linkTo(cfg, n, isAdmin) {
+  const base = String(cfg.app_url || "").replace(/\/+$/, "");
+  if (!base) return "";
+  return base + "/" + linkFor(n, isAdmin);
+}
+
+/* A calendar entry for a duty email, so the duty lands in the usher's own
+   diary. uid is the appointment, so a re-send updates the entry rather than
+   adding a second one; method CANCEL takes it out again. Nothing is made
+   for an event with no start time. */
+function icsFor(e, appointmentId, duty, method) {
+  if (!e || !e.start_time || !appointmentId) return null;
+  const mins = Number(String(e.start_time).slice(0, 2)) * 60 + Number(String(e.start_time).slice(3, 5));
+  const end = p2(Math.floor((mins + 120) / 60) % 24) + ":" + p2((mins + 120) % 60);
+  return {
+    uid: "ap-" + appointmentId + "@ushers",
+    date: e.date, start: e.start_time, end: end,
+    title: e.title + (duty === "counting" ? " — offering counting" : " — ushering"),
+    method: method || "REQUEST"
+  };
+}
+
 /* A notification, its sheet row, and an email when the type is important
-   and the person has an address. */
-function stNotify(env, cfg, usher, type, title, body, refType, refId, dedupe) {
+   and the person has an address. isAdmin: the person holds admin.app, so
+   an emailed link opens the Admin App's screen. ics: a calendar entry
+   attached to that email. */
+function stNotify(env, cfg, usher, type, title, body, refType, refId, dedupe, isAdmin, ics) {
   if (!usher) return [];
   const id = uuid(), at = Date.now();
   const email = cfg.email_types.indexOf(type) !== -1 && usher.email ? 1 : 0;
   const out = [
     env.DB.prepare(
-      "INSERT INTO notifications (id, usher_id, type, title, body, ref_type, ref_id, created_at, emailed, dedupe) VALUES (?,?,?,?,?,?,?,?,?,?)"
-    ).bind(id, usher.id, type, text(title, 140), text(body, 1000), refType || "", String(refId || ""), at, email, dedupe || null),
+      "INSERT INTO notifications (id, usher_id, type, title, body, ref_type, ref_id, created_at, emailed, dedupe, ics_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+    ).bind(id, usher.id, type, text(title, 140), text(body, 1000), refType || "", String(refId || ""), at, email, dedupe || null,
+           ics ? JSON.stringify(ics) : null),
     stOutbox(env, "NOTIFICATIONS", {
       NOTIFICATION_ID: id, USHER_ID: usher.id, FULL_NAME: usher.full_name, TYPE: type, TITLE: text(title, 140),
       REF_TYPE: refType || "", REF_ID: String(refId || ""), CREATED_AT: londonStamp(at)
     }, "NOTIFICATION_ID")
   ];
   if (email) {
-    out.push(stOutbox(env, "@email", { to: usher.email, subject: text(title, 140), body: text(body, 1000) }));
+    const link = linkTo(cfg, { type, ref_type: refType || "", ref_id: String(refId || "") }, isAdmin);
+    const row = { to: usher.email, subject: text(title, 140),
+      body: text(body, 1000) + (link ? "\n\nOpen: " + link : "") };
+    if (ics) row.ics = ics;
+    out.push(stOutbox(env, "@email", row));
   }
   return out;
 }
@@ -429,7 +497,8 @@ async function stReportFiled(env, cfg, rec, e, title, lead, skip) {
   const st = [];
   for (const u of (r.results || [])) {
     if ((skip || []).indexOf(u.id) !== -1) continue;
-    st.push(stNotify(env, cfg, u, "report_filed", title + ": " + e.title + " " + ukDate(e.date), body, "report", rec.id));
+    /* They hold admin.app, so the link opens the Admin App's copy. */
+    st.push(stNotify(env, cfg, u, "report_filed", title + ": " + e.title + " " + ukDate(e.date), body, "report", rec.id, null, true));
   }
   return st;
 }
@@ -631,8 +700,15 @@ async function aLogout(env, cfg, b, me) {
 async function aMe(env, cfg, b, me) {
   let pushKey = "";
   try { pushKey = (await vapidKeys(env)).pub; } catch (e) {}
+  /* The app says whether it is running from the Home Screen. Once true for
+     any phone it stays true: the question is whether this person has ever
+     got as far as installing it, not what they are holding now. */
+  if (b.installed && !me.usher.installed_at) {
+    try { await env.DB.prepare("UPDATE ushers SET installed_at=? WHERE id=? AND installed_at IS NULL").bind(Date.now(), me.usher.id).run(); } catch (e) {}
+  }
   const alerts = await env.DB.prepare("SELECT count(*) AS n FROM push_subs WHERE usher_id=?").bind(me.usher.id).first();
-  return { ok: true, me: meView(me), config: publicConfig(cfg), today: londonKey(new Date()), pushKey, alertPhones: alerts ? alerts.n : 0 };
+  return { ok: true, me: meView(me), config: publicConfig(cfg), today: londonKey(new Date()), pushKey,
+           alertPhones: alerts ? alerts.n : 0, installGuide: installGuide(cfg) };
 }
 
 function publicConfig(cfg) {
@@ -704,6 +780,179 @@ function eventRow(e) {
 }
 
 /* A Sunday is one event per Sunday type, all sharing the Sunday's date. */
+/* ==========================================================================
+   REPEATING EVENTS — the department's fixed patterns as rules, the way
+   Thanksgiving Sunday already is. A rule's events carry its id, so changing
+   the rule moves the ones still to come and leaves the past alone.
+   ========================================================================== */
+
+const DOW_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const DOW_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const NTH_WORDS = ["", "first", "second", "third", "fourth", "fifth"];
+
+/* The nth (1 to 5) given weekday of a month, or the last one with nth 0.
+   Returns "" when the month has no fifth one. */
+function nthWeekdayOf(year, month, dow, nth) {
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const days = [];
+  for (let d = 1; d <= last; d++) {
+    if (new Date(Date.UTC(year, month - 1, d)).getUTCDay() === dow) days.push(d);
+  }
+  const d = nth === 0 ? days[days.length - 1] : days[nth - 1];
+  if (!d) return "";
+  return year + "-" + (month < 10 ? "0" : "") + month + "-" + (d < 10 ? "0" : "") + d;
+}
+
+/* A rule in words, for Settings and for an event's title. "" when the rule
+   makes no sense, which is how aConfigSet refuses one. */
+function ruleWords(rule) {
+  const r = String(rule || "").toLowerCase();
+  let m = /^weekly:([a-z]{3})$/.exec(r);
+  if (m && DOW_KEYS.indexOf(m[1]) !== -1) return "every " + DOW_NAMES[DOW_KEYS.indexOf(m[1])];
+  m = /^(first|second|third|fourth|fifth|last)-([a-z]+)$/.exec(r);
+  if (m) {
+    const dow = DOW_NAMES.findIndex((n) => n.toLowerCase() === m[2]);
+    if (dow !== -1) return "the " + m[1] + " " + DOW_NAMES[dow] + " of each month";
+  }
+  m = /^nth-weekday:([0-5]):([a-z]{3})$/.exec(r);
+  if (m && DOW_KEYS.indexOf(m[2]) !== -1) {
+    const n = Number(m[1]);
+    return "the " + (n === 0 ? "last" : NTH_WORDS[n]) + " " + DOW_NAMES[DOW_KEYS.indexOf(m[2])] + " of each month";
+  }
+  m = /^yearly:(\d{2}):(first|second|third|fourth|fifth|last)-([a-z]+)$/.exec(r);
+  if (m) {
+    const month = Number(m[1]);
+    const dow = DOW_NAMES.findIndex((n) => n.toLowerCase() === m[3]);
+    if (month >= 1 && month <= 12 && dow !== -1) {
+      return "the " + m[2] + " " + DOW_NAMES[dow] + " of " + monthName(m[1] === "01" ? "2026-01" : "2026-" + m[1]).split(" ")[0] + ", each year";
+    }
+  }
+  return "";
+}
+
+/* Every date a rule falls on between two keys, inclusive. */
+function ruleDates(rule, fromKey, toKey) {
+  const r = String(rule || "").toLowerCase();
+  const out = [];
+  const add = (k) => { if (k && k >= fromKey && k <= toKey) out.push(k); };
+  let m = /^weekly:([a-z]{3})$/.exec(r);
+  if (m) {
+    const dow = DOW_KEYS.indexOf(m[1]);
+    if (dow === -1) return out;
+    let k = fromKey;
+    k = keyAddDays(k, (dow - keyDow(k) + 7) % 7);
+    while (k <= toKey) { out.push(k); k = keyAddDays(k, 7); }
+    return out;
+  }
+  const monthly = /^(first|second|third|fourth|fifth|last)-([a-z]+)$/.exec(r);
+  const nth = /^nth-weekday:([0-5]):([a-z]{3})$/.exec(r);
+  const yearly = /^yearly:(\d{2}):(first|second|third|fourth|fifth|last)-([a-z]+)$/.exec(r);
+  let dow = -1, n = -1, onlyMonth = 0;
+  if (monthly) {
+    dow = DOW_NAMES.findIndex((x) => x.toLowerCase() === monthly[2]);
+    n = monthly[1] === "last" ? 0 : NTH_WORDS.indexOf(monthly[1]);
+  } else if (nth) {
+    dow = DOW_KEYS.indexOf(nth[2]);
+    n = Number(nth[1]);
+  } else if (yearly) {
+    dow = DOW_NAMES.findIndex((x) => x.toLowerCase() === yearly[3]);
+    n = yearly[2] === "last" ? 0 : NTH_WORDS.indexOf(yearly[2]);
+    onlyMonth = Number(yearly[1]);
+  } else return out;
+  if (dow === -1 || n === -1) return out;
+  let y = Number(fromKey.slice(0, 4)), mo = Number(fromKey.slice(5, 7));
+  const endY = Number(toKey.slice(0, 4)), endM = Number(toKey.slice(5, 7));
+  while (y < endY || (y === endY && mo <= endM)) {
+    if (!onlyMonth || mo === onlyMonth) add(nthWeekdayOf(y, mo, dow, n));
+    mo++;
+    if (mo > 12) { mo = 1; y++; }
+  }
+  return out;
+}
+
+/* The events a rule calls for, made once and then left alone, with the
+   rule's own id on each so the rule can move the ones still to come. */
+async function ensureRuleEvents(env, cfg, actorId, todayKey) {
+  const today = todayKey || londonKey(new Date());
+  const to = keyAddDays(today, Math.round(30.5 * (Number(cfg.rules_months_ahead) || 12)));
+  const st = [];
+  let made = 0;
+  for (const rule of (Array.isArray(cfg.event_rules) ? cfg.event_rules : [])) {
+    if (!rule || !rule.id || rule.paused) continue;
+    const type = cfg.event_types[rule.type] ? rule.type : "";
+    if (!type || !ruleWords(rule.rule)) continue;
+    for (const date of ruleDates(rule.rule, today, to)) {
+      const id = "R" + String(rule.id).toUpperCase().replace(/[^A-Z0-9]/g, "") + "-" + date.replace(/-/g, "");
+      const title = text(rule.title || cfg.event_types[type].label, 120);
+      const start = text(rule.time || cfg.event_types[type].start || "", 5);
+      const now = Date.now();
+      const r = await env.DB.prepare(
+        "INSERT OR IGNORE INTO events (id, type, title, date, start_time, sunday_key, thanksgiving, status, rule_id, created_by, created_at, updated_at) " +
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+      ).bind(id, type, title, date, start, "", 0, "scheduled", String(rule.id), actorId || "system", now, now).run();
+      if (r.meta && r.meta.changes) {
+        made++;
+        st.push(stOutbox(env, "EVENTS", eventRow({ id, type, title, date, start_time: start, sunday_key: "", thanksgiving: 0, status: "scheduled", updated_at: now }), "EVENT_ID"));
+      }
+    }
+  }
+  await run(env, st);
+  return made;
+}
+
+/* A rule changed in Settings: its events still to come follow the new
+   title and time, and anything it no longer calls for is cancelled. The
+   past is never touched. */
+async function applyRuleChanges(env, cfg, actorId) {
+  const today = londonKey(new Date());
+  const st = [];
+  const names = {};
+  for (const rule of (Array.isArray(cfg.event_rules) ? cfg.event_rules : [])) {
+    if (!rule || !rule.id) continue;
+    const type = cfg.event_types[rule.type] ? rule.type : "";
+    const title = text(rule.title || (type ? cfg.event_types[type].label : ""), 120);
+    const start = text(rule.time || (type ? cfg.event_types[type].start : "") || "", 5);
+    const wanted = rule.paused || !type || !ruleWords(rule.rule) ? []
+      : ruleDates(rule.rule, today, keyAddDays(today, Math.round(30.5 * (Number(cfg.rules_months_ahead) || 12))));
+    const rows = ((await env.DB.prepare(
+      "SELECT * FROM events WHERE rule_id=? AND date>=?").bind(String(rule.id), today).all()).results) || [];
+    for (const e of rows) {
+      const now = Date.now();
+      const off = wanted.indexOf(e.date) === -1;
+      if (off !== (e.status === "cancelled")) {
+        /* Off the pattern, or back on it. Anybody already on duty is told,
+           as they are for any other cancellation. */
+        const status = off ? "cancelled" : "scheduled";
+        st.push(env.DB.prepare("UPDATE events SET status=?, updated_at=? WHERE id=?").bind(status, now, e.id));
+        st.push(stOutbox(env, "EVENTS", eventRow(Object.assign({}, e, { status, updated_at: now })), "EVENT_ID"));
+        st.push(stAudit(env, actorId || "system", off ? "event.cancel" : "event.restore", "event", e.id,
+          { status: e.status }, { status }, off ? "The rule no longer calls for it" : "The rule calls for it again"));
+        if (e.date >= today) {
+          const on = ((await env.DB.prepare(
+            "SELECT u.* FROM appointments a JOIN ushers u ON u.id=a.usher_id WHERE a.event_id=? AND a.status='active' AND u.active=1"
+          ).bind(e.id).all()).results) || [];
+          for (const u of on) {
+            st.push(off
+              ? stNotify(env, cfg, u, "duty", "Cancelled: " + e.title, e.title + " on " + ukDate(e.date) + " will not take place.",
+                  "event", e.id, null, false, icsFor(e, "rule-" + e.id, "ushering", "CANCEL"))
+              : stNotify(env, cfg, u, "duty", "Back on: " + e.title, e.title + " on " + ukDate(e.date) + ". You are on duty again.",
+                  "event", e.id, null, false, icsFor(e, "rule-" + e.id, "ushering", "REQUEST")));
+          }
+        }
+      } else if (!off && (e.title !== title || (e.start_time || "") !== start)) {
+        st.push(env.DB.prepare("UPDATE events SET title=?, start_time=?, updated_at=? WHERE id=?").bind(title, start, now, e.id));
+        st.push(stOutbox(env, "EVENTS", eventRow(Object.assign({}, e, { title, start_time: start, updated_at: now })), "EVENT_ID"));
+        st.push(stAudit(env, actorId || "system", "event.update", "event", e.id,
+          { title: e.title, start: e.start_time }, { title, start }, "Changed with the rule"));
+      }
+    }
+    names[rule.id] = title;
+  }
+  await run(env, st);
+  await ensureRuleEvents(env, cfg, actorId);
+  return st.length;
+}
+
 async function ensureSunday(env, cfg, key, actorId) {
   if (!validKey(key) || keyDow(key) !== 0) fail(400, "not_sunday", "That date is not a Sunday.");
   const thanks = isThanksgiving(cfg, key) ? 1 : 0;
@@ -769,6 +1018,7 @@ async function aRota(env, cfg, b, me) {
   const edit = me.perms.has("rota.manage");
   if (edit) {
     for (let k = sundayOnOrAfter(from), i = 0; i < weeks; k = keyAddDays(k, 7), i++) await ensureSunday(env, cfg, k, me.usher.id);
+    await ensureRuleEvents(env, cfg, me.usher.id);
   }
   return Object.assign({ ok: true, canEdit: edit }, await rotaWindow(env, cfg, from, weeks, me, edit));
 }
@@ -809,11 +1059,18 @@ async function aRotaSet(env, cfg, b, me) {
   const now = Date.now(), st = [];
   const usherOf = {};
   for (const id of ids) usherOf[id] = await getUsher(env, id);
+  /* Someone taken off a duty still to come is told, so they do not turn up. */
+  const tell = e.status !== "cancelled" && e.date >= londonKey(new Date());
   for (const a of current) {
     if (ids.indexOf(a.usher_id) !== -1) continue;
     st.push(env.DB.prepare("UPDATE appointments SET status='removed', removed_by=?, removed_at=? WHERE id=?").bind(me.usher.id, now, a.id));
     st.push(stAudit(env, me.usher.id, "appointment.remove", "appointment", a.id, { event: e.id, usher: a.usher_id, duty }, null, text(b.reason, 200)));
     st.push(stOutbox(env, "APPOINTMENTS", apptRow(Object.assign({}, a, { status: "removed" }), e, names[a.usher_id] || "", me.usher.id), "APPOINTMENT_ID"));
+    if (tell) {
+      st.push(stNotify(env, cfg, await getUsher(env, a.usher_id), "duty", "You are no longer on duty: " + e.title,
+        e.title + " on " + ukDate(e.date) + ". You have been taken off " + (duty === "counting" ? "offering counting." : "ushering."), "event", e.id,
+        null, false, icsFor(e, a.id, duty, "CANCEL")));
+    }
   }
   const have = current.map((a) => a.usher_id);
   for (const id of ids) {
@@ -824,7 +1081,8 @@ async function aRotaSet(env, cfg, b, me) {
     st.push(stAudit(env, me.usher.id, "appointment.add", "appointment", a.id, null, { event: e.id, usher: id, duty }, text(b.reason, 200)));
     st.push(stOutbox(env, "APPOINTMENTS", apptRow(a, e, names[id] || "", me.usher.id), "APPOINTMENT_ID"));
     st.push(stNotify(env, cfg, usherOf[id], "duty", "You are on duty: " + e.title,
-      e.title + " on " + ukDate(e.date) + (duty === "counting" ? ", offering counting." : ", ushering."), "event", e.id));
+      e.title + " on " + ukDate(e.date) + (duty === "counting" ? ", offering counting." : ", ushering."), "event", e.id,
+      null, false, icsFor(e, a.id, duty)));
   }
   await run(env, st);
   return { ok: true };
@@ -871,11 +1129,28 @@ async function aEventCancel(env, cfg, b, me) {
   need(me, "events.manage");
   const e = await getEvent(env, b.eventId);
   const after = Object.assign({}, e, { status: b.restore ? "scheduled" : "cancelled", updated_at: Date.now() });
-  await run(env, [
+  const st = [
     env.DB.prepare("UPDATE events SET status=?, updated_at=? WHERE id=?").bind(after.status, after.updated_at, e.id),
     stAudit(env, me.usher.id, b.restore ? "event.restore" : "event.cancel", "event", e.id, { status: e.status }, { status: after.status }, text(b.reason, 200)),
     stOutbox(env, "EVENTS", eventRow(after), "EVENT_ID")
-  ]);
+  ];
+  /* Everyone on duty is told the event is off, or back on, once each, for
+     an event today or later. Nothing is said when nothing changed. */
+  if (after.status !== e.status && e.date >= londonKey(new Date())) {
+    const told = {};
+    for (const a of await activeAppointments(env, [e.id])) {
+      if (told[a.usher_id]) continue;
+      told[a.usher_id] = 1;
+      const u = await getUsher(env, a.usher_id);
+      if (!u || !u.active) continue;
+      st.push(b.restore
+        ? stNotify(env, cfg, u, "duty", "Back on: " + e.title, e.title + " on " + ukDate(e.date) + ". You are on duty again.", "event", e.id,
+            null, false, icsFor(e, a.id, a.duty))
+        : stNotify(env, cfg, u, "duty", "Cancelled: " + e.title, e.title + " on " + ukDate(e.date) + " will not take place.", "event", e.id,
+            null, false, icsFor(e, a.id, a.duty, "CANCEL")));
+    }
+  }
+  await run(env, st);
   return { ok: true };
 }
 
@@ -891,7 +1166,8 @@ const AUTH_KIND_LABELS = {
   countersign: "Countersign a report",
   report_submission: "Submit a report",
   report_amendment: "Amend a report",
-  duty_takeover: "Duty change"
+  duty_takeover: "Duty change",
+  duty_release: "Can't make a duty"
 };
 
 function authRow(a, names) {
@@ -949,7 +1225,7 @@ async function authRequest(env, cfg, o) {
   for (const u of approvers) {
     if (!cfg.self_approval && (u.id === o.requestedBy || u.id === o.subjectId)) continue;
     st.push(stNotify(env, cfg, u, "approval_request", "Approval needed: " + AUTH_KIND_LABELS[a.kind],
-      o.describe || (names[a.subject_id] + " needs approval."), "authorisation", id));
+      o.describe || (names[a.subject_id] + " needs approval."), "authorisation", id, null, true));
   }
   return { id, statements: st, status: "pending" };
 }
@@ -985,7 +1261,51 @@ async function authEffects(env, cfg, a, decider, names, opt) {
     st.push(env.DB.prepare("UPDATE authorisations SET status='consumed', consumed_at=? WHERE id=?").bind(now, a.id));
     after.status = "consumed"; after.consumed_at = now;
   }
+  if (a.kind === "duty_release") {
+    /* Let off the duty. With a cover named, the duty moves and both people
+       are told. Without one, the appointment is released and the request
+       stays approved, cover to be arranged: the name stays on the record so
+       it can be undone, and the duty shows as a gap because reminders and
+       counts read the status, not the name. */
+    const ap = await env.DB.prepare("SELECT * FROM appointments WHERE id=?").bind(a.target_id).first();
+    const cover = opt && opt.coverId ? await getUsher(env, opt.coverId) : null;
+    if (ap && ap.status === "active") {
+      const e = await getEvent(env, ap.event_id);
+      st.push(env.DB.prepare("UPDATE appointments SET status='released', removed_by=?, removed_at=? WHERE id=? AND status='active'")
+        .bind(decider.id, now, ap.id));
+      st.push(stOutbox(env, "APPOINTMENTS", apptRow(Object.assign({}, ap, { status: "released" }), e, names[ap.usher_id] || "", decider.id), "APPOINTMENT_ID"));
+      st.push(stAudit(env, decider.id, "appointment.release", "appointment", ap.id,
+        { usher: ap.usher_id, status: "active" }, { status: "released", cover: cover ? cover.id : "" }, "Authorisation " + a.id));
+      st.push(stNotify(env, cfg, await getUsher(env, ap.usher_id), "duty",
+        "You are off duty: " + e.title, e.title + " on " + ukDate(e.date) + ". " +
+        (cover ? names[cover.id] + " is covering it." : "A replacement is still to be arranged."), "event", e.id, null, false,
+        icsFor(e, ap.id, ap.duty, "CANCEL")));
+      if (cover) st.push(await coverStatements(env, cfg, e, ap, cover, decider, names, a.id));
+    }
+    if (cover) {
+      st.push(env.DB.prepare("UPDATE authorisations SET status='consumed', consumed_at=? WHERE id=?").bind(now, a.id));
+      after.status = "consumed"; after.consumed_at = now;
+    }
+  }
   return { statements: st, after };
+}
+
+/* The cover's own appointment and their notice, whether the cover is named
+   when the release is approved or arranged afterwards. */
+async function coverStatements(env, cfg, e, ap, cover, decider, names, authId) {
+  const now = Date.now();
+  const id = await nextId(env, "appointment", "AP", 5);
+  return [
+    env.DB.prepare("INSERT INTO appointments (id, event_id, usher_id, duty, status, created_by, created_at) VALUES (?,?,?,?,?,?,?)")
+      .bind(id, e.id, cover.id, ap.duty, "active", decider.id, now),
+    stOutbox(env, "APPOINTMENTS", apptRow({ id, usher_id: cover.id, duty: ap.duty, status: "active" }, e, cover.full_name, decider.id), "APPOINTMENT_ID"),
+    stAudit(env, decider.id, "appointment.cover", "appointment", id,
+      { released: ap.id, usher: ap.usher_id }, { usher: cover.id }, "Authorisation " + authId),
+    stNotify(env, cfg, cover, "duty", "You are on duty: " + e.title,
+      e.title + " on " + ukDate(e.date) + ", covering for " + (names[ap.usher_id] || "another usher") +
+      ". " + (ap.duty === "counting" ? "Offering counting." : "Ushering."), "event", e.id, null, false,
+      icsFor(e, id, ap.duty, "REQUEST"))
+  ];
 }
 
 /* A request that no longer applies. The approvers' "Approval needed" for it
@@ -1011,6 +1331,22 @@ function stConsume(env, a, names) {
   ];
 }
 
+/* Who could cover a released duty, in the order the coordinator thinks:
+   everybody active, marked if they are already on something that day and
+   with the last date they served, so a name is not picked blind. */
+async function coverChoices(env, appointmentId) {
+  const ap = await env.DB.prepare(
+    "SELECT a.*, e.date FROM appointments a JOIN events e ON e.id=a.event_id WHERE a.id=?").bind(appointmentId).first();
+  if (!ap) return [];
+  const rows = ((await env.DB.prepare(
+    "SELECT u.id, u.full_name, " +
+    "(SELECT count(*) FROM appointments x JOIN events ex ON ex.id=x.event_id WHERE x.usher_id=u.id AND x.status='active' AND ex.date=?) AS thatDay, " +
+    "(SELECT max(ex.date) FROM appointments x JOIN events ex ON ex.id=x.event_id WHERE x.usher_id=u.id AND x.status='active' AND ex.date<=?) AS lastServed " +
+    "FROM ushers u WHERE u.active=1 AND u.id<>? ORDER BY u.full_name COLLATE NOCASE"
+  ).bind(ap.date, londonKey(new Date()), ap.usher_id).all()).results) || [];
+  return rows.map((u) => ({ usherId: u.id, name: u.full_name, onDutyThatDay: !!u.thatDay, lastServed: u.lastServed || "" }));
+}
+
 async function aAuthList(env, cfg, b, me) {
   const mine = !me.perms.has("exceptions.approve") || b.mine;
   const status = ["pending", "approved", "rejected", "consumed", "cancelled"].indexOf(b.status) !== -1 ? b.status : "";
@@ -1030,6 +1366,10 @@ async function aAuthList(env, cfg, b, me) {
                  (cfg.self_approval || (a.requested_by !== me.usher.id && a.subject_id !== me.usher.id))
     };
     v.about = await authAbout(env, a, names);
+    if (a.kind === "duty_release" && (a.status === "pending" || a.status === "approved") && me.perms.has("rota.manage")) {
+      v.cover = await coverChoices(env, a.target_id);
+      v.needsCover = a.status === "approved";
+    }
     out.push(v);
   }
   return { ok: true, authorisations: out };
@@ -1079,6 +1419,24 @@ async function aAuthRequest(env, cfg, b, me) {
     await run(env, req.statements);
     return { ok: true, authorisationId: req.id, status: req.status };
   }
+  if (kind === "duty_release") {
+    const ap = await env.DB.prepare("SELECT * FROM appointments WHERE id=? AND status='active'").bind(text(b.appointmentId, 20)).first();
+    if (!ap) fail(404, "no_appointment", "That duty was not found.");
+    if (ap.usher_id !== me.usher.id) fail(403, "not_yours", "That duty is not yours.");
+    if (reason.length < 3) fail(400, "reason", "Say why you cannot make it.");
+    const e = await getEvent(env, ap.event_id);
+    const names = await namesMap(env);
+    /* No cut-off: a late one is still asked for, and marked late so the
+       coordinator can see it came in at the last minute. */
+    const late = e.date <= keyAddDays(londonKey(new Date()), cfg.release_late_days);
+    const suggested = b.suggestId ? await getUsher(env, text(b.suggestId, 20)) : null;
+    const req = await authRequest(env, cfg, { kind, subjectId: me.usher.id, targetType: "appointment", targetId: ap.id, me,
+      requestedBy: me.usher.id, reason: (late ? "Late. " : "") + reason + (suggested ? " Suggests " + suggested.full_name + "." : ""),
+      describe: (late ? "Late request. " : "") + me.usher.full_name + " cannot make " + e.title + " on " + ukDate(e.date) +
+        ". Reason: " + reason + (suggested ? " They suggest " + suggested.full_name + ", who has not been asked." : "") });
+    await run(env, req.statements);
+    return { ok: true, authorisationId: req.id, status: req.status, late };
+  }
   if (kind === "duty_takeover") {
     const ap = await env.DB.prepare("SELECT * FROM appointments WHERE id=? AND status='active'").bind(text(b.appointmentId, 20)).first();
     if (!ap) fail(404, "no_appointment", "That duty was not found.");
@@ -1095,6 +1453,30 @@ async function aAuthRequest(env, cfg, b, me) {
     return { ok: true, authorisationId: req.id, status: req.status };
   }
   fail(400, "kind", "Unknown request.");
+}
+
+/* Cover arranged after the release was approved: the gap is filled, the
+   request is finished, and both people are told. */
+async function aDutyCover(env, cfg, b, me) {
+  need(me, "rota.manage");
+  const a = await env.DB.prepare("SELECT * FROM authorisations WHERE id=? AND kind='duty_release'").bind(text(b.id, 20)).first();
+  if (!a) fail(404, "no_authorisation", "That request was not found.");
+  if (a.status !== "approved") fail(409, "not_approved", a.status === "consumed" ? "That duty is covered already." : "That request has not been approved.");
+  const ap = await env.DB.prepare("SELECT * FROM appointments WHERE id=?").bind(a.target_id).first();
+  if (!ap) fail(404, "no_appointment", "That duty was not found.");
+  const cover = await getUsher(env, text(b.coverId, 20));
+  if (!cover || !cover.active) fail(400, "cover", "Choose somebody from the list.");
+  if (cover.id === a.subject_id) fail(400, "cover", "Choose somebody else to cover it.");
+  await verifyPin(env, cfg, me.usher, b.pin);
+  const e = await getEvent(env, ap.event_id);
+  const names = await namesMap(env), now = Date.now();
+  const st = [await coverStatements(env, cfg, e, ap, cover, me.usher, names, a.id)];
+  st.push(stNotify(env, cfg, await getUsher(env, a.subject_id), "approval_decision", "Covered: " + e.title + " " + ukDate(e.date),
+    cover.full_name + " is covering that duty.", "event", e.id));
+  st.push(env.DB.prepare("UPDATE authorisations SET status='consumed', consumed_at=? WHERE id=? AND status='approved'").bind(now, a.id));
+  st.push(stOutbox(env, "AUTHORISATIONS", authRow(Object.assign({}, a, { status: "consumed", consumed_at: now }), names), "AUTH_ID"));
+  await run(env, st);
+  return { ok: true, cover: cover.full_name };
 }
 
 async function aAuthDecide(env, cfg, b, me) {
@@ -1125,15 +1507,36 @@ async function aAuthDecide(env, cfg, b, me) {
   /* A chosen countersigner hears once: "Please countersign" when approved
      (from authEffects). If not approved, the submitter chooses again. */
   if (a.kind !== "countersign") {
+    let body = approve ? "You can go ahead." : "Reason: " + (after.decision_note || "none given");
+    if (a.kind === "duty_release") {
+      /* Only the person who asked is told, whatever the answer: a suggested
+         cover was never asked, so a refusal reaches nobody else. And they
+         are told they are still on duty only if the rota still says so. */
+      if (approve) body = "You are off that duty.";
+      else {
+        const still = await env.DB.prepare("SELECT status FROM appointments WHERE id=?").bind(a.target_id).first();
+        body = "Reason: " + (after.decision_note || "none given") +
+               (still && still.status === "active" ? " You are still on duty." : "");
+      }
+    }
     st.push(stNotify(env, cfg, subject, "approval_decision", (approve ? "Approved: " : "Not approved: ") + what,
-      approve ? "You can go ahead." : "Reason: " + (after.decision_note || "none given"), a.target_type, a.target_id));
+      body, a.target_type, a.target_id));
   }
   if (requester) {
     st.push(stNotify(env, cfg, requester, "approval_decision", (approve ? "Approved: " : "Not approved: ") + what,
       approve ? names[a.subject_id] + " has been approved." : "Choose somebody else or ask the coordinator." + (after.decision_note ? " Reason: " + after.decision_note : ""), a.target_type, a.target_id));
   }
   if (approve) {
-    const fx = await authEffects(env, cfg, after, me.usher, names, { about });
+    /* A release may be approved with the cover named there and then, or
+       approved on its own and covered later. */
+    let coverId = "";
+    if (a.kind === "duty_release" && b.coverId) {
+      const c = await getUsher(env, text(b.coverId, 20));
+      if (!c || !c.active) fail(400, "cover", "Choose somebody from the list.");
+      if (c.id === a.subject_id) fail(400, "cover", "Choose somebody else to cover it.");
+      coverId = c.id;
+    }
+    const fx = await authEffects(env, cfg, after, me.usher, names, { about, coverId });
     st.push(fx.statements);
     Object.assign(after, fx.after);
   }
@@ -1731,6 +2134,68 @@ async function aSelectable(env, cfg, b, me) {
    HOME, HISTORY, NOTIFICATIONS — the ordinary usher
    ========================================================================== */
 
+/* ==========================================================================
+   IN CHARGE TODAY — the name an usher goes to when the Head Usher is away.
+   A contact line and nothing else: it grants no permission, so the person
+   in charge approves only what their own roles already allow.
+   ========================================================================== */
+
+/* Who is in charge, as the apps show it: the saved name while it stands,
+   the Head Usher otherwise. "Today only" lapses at midnight London, so the
+   saved row is read against today's date rather than cleared by a clock. */
+async function inChargeNow(env, cfg) {
+  const today = londonKey(new Date());
+  let saved = null;
+  try { saved = JSON.parse(await setting(env, "in_charge") || "null"); } catch (e) { saved = null; }
+  if (saved && saved.usherId && (!saved.until || saved.until >= today)) {
+    const u = await getUsher(env, saved.usherId);
+    if (u && u.active) {
+      return { usherId: u.id, name: u.full_name, phone: u.phone || "", until: saved.until || "",
+               today: saved.until === today, standing: !saved.until, byDefault: false };
+    }
+  }
+  const hu = (((await env.DB.prepare(
+    "SELECT DISTINCT u.* FROM ushers u JOIN user_roles r ON r.usher_id=u.id WHERE u.active=1 AND r.role='head_usher' ORDER BY u.full_name"
+  ).all()).results) || [])[0];
+  if (!hu) return null;
+  return { usherId: hu.id, name: hu.full_name, phone: hu.phone || "", until: "", today: false, standing: true, byDefault: true };
+}
+
+async function aInChargeSet(env, cfg, b, me) {
+  need(me, "rota.manage");
+  const today = londonKey(new Date());
+  const before = await inChargeNow(env, cfg);
+  const st = [];
+  let now = null;
+  if (b.clear) {
+    st.push(env.DB.prepare("DELETE FROM settings WHERE k='in_charge'"));
+  } else {
+    const u = await getUsher(env, text(b.usherId, 40));
+    if (!u || !u.active) fail(400, "usher", "Choose somebody from the list.");
+    const until = b.todayOnly ? today : "";
+    st.push(env.DB.prepare("INSERT INTO settings (k, v) VALUES ('in_charge', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v")
+      .bind(JSON.stringify({ usherId: u.id, until, at: Date.now(), by: me.usher.id })));
+    now = { usherId: u.id, name: u.full_name, until };
+  }
+  st.push(stAudit(env, me.usher.id, "incharge.set", "usher", now ? now.usherId : "",
+    before ? { usherId: before.usherId, until: before.until } : null,
+    now ? { usherId: now.usherId, until: now.until } : null,
+    b.clear ? "Back to the Head Usher" : (b.todayOnly ? "Today only" : "Until changed back")));
+  /* Everybody on a duty today is told, since they are the people who may
+     need somebody this morning. */
+  const on = ((await env.DB.prepare(
+    "SELECT DISTINCT u.* FROM appointments a JOIN events e ON e.id=a.event_id JOIN ushers u ON u.id=a.usher_id " +
+    "WHERE e.date=? AND e.status<>'cancelled' AND a.status='active' AND u.active=1").bind(today).all()).results) || [];
+  const after = now ? now.name : ((await inChargeNow(env, cfg)) || {}).name || "";
+  for (const u of on) {
+    if (u.id === me.usher.id) continue;
+    st.push(stNotify(env, cfg, u, "in_charge", "In charge today: " + after,
+      "Go to " + after + " about anything on duty today.", "", ""));
+  }
+  await run(env, st);
+  return { ok: true, inCharge: await inChargeNow(env, cfg), told: on.length };
+}
+
 /* "What am I doing?" */
 async function aHome(env, cfg, b, me) {
   const today = londonKey(new Date());
@@ -1740,8 +2205,15 @@ async function aHome(env, cfg, b, me) {
     "SELECT a.id AS appointment_id, a.duty, e.*, r.status AS report_status, r.id AS report_id FROM appointments a JOIN events e ON e.id=a.event_id " +
     "LEFT JOIN reports r ON r.event_id=e.id WHERE a.usher_id=? AND a.status='active' AND e.date>=? AND e.date<=? ORDER BY e.date, e.start_time, e.id"
   ).bind(me.usher.id, keyAddDays(today, -6), until).all()).results) || [];
+  /* A "can't make it" already asked for, so the card says so rather than
+     offering to ask again. */
+  const asked = {};
+  for (const r of ((await env.DB.prepare(
+    "SELECT target_id, status FROM authorisations WHERE kind='duty_release' AND subject_id=? AND status IN ('pending','approved')"
+  ).bind(me.usher.id).all()).results) || []) asked[r.target_id] = r.status;
   const duty = (x) => ({
     eventId: x.id, title: x.title, date: x.date, start: x.start_time, duty: x.duty, thanksgiving: !!x.thanksgiving, type: x.type,
+    appointmentId: x.appointment_id, released: asked[x.appointment_id] || "",
     cancelled: x.status === "cancelled", reportStatus: x.report_status || "", reportStatusLabel: STATUS_LABELS[x.report_status] || "Not started",
     reportDue: !!(cfg.event_types[x.type] || {}).attendance || !!(cfg.event_types[x.type] || {}).offering
   });
@@ -1762,9 +2234,18 @@ async function aHome(env, cfg, b, me) {
     signList.push({ reportId: x.id, title: x.title, date: x.date, submitter: names[x.submitter_id] || "", state });
   }
   const unread = await env.DB.prepare("SELECT count(*) AS n FROM notifications WHERE usher_id=? AND read_at IS NULL").bind(me.usher.id).first();
+  const inCharge = await inChargeNow(env, cfg);
+  /* Pinned messages: on Home until their date, for the people they went
+     to, so a notice does not have to be found in the list again. */
+  const pinned = ((await env.DB.prepare(
+    "SELECT m.id, m.title, m.body, m.pinned_until FROM messages m JOIN notifications n ON n.ref_type='message' AND n.ref_id=m.id " +
+    "WHERE n.usher_id=? AND m.sent_at IS NOT NULL AND m.pinned_until>=? ORDER BY m.sent_at DESC LIMIT 5"
+  ).bind(me.usher.id, today).all()).results) || [];
   return {
     ok: true, today, thisSunday, thanksgiving: isThanksgiving(cfg, thisSunday), me: meView(me),
-    thisWeek, later, recent, toCountersign: signList, unread: unread ? unread.n : 0
+    thisWeek, later, recent, toCountersign: signList, unread: unread ? unread.n : 0,
+    inCharge: inCharge && Object.assign({}, inCharge, { isMe: inCharge.usherId === me.usher.id }),
+    pinned: pinned.map((m) => ({ title: m.title, body: m.body, until: m.pinned_until }))
   };
 }
 
@@ -1806,23 +2287,148 @@ async function aNotificationsRead(env, cfg, b, me) {
 }
 
 /* A message from the coordinator to some or all ushers. */
+/* WHO A MESSAGE IS FOR. Resolved when it goes, not when it is written, so
+   a message scheduled for Sunday morning reaches whoever is on duty then
+   rather than whoever was on the rota when it was typed. */
+const AUDIENCES = {
+  all: "everybody",
+  sunday: "everybody on duty this Sunday",
+  first: "the First Service ushers this Sunday",
+  counters: "the offering counters this Sunday",
+  admins: "the Head Usher and Assistant Head Usher",
+  chosen: "the people chosen"
+};
+
+async function audienceOf(env, cfg, audience, usherIds) {
+  const sunday = sundayOnOrAfter(londonKey(new Date()));
+  const onSunday = async (type) => ((await env.DB.prepare(
+    "SELECT DISTINCT u.* FROM appointments a JOIN events e ON e.id=a.event_id JOIN ushers u ON u.id=a.usher_id " +
+    "WHERE e.sunday_key=? AND e.status<>'cancelled' AND a.status='active' AND u.active=1" +
+    (type ? " AND e.type=?" : "") + " ORDER BY u.full_name COLLATE NOCASE"
+  ).bind(...(type ? [sunday, type] : [sunday])).all()).results) || [];
+  if (audience === "sunday") return await onSunday("");
+  if (audience === "first") return await onSunday("SUN_FIRST");
+  if (audience === "counters") return await onSunday("SUN_SECOND");
+  if (audience === "admins") return await holders(env, cfg, "admin.app");
+  if (audience === "chosen") {
+    const out = [];
+    for (const id of (Array.isArray(usherIds) ? usherIds : String(usherIds || "").split(",")).slice(0, 500)) {
+      const u = await getUsher(env, text(id, 20));
+      if (u && u.active) out.push(u);
+    }
+    return out;
+  }
+  return ((await env.DB.prepare("SELECT * FROM ushers WHERE active=1 ORDER BY full_name COLLATE NOCASE").all()).results) || [];
+}
+
+/* Send one message now: the notifications, the two "what went out" lines,
+   and the sender's own receipt. */
+async function deliverMessage(env, cfg, m, sender) {
+  const list = await audienceOf(env, cfg, m.audience, m.usher_ids);
+  const off = (await peopleAlertsOff(env)).map((u) => u.id);
+  const phones = list.filter((u) => off.indexOf(u.id) === -1).length;
+  const emails = list.filter((u) => off.indexOf(u.id) !== -1 && String(u.email || "").trim()).length;
+  const nowhere = list.length - phones - emails;
+  const now = Date.now();
+  const st = [
+    list.map((u) => stNotify(env, cfg, u, "admin_message", m.title, m.body, "message", m.id)),
+    env.DB.prepare("UPDATE messages SET sent_at=? WHERE id=? AND sent_at IS NULL").bind(now, m.id),
+    stSent(env, "push", "admin_message", m.title, list.length, phones, m.created_by || ""),
+    stSent(env, "email", "admin_message", m.title, list.length, emails, m.created_by || "")
+  ];
+  if (sender) {
+    st.push(stNotify(env, cfg, sender, "sent_report", "Sent to " + list.length + ": " + m.title,
+      phones + " phone" + (phones === 1 ? "" : "s") + ", " + emails + " email" + (emails === 1 ? "" : "s") +
+      ", " + nowhere + " unreachable.", "message", m.id));
+  }
+  await run(env, st);
+  return { sent: list.length, phones, emails, unreachable: nowhere };
+}
+
+/* Scheduled messages, from the clock. */
+async function sendDueMessages(env, cfg, nowMs) {
+  const rows = ((await env.DB.prepare(
+    "SELECT * FROM messages WHERE sent_at IS NULL AND send_at<=? ORDER BY send_at LIMIT 20").bind(nowMs || Date.now()).all()).results) || [];
+  let n = 0;
+  for (const m of rows) {
+    const sender = m.created_by ? await getUsher(env, m.created_by) : null;
+    await deliverMessage(env, cfg, m, sender);
+    n++;
+  }
+  return n;
+}
+
+/* How many have read it, and who has not. */
+async function messageSeen(env, id) {
+  const rows = ((await env.DB.prepare(
+    "SELECT usher_id, read_at FROM notifications WHERE ref_type='message' AND ref_id=? AND type='admin_message'").bind(String(id)).all()).results) || [];
+  return { to: rows.length, seen: rows.filter((r) => r.read_at).length,
+           unseen: rows.filter((r) => !r.read_at).map((r) => r.usher_id) };
+}
+
+async function aMessageList(env, cfg, b, me) {
+  need(me, "notifications.send");
+  const rows = ((await env.DB.prepare("SELECT * FROM messages ORDER BY created_at DESC LIMIT 40").all()).results) || [];
+  const names = await namesMap(env);
+  const out = [];
+  for (const m of rows) {
+    const seen = await messageSeen(env, m.id);
+    out.push({ id: m.id, title: m.title, body: m.body, audience: m.audience, audienceLabel: AUDIENCES[m.audience] || m.audience,
+      sendAt: m.send_at, sentAt: m.sent_at, pinnedUntil: m.pinned_until || "", by: names[m.created_by] || "",
+      to: seen.to, seen: seen.seen, unseen: seen.unseen.length });
+  }
+  return { ok: true, messages: out, audiences: Object.keys(AUDIENCES).map((k) => ({ key: k, label: AUDIENCES[k] })) };
+}
+
+/* Those who have not read it are told again, and nobody else. */
+async function aMessageRemind(env, cfg, b, me) {
+  need(me, "notifications.send");
+  const m = await env.DB.prepare("SELECT * FROM messages WHERE id=?").bind(text(b.id, 20)).first();
+  if (!m) fail(404, "no_message", "That message was not found.");
+  if (!m.sent_at) fail(409, "not_sent", "That message has not gone yet.");
+  const seen = await messageSeen(env, m.id);
+  if (!seen.unseen.length) fail(400, "nobody", "Everybody has read it.");
+  const st = [];
+  for (const id of seen.unseen) {
+    const u = await getUsher(env, id);
+    if (u && u.active) st.push(stNotify(env, cfg, u, "admin_message", m.title, m.body, "message", m.id, "remind:" + m.id + ":" + id));
+  }
+  st.push(stSent(env, "push", "admin_message", "Reminder: " + m.title, seen.unseen.length, seen.unseen.length, me.usher.id));
+  await run(env, st);
+  return { ok: true, sent: seen.unseen.length };
+}
+
 async function aNotifySend(env, cfg, b, me) {
   need(me, "notifications.send");
   const title = text(b.title, 140), body = text(b.body, 1000);
   if (!title) fail(400, "title", "A title is needed.");
-  let list;
-  if (b.all) list = ((await env.DB.prepare("SELECT * FROM ushers WHERE active=1").all()).results) || [];
-  else {
-    list = [];
-    for (const id of (Array.isArray(b.usherIds) ? b.usherIds : []).slice(0, 500)) {
-      const u = await getUsher(env, text(id, 20));
-      if (u && u.active) list.push(u);
-    }
+  /* Who it is for, when it goes, and whether it sits on Home for a while.
+     "all: true" is what the first Message screen sent, and still works. */
+  const audience = b.all ? "all" : (AUDIENCES[text(b.audience, 20)] ? text(b.audience, 20) : (b.usherIds ? "chosen" : "all"));
+  const pinnedUntil = b.pinnedUntil ? text(b.pinnedUntil, 10) : "";
+  if (pinnedUntil && (!validKey(pinnedUntil) || pinnedUntil < londonKey(new Date()))) fail(400, "pinned", "Pin it to Home until a date today or later.");
+  const sendAt = Number(b.sendAt) || 0;
+  if (sendAt && sendAt > Date.now() + 400 * 86400000) fail(400, "when", "Choose a time within the next year.");
+  const id = await nextId(env, "message", "M", 4);
+  const now = Date.now();
+  const m = { id, title, body, audience, usher_ids: audience === "chosen" ? (Array.isArray(b.usherIds) ? b.usherIds : []).join(",") : "",
+              send_at: sendAt || now, pinned_until: pinnedUntil, created_by: me.usher.id, created_at: now };
+  await run(env, [
+    env.DB.prepare("INSERT INTO messages (id, title, body, audience, usher_ids, send_at, pinned_until, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+      .bind(m.id, m.title, m.body, m.audience, m.usher_ids, m.send_at, m.pinned_until, m.created_by, m.created_at),
+    stAudit(env, me.usher.id, "notify.send", "message", id, null,
+      { title, audience, sendAt: m.send_at, pinnedUntil }, text(b.reason, 200))
+  ]);
+  if (sendAt > now + 60000) {
+    return { ok: true, messageId: id, scheduled: true, sendAt: m.send_at, audience, audienceLabel: AUDIENCES[audience] };
   }
-  if (!list.length) fail(400, "nobody", "Choose who to send it to.");
-  await run(env, [list.map((u) => stNotify(env, cfg, u, "admin_message", title, body, "", "")),
-    stAudit(env, me.usher.id, "notify.send", "notification", "", null, { to: list.map((u) => u.id), title }, "")]);
-  return { ok: true, sent: list.length };
+  const list = await audienceOf(env, cfg, audience, m.usher_ids);
+  if (!list.length) fail(400, "nobody", "Nobody is in that group at the moment.");
+  /* How far it reaches: a phone with alerts on, an email address, or
+     neither. Counted from the same lists the sending code uses, and told to
+     the sender as one notification. */
+  const out = await deliverMessage(env, cfg, m, me.usher);
+  return Object.assign({ ok: true, messageId: id, audience, audienceLabel: AUDIENCES[audience] }, out);
 }
 
 /* ==========================================================================
@@ -2007,7 +2613,8 @@ async function aDashboard(env, cfg, b, me) {
     ok: true, today, isSunday, currentLabel: isSunday ? "Today" : "Most recent Sunday",
     current, next: nextRota.sundays[0] || { sunday: next, services: [] },
     otherEvents: upcoming.events,
-    olderOutstanding: outstandingOld.map((e) => ({ eventId: e.id, title: e.title, date: e.date }))
+    olderOutstanding: outstandingOld.map((e) => ({ eventId: e.id, title: e.title, date: e.date })),
+    inCharge: await inChargeNow(env, cfg), canSetInCharge: me.perms.has("rota.manage")
   };
 }
 
@@ -2023,8 +2630,10 @@ async function aUshersList(env, cfg, b, me) {
   ).all()).results) || [];
   return { ok: true, ushers: rows.map((u) => ({
     usherId: u.id, name: u.full_name, email: u.email, phone: u.phone, active: !!u.active, hasPin: !!u.pin_hash, alerts: Number(u.alerts) || 0,
+    installed: !!u.installed_at,
     roles: String(u.roles || "").split(",").filter(Boolean) })),
-    canManage: me.perms.has("ushers.manage"), canGrantAny: me.perms.has("roles.grant_any") };
+    canManage: me.perms.has("ushers.manage"), canGrantAny: me.perms.has("roles.grant_any"),
+    canSend: me.perms.has("notifications.send") };
 }
 
 async function aUsherSave(env, cfg, b, me) {
@@ -2189,6 +2798,41 @@ async function aConfigSet(env, cfg, b, me) {
     }
   }
   if (k === "report_notify_roles" && v.some((x) => ROLES.indexOf(x) === -1)) fail(400, "type", "Each entry must be one of: " + ROLES.join(", ") + ".");
+  if ((k === "quiet_from" || k === "quiet_to" || k === "reminder_hour" || k === "report_reminder_hour") && !(Number.isInteger(v) && v >= 0 && v <= 23)) {
+    fail(400, "type", "An hour is a whole number from 0 to 23.");
+  }
+  if ((k === "urgent_types" || k === "email_types") && v.some((x) => typeof x !== "string")) fail(400, "type", "Each entry is a notification type, in quotes.");
+  if (k === "reminder_patterns") {
+    for (const type of Object.keys(v || {})) {
+      if (!cfg.event_types[type] && !DEFAULT_CONFIG.event_types[type]) fail(400, "type", "No kind of event called " + type + ".");
+      const list = v[type];
+      if (!Array.isArray(list)) fail(400, "type", "Each kind of event takes a list of reminders.");
+      if (list.length > 8) fail(400, "type", "At most eight reminders for one kind of event.");
+      for (const pat of list) {
+        if (!pat || !Number.isInteger(Number(pat.days)) || Number(pat.days) < 0 || Number(pat.days) > 60) {
+          fail(400, "type", "Each reminder needs days before the event, from 0 (the day itself) to 60.");
+        }
+        if (!Number.isInteger(Number(pat.hour)) || Number(pat.hour) < 0 || Number(pat.hour) > 23) fail(400, "type", "An hour is a whole number from 0 to 23.");
+        if (pat.role && ROLES.indexOf(pat.role) === -1) fail(400, "type", "A reminder's role must be one of: " + ROLES.join(", ") + ".");
+      }
+    }
+  }
+  if (k === "event_rules") {
+    const seen = {};
+    if (v.length > 40) fail(400, "type", "At most 40 repeating events.");
+    for (const r of v) {
+      if (!r || !/^[A-Za-z0-9_-]{2,30}$/.test(String(r.id || ""))) fail(400, "type", "Each repeating event needs a short id of letters, numbers, - or _.");
+      if (seen[r.id]) fail(400, "type", "Two repeating events share the id " + r.id + ".");
+      seen[r.id] = 1;
+      if (!cfg.event_types[r.type] && !DEFAULT_CONFIG.event_types[r.type]) fail(400, "type", "The repeating event " + r.id + " needs a kind of event that exists.");
+      if (!ruleWords(r.rule)) {
+        fail(400, "type", "The repeating event " + r.id + " needs a pattern such as \"first-saturday\", \"weekly:wed\", " +
+          "\"nth-weekday:2:sun\", \"last-friday\" or \"yearly:09:first-saturday\".");
+      }
+      if (r.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(r.time))) fail(400, "type", "A time looks like 17:00.");
+      if (cfg.event_types[r.type] && cfg.event_types[r.type].sunday) fail(400, "type", "Sunday services are made by the rota, not by a repeating event.");
+    }
+  }
   const now = Date.now();
   await run(env, [
     env.DB.prepare("INSERT INTO config (k, v, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_by=excluded.updated_by, updated_at=excluded.updated_at")
@@ -2196,6 +2840,12 @@ async function aConfigSet(env, cfg, b, me) {
     stAudit(env, me.usher.id, "config.set", "config", k, cfg[k], v, text(b.reason, 200)),
     stOutbox(env, "CONFIG", { KEY: k, VALUE: JSON.stringify(v), UPDATED_BY: me.usher.id, UPDATED_AT: londonStamp(now) }, "KEY")
   ]);
+  /* A changed pattern moves the events still to come, and makes the ones it
+     now calls for. The past is left as it happened. */
+  if (k === "event_rules" || k === "rules_months_ahead") {
+    const fresh = await loadConfig(env);
+    await applyRuleChanges(env, fresh, me.usher.id);
+  }
   return { ok: true };
 }
 
@@ -2247,9 +2897,9 @@ async function setting(env, k) {
   try { const r = await env.DB.prepare("SELECT v FROM settings WHERE k=?").bind(k).first(); return r ? r.v : ""; } catch (e) { return ""; }
 }
 
-async function aHealth(env, cfg) {
+async function aHealth(env, cfg, b) {
   const waiting = await env.DB.prepare("SELECT count(*) AS n FROM outbox WHERE done_at IS NULL").first();
-  return {
+  const out = {
     ok: true, sheet: await setting(env, "sheet_version"),
     checks: {
       pinPepper: !!env.PIN_PEPPER, sheetToken: !!env.SHEET_TOKEN, sheetKnock: !!env.SHEET_WEBAPP_URL,
@@ -2257,6 +2907,10 @@ async function aHealth(env, cfg) {
       clockLastTick: Number(await setting(env, "clock_tick")) || 0
     }
   };
+  /* Names only for the sheet, which holds the SHEET_TOKEN. The plain health
+     answer stays open and names nobody. */
+  if (sheetTokenOk(env, b)) out.people = await healthPeople(env, cfg);
+  return out;
 }
 
 /* After a write, knock on the sheet's web app so it drains now (and sends
@@ -2290,11 +2944,175 @@ async function knockSheet(env) {
    THE CLOCK — reminders, once each (dedupe keys)
    ========================================================================== */
 
-async function remind(env, cfg, u, type, title, body, refType, refId, dedupe) {
+async function remind(env, cfg, u, type, title, body, refType, refId, dedupe, ics) {
   const seen = await env.DB.prepare("SELECT 1 AS n FROM notifications WHERE dedupe=?").bind(dedupe).first();
   if (seen) return false;
-  await run(env, stNotify(env, cfg, u, type, title, body, refType, refId, dedupe));
+  await run(env, stNotify(env, cfg, u, type, title, body, refType, refId, dedupe, false, ics));
   return true;
+}
+
+/* THE STEPS, written once. Deliberately plain: the app is added to the
+   phone's Home Screen and opened from there, and that is all an usher has
+   to do. */
+function installSteps(cfg) {
+  const guide = installGuide(cfg);
+  return "iPhone: open Ushers in Safari, tap Share, then Add to Home Screen, then open Ushers from the Home Screen.\n" +
+         "Android: open Ushers in Chrome and tap Install, or Menu then Add to Home screen.\n" +
+         "Alerts about duties, reminders and countersignatures only reach a phone once this is done." +
+         (guide ? "\n\nThe steps with pictures: " + guide : "");
+}
+
+/* Anyone who has never opened it from a Home Screen is sent the steps, at
+   most once a week, and never again once they have. */
+async function remindInstall(env, cfg, at) {
+  const week = isoWeek(at);
+  let n = 0;
+  for (const u of await peopleNotInstalled(env)) {
+    const usher = await getUsher(env, u.id);
+    if (await remind(env, cfg, usher, "install", "Add Ushers to your phone", installSteps(cfg), "", "", "install:" + u.id + ":" + week)) n++;
+  }
+  return n;
+}
+
+/* The week as the calendar has it (ISO), so "once a week" means once in a
+   week and not once in any seven days. */
+function isoWeek(date) {
+  const p = londonParts(date);
+  const d = new Date(Date.UTC(p.y, p.m - 1, p.d));
+  const dow = (d.getUTCDay() + 6) % 7;             /* Monday = 0 */
+  d.setUTCDate(d.getUTCDate() - dow + 3);          /* the Thursday of that week */
+  const first = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const fdow = (first.getUTCDay() + 6) % 7;
+  first.setUTCDate(first.getUTCDate() - fdow + 3);
+  const week = 1 + Math.round((d - first) / (7 * 86400000));
+  return d.getUTCFullYear() + "-W" + (week < 10 ? "0" : "") + week;
+}
+
+/* Admin -> Ushers: send the steps now, to one person or to everybody who
+   has not installed it. */
+async function aInstallSteps(env, cfg, b, me) {
+  need(me, "notifications.send");
+  const want = Array.isArray(b.usherIds) ? b.usherIds.map((x) => text(x, 20)) : [];
+  const pool = await peopleNotInstalled(env);
+  const list = [];
+  for (const u of (want.length ? pool.filter((x) => want.indexOf(x.id) !== -1) : pool)) {
+    const usher = await getUsher(env, u.id);
+    if (usher) list.push(usher);
+  }
+  if (!list.length) fail(400, "nobody", want.length ? "That person has it already." : "Everybody has it already.");
+  const off = (await peopleAlertsOff(env)).map((u) => u.id);
+  const emails = list.filter((u) => off.indexOf(u.id) !== -1 && String(u.email || "").trim()).length;
+  await run(env, [
+    list.map((u) => stNotify(env, cfg, u, "install", "Add Ushers to your phone", installSteps(cfg), "", "")),
+    stSent(env, "push", "install", "Add Ushers to your phone", list.length, list.length - emails, me.usher.id),
+    stSent(env, "email", "install", "Add Ushers to your phone", list.length, emails, me.usher.id),
+    stAudit(env, me.usher.id, "install.steps", "notification", "", null, { to: list.map((u) => u.id) }, "")
+  ]);
+  return { ok: true, sent: list.length, names: list.map((u) => u.full_name) };
+}
+
+/* ==========================================================================
+   MONTHLY AND YEARLY SUMMARY — sent by the app rather than asked for, on
+   the evening of the last Sunday of the month. Money is held back: the
+   services-and-attendance summary goes to the coordinators, and the
+   offering and dues figures only to whoever holds the permission to see
+   them. Nobody is sent a figure by this route that they could not open in
+   the app themselves.
+   ========================================================================== */
+
+/* The last Sunday of this key's month. */
+function lastSundayOfMonth(key) {
+  const p = key.slice(0, 7);
+  const last = new Date(Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5, 7)), 0));
+  const end = p + "-" + (last.getUTCDate() < 10 ? "0" : "") + last.getUTCDate();
+  return sundayOnOrBefore(end);
+}
+
+function monthName(key) {
+  const names = ["January", "February", "March", "April", "May", "June", "July",
+                 "August", "September", "October", "November", "December"];
+  return names[Number(key.slice(5, 7)) - 1] + " " + key.slice(0, 4);
+}
+
+/* The words of a summary. withMoney adds the offering figures, and nothing
+   else differs, so the two versions cannot drift apart. */
+function summaryWords(cfg, label, data, withMoney) {
+  const t = data.totals;
+  const sym = ((cfg.currencies || {})[cfg.default_currency] || {}).symbol || "";
+  const lines = [
+    label + ".",
+    "",
+    "Services and events: " + t.events + ".",
+    "Reports filed: " + t.reported + " (" + t.verified + " countersigned, " + t.waiting + " still waiting).",
+    "No report yet: " + t.missing + ".",
+    "Attendance: " + t.attendance + " in all (" + t.male + " men, " + t.female + " women, " + t.children + " children)."
+  ];
+  if (withMoney) {
+    lines.push("Offering: " + sym + pounds(t.offering).toFixed(2) + ".");
+    const cats = Object.keys(t.byCategory).sort();
+    for (const c of cats) lines.push("  " + c + ": " + sym + pounds(t.byCategory[c]).toFixed(2) + ".");
+  }
+  const missing = data.rows.filter((r) => !r.status || r.status === "draft");
+  if (missing.length) {
+    lines.push("");
+    lines.push("Still to come: " + missing.map((r) => r.title + " " + ukDate(r.date)).join("; ") + ".");
+  }
+  return lines.join("\n");
+}
+
+/* The dues position, for whoever may see it. */
+async function duesWords(env, cfg, year, todayKey) {
+  const ushers = ((await env.DB.prepare("SELECT * FROM ushers WHERE active=1").all()).results) || [];
+  const all = ((await env.DB.prepare("SELECT * FROM dues_payments WHERE year=?").bind(year).all()).results) || [];
+  const sym = ((cfg.currencies || {})[cfg.default_currency] || {}).symbol || "";
+  let paid = 0, outstanding = 0, behind = 0;
+  for (const u of ushers) {
+    const pos = duesPosition(cfg, all.filter((p) => p.usher_id === u.id), year, todayKey);
+    paid += pos.paid; outstanding += pos.outstanding;
+    if (pos.status === "Behind") behind++;
+  }
+  return "Dues " + year + ": " + sym + pounds(paid).toFixed(2) + " in, " + sym + pounds(outstanding).toFixed(2) +
+         " outstanding to date, " + behind + " behind.";
+}
+
+/* One summary, sent once. Returns how many people it reached. */
+async function sendSummary(env, cfg, from, to, label, key) {
+  const data = await periodData(env, cfg, from, to);
+  const roles = (Array.isArray(cfg.summary_roles) ? cfg.summary_roles : []).filter((r) => ROLES.indexOf(r) !== -1);
+  const coords = roles.length ? ((await env.DB.prepare(
+    "SELECT DISTINCT u.* FROM ushers u JOIN user_roles r ON r.usher_id=u.id WHERE u.active=1 AND r.role IN (" +
+    roles.map(() => "?").join(",") + ") ORDER BY u.full_name").bind(...roles).all()).results) || [] : [];
+  const money = await holders(env, cfg, "offering.summary");
+  const dues = await holders(env, cfg, "dues.view_all");
+  const everyone = {};
+  for (const u of coords.concat(money, dues)) everyone[u.id] = u;
+  let n = 0;
+  const todayKey = londonKey(new Date());
+  for (const id of Object.keys(everyone)) {
+    const u = await getUsher(env, id);
+    if (!u) continue;
+    const perms = permissionsFor(cfg, await rolesOf(env, u.id));
+    let body = summaryWords(cfg, label, data, perms.has("offering.summary"));
+    if (perms.has("dues.view_all")) body += "\n\n" + (await duesWords(env, cfg, Number(to.slice(0, 4)), todayKey));
+    if (await remind(env, cfg, u, "summary", label, body, "", "", "summary:" + key + ":" + u.id)) n++;
+  }
+  if (n) await run(env, [stSent(env, "email", "summary", label, n, n, "")]);
+  return n;
+}
+
+/* Sent on the evening of the last Sunday of the month, and the year's own
+   on the last Sunday of December. */
+async function summaryDue(env, cfg, at) {
+  const today = londonKey(at);
+  if (londonParts(at).hh < cfg.summary_hour) return 0;
+  if (today !== lastSundayOfMonth(today)) return 0;
+  const month = today.slice(0, 7);
+  let n = await sendSummary(env, cfg, month + "-01", today, "Summary for " + monthName(today), month);
+  if (Number(today.slice(5, 7)) === 12) {
+    const y = today.slice(0, 4);
+    n += await sendSummary(env, cfg, y + "-01-01", today, "Summary for " + y, y);
+  }
+  return n;
 }
 
 async function clockTick(env, now) {
@@ -2306,15 +3124,42 @@ async function clockTick(env, now) {
     for (const days of cfg.duty_reminder_days) {
       const day = keyAddDays(today, days);
       const rows = ((await env.DB.prepare(
-        "SELECT a.id AS aid, a.duty, e.id AS eid, e.title, e.date, u.* FROM appointments a JOIN events e ON e.id=a.event_id JOIN ushers u ON u.id=a.usher_id " +
+        "SELECT a.id AS aid, a.duty, e.id AS eid, e.title, e.date, e.start_time, u.* FROM appointments a JOIN events e ON e.id=a.event_id JOIN ushers u ON u.id=a.usher_id " +
         "WHERE e.date=? AND e.status<>'cancelled' AND a.status='active' AND u.active=1").bind(day).all()).results) || [];
       for (const x of rows) {
         if (await remind(env, cfg, x, "duty_reminder", "Duty reminder: " + x.title,
           "You are on " + (x.duty === "counting" ? "offering counting" : "ushering") + " duty on " + ukDate(x.date) + ".",
-          "event", x.eid, "duty:" + x.aid + ":" + days)) sent++;
+          "event", x.eid, "duty:" + x.aid + ":" + days,
+          icsFor({ date: x.date, start_time: x.start_time, title: x.title }, x.aid, x.duty))) sent++;
       }
     }
   }
+  /* The patterns for a kind of event, each one sent once. */
+  for (const type of Object.keys(cfg.reminder_patterns || {})) {
+    for (const pat of (Array.isArray(cfg.reminder_patterns[type]) ? cfg.reminder_patterns[type] : [])) {
+      if (!pat || pat.paused) continue;
+      const days = Number(pat.days) || 0, atHour = Number(pat.hour) || 0;
+      if (hour < atHour) continue;
+      const day = keyAddDays(today, days);     /* days before the event */
+      const rows = ((await env.DB.prepare(
+        "SELECT a.id AS aid, a.duty, e.id AS eid, e.title, e.date, e.start_time, u.* FROM appointments a JOIN events e ON e.id=a.event_id JOIN ushers u ON u.id=a.usher_id " +
+        "WHERE e.date=? AND e.type=? AND e.status<>'cancelled' AND a.status='active' AND u.active=1").bind(day, type).all()).results) || [];
+      for (const x of rows) {
+        if (pat.role && (await rolesOf(env, x.id)).indexOf(pat.role) === -1) continue;
+        const when = days === 0 ? "today" : days === 1 ? "tomorrow" : "in " + days + " days";
+        if (await remind(env, cfg, x, "duty_reminder", "Reminder: " + x.title,
+          x.title + " is " + when + (x.start_time ? " at " + x.start_time : "") + ". You are on duty.",
+          "event", x.eid, "pattern:" + x.aid + ":" + days + ":" + atHour,
+          icsFor({ date: x.date, start_time: x.start_time, title: x.title }, x.aid, x.duty))) sent++;
+      }
+    }
+  }
+  if (hour >= cfg.reminder_hour && londonParts(at).dow === cfg.install_reminder_dow) {
+    sent += await remindInstall(env, cfg, at);
+  }
+  try { await ensureRuleEvents(env, cfg, "system", today); } catch (e) { console.log("rules", e && e.message); }
+  try { sent += await sendDueMessages(env, cfg, at.getTime()); } catch (e) { console.log("messages", e && e.message); }
+  try { sent += await summaryDue(env, cfg, at); } catch (e) { console.log("summary", e && e.message); }
   if (hour >= cfg.report_reminder_hour) {
     const rows = ((await env.DB.prepare(
       "SELECT e.id AS eid, e.title, e.date, e.type, a.id AS aid, u.* FROM events e JOIN appointments a ON a.event_id=e.id AND a.status='active' JOIN ushers u ON u.id=a.usher_id " +
@@ -2326,9 +3171,119 @@ async function clockTick(env, now) {
         "The report for " + x.title + " on " + ukDate(x.date) + " has not been submitted.", "event", x.eid, "report:" + x.eid + ":" + x.id)) sent++;
     }
   }
+  if (sent) await run(env, [stSent(env, "push", "reminder", "Reminders", sent, sent, "")]);
   try { await emailUnalerted(env, cfg, at.getTime()); } catch (e) { console.log("unalerted", e && e.message); }
   await env.DB.prepare("INSERT INTO settings (k, v) VALUES ('clock_tick', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(String(Date.now())).run();
   return sent;
+}
+
+/* ==========================================================================
+   WHAT WENT OUT — one line per batch of alerts or emails, so "did it go,
+   and to how many?" has an answer. Never any money figures.
+   ========================================================================== */
+
+function stSent(env, kind, type, title, toCount, reached, byId) {
+  return env.DB.prepare(
+    "INSERT INTO sent_log (at, kind, type, title, to_count, reached, by_id) VALUES (?,?,?,?,?,?,?)"
+  ).bind(Date.now(), kind, type || "", text(title, 140), Number(toCount) || 0, Number(reached) || 0, byId || "");
+}
+
+async function aSentList(env, cfg, b, me) {
+  need(me, "admin.app");
+  const days = Math.min(90, Math.max(1, Number(b.days) || 14));
+  const names = await namesMap(env);
+  const rows = ((await env.DB.prepare(
+    "SELECT * FROM sent_log WHERE at>? ORDER BY at DESC LIMIT 200").bind(Date.now() - days * 86400000).all()).results) || [];
+  return { ok: true, days, sent: rows.map((r) => ({
+    at: r.at, kind: r.kind, type: r.type, title: r.title, toCount: r.to_count, reached: r.reached,
+    by: names[r.by_id] || "" })) };
+}
+
+/* ==========================================================================
+   WHO NEEDS ATTENTION — one function per concern, used BOTH by the code
+   that sends and by Check everything. A report built from its own query
+   can certify as fine the very silence it was meant to catch, so there is
+   only ever one query.
+   ========================================================================== */
+
+/* Active people with alerts on no phone. The email below goes to these. */
+async function peopleAlertsOff(env) {
+  return ((await env.DB.prepare(
+    "SELECT u.id, u.full_name, u.email FROM ushers u WHERE u.active=1 " +
+    "AND NOT EXISTS (SELECT 1 FROM push_subs p WHERE p.usher_id=u.id) ORDER BY u.full_name COLLATE NOCASE"
+  ).all()).results) || [];
+}
+
+/* Nothing reaches these at all: no phone alerts and no email address. */
+async function peopleUnreachable(env) {
+  return (await peopleAlertsOff(env)).filter((u) => !String(u.email || "").trim());
+}
+
+/* Still on the default PIN: never changed it, never answered the question. */
+async function peopleDefaultPin(env) {
+  return ((await env.DB.prepare(
+    "SELECT id, full_name FROM ushers WHERE active=1 AND pin_must_change=1 ORDER BY full_name COLLATE NOCASE"
+  ).all()).results) || [];
+}
+
+/* A Sunday that is short: nobody ushering, or too few counters. */
+async function sundayGaps(env, cfg, key) {
+  const out = [];
+  const events = ((await env.DB.prepare("SELECT * FROM events WHERE sunday_key=? AND status<>'cancelled' ORDER BY id").bind(key).all()).results) || [];
+  for (const e of events) {
+    const t = cfg.event_types[e.type] || {};
+    const on = (await activeAppointments(env, [e.id])).filter((a) => a.duty === t.duty);
+    const want = t.exact ? Number(cfg[t.exact]) || 0 : 1;
+    if (on.length < want) out.push({ eventId: e.id, title: e.title, date: e.date, on: on.length, want: want, exact: !!t.exact });
+  }
+  return out;
+}
+
+/* Events whose report is still missing, up to and including today. The same
+   query the report reminder uses, so one cannot go quiet while the other
+   says all is well. */
+async function reportsOverdue(env, cfg, todayKey) {
+  const today = todayKey || londonKey(new Date());
+  const rows = ((await env.DB.prepare(
+    "SELECT e.id, e.title, e.date, e.type FROM events e LEFT JOIN reports r ON r.event_id=e.id " +
+    "WHERE e.date<=? AND e.date>=? AND e.status<>'cancelled' AND (r.id IS NULL OR r.status='draft') ORDER BY e.date DESC"
+  ).bind(today, keyAddDays(today, -42)).all()).results) || [];
+  return rows.filter((e) => {
+    const t = cfg.event_types[e.type] || {};
+    return !!t.attendance || !!t.offering;
+  });
+}
+
+/* What Check everything says about people. Names are personal, so this is
+   only given to the sheet, which holds the SHEET_TOKEN. */
+/* Active people who have never opened Ushers from a Home Screen. On iPhone
+   alerts do not work until they have, so these are the people an alert
+   would never reach. */
+async function peopleNotInstalled(env) {
+  return ((await env.DB.prepare(
+    "SELECT id, full_name, email FROM ushers WHERE active=1 AND installed_at IS NULL ORDER BY full_name COLLATE NOCASE"
+  ).all()).results) || [];
+}
+
+async function healthPeople(env, cfg) {
+  const today = londonKey(new Date());
+  const thisSunday = sundayOnOrAfter(today);
+  const active = await env.DB.prepare("SELECT count(*) AS n FROM ushers WHERE active=1").first();
+  const off = await peopleAlertsOff(env);
+  const total = active ? Number(active.n) || 0 : 0;
+  const name = (u) => u.full_name;
+  return {
+    ushers: total,
+    alertsOn: total - off.length,
+    alertsOff: off.map(name),
+    unreachable: (await peopleUnreachable(env)).map(name),
+    defaultPin: (await peopleDefaultPin(env)).map(name),
+    notInstalled: (await peopleNotInstalled(env)).map(name),
+    sunday: thisSunday,
+    sundayGaps: (await sundayGaps(env, cfg, thisSunday)).map((g) =>
+      g.exact ? g.title + ": " + g.on + " of " + g.want : g.title + ": nobody on duty"),
+    reportsOverdue: (await reportsOverdue(env, cfg, today)).map((e) => e.title + " " + ukDate(e.date))
+  };
 }
 
 /* NOBODY LEFT IN THE DARK. A person who has never turned alerts on, on any
@@ -2343,11 +3298,16 @@ async function emailUnalerted(env, cfg, nowMs) {
   const mins = Number(cfg.unalerted_email_minutes) || 0;
   if (mins <= 0) return 0;
   const now = nowMs || Date.now();
+  if (quietNow(cfg, now)) return 0;
+  /* The same list Check everything names, so one cannot go quiet while the
+     other says all is well. */
+  const who = (await peopleAlertsOff(env)).filter((u) => String(u.email || "").trim()).map((u) => u.id);
+  if (!who.length) return 0;
   const rows = ((await env.DB.prepare(
-    "SELECT n.id, n.usher_id, n.title, n.body, n.created_at FROM notifications n JOIN ushers u ON u.id=n.usher_id " +
-    "WHERE n.emailed=0 AND n.read_at IS NULL AND n.created_at<=? AND n.created_at>? AND u.active=1 AND COALESCE(u.email,'')<>'' " +
-    "AND NOT EXISTS (SELECT 1 FROM push_subs p WHERE p.usher_id=n.usher_id) ORDER BY n.created_at LIMIT 200"
-  ).bind(now - mins * 60000, now - 48 * 3600000).all()).results) || [];
+    "SELECT n.id, n.usher_id, n.type, n.title, n.body, n.ref_type, n.ref_id, n.created_at, n.ics_json FROM notifications n " +
+    "WHERE n.emailed=0 AND n.read_at IS NULL AND n.created_at<=? AND n.created_at>? " +
+    "AND n.usher_id IN (" + who.map(() => "?").join(",") + ") ORDER BY n.created_at LIMIT 200"
+  ).bind(now - mins * 60000, now - 48 * 3600000, ...who).all()).results) || [];
   if (!rows.length) return 0;
   const by = {};
   for (const n of rows) (by[n.usher_id] = by[n.usher_id] || []).push(n);
@@ -2357,11 +3317,20 @@ async function emailUnalerted(env, cfg, nowMs) {
     if (!u || !u.email) continue;
     const list = by[id];
     const subject = list.length === 1 ? list[0].title : list.length + " new notifications in the Ushers App";
-    const body = list.map((n) => "• " + n.title + (n.body ? "\n  " + n.body : "")).join("\n\n") +
-      "\n\nOpen the Ushers App to see them. To be told on your phone instead, tap the bell at the top of the app and turn alerts on.";
-    st.push(stOutbox(env, "@email", { to: u.email, subject: text(subject, 140), body: body.slice(0, 3000) }));
+    const isAdmin = permissionsFor(cfg, await rolesOf(env, u.id)).has("admin.app");
+    const body = list.map((n) => {
+      const link = linkTo(cfg, n, isAdmin);
+      return "• " + n.title + (n.body ? "\n  " + n.body : "") + (link ? "\n  " + link : "");
+    }).join("\n\n") + (cfg.app_url ? "" : "\n\nOpen the Ushers App to see them.");
+    /* A duty in the batch still lands in the diary: the digest carries the
+       same entries the single email would have. */
+    const diary = list.map((n) => { try { return n.ics_json ? JSON.parse(n.ics_json) : null; } catch (e) { return null; } }).filter(Boolean);
+    const mail = { to: u.email, subject: text(subject, 140), body: body.slice(0, 3000) };
+    if (diary.length) mail.ics = diary;
+    st.push(stOutbox(env, "@email", mail));
     for (const n of list) st.push(env.DB.prepare("UPDATE notifications SET emailed=2 WHERE id=? AND emailed=0").bind(n.id));
   }
+  st.push(stSent(env, "email", "unalerted", rows.length + " unread for people with alerts off", Object.keys(by).length, Object.keys(by).length, ""));
   await run(env, st);
   return Object.keys(by).length;
 }
@@ -2379,6 +3348,14 @@ async function aReportsPeriod(env, cfg, b, me) {
   const from = text(b.from, 10), to = text(b.to, 10);
   if (!validKey(from) || !validKey(to) || from > to) fail(400, "dates", "Choose a start and end date.");
   if (keyAddDays(from, 400) < to) fail(400, "dates", "Choose a period of at most 400 days.");
+  const data = await periodData(env, cfg, from, to);
+  return Object.assign({ ok: true, from, to }, data, { ministrationFields: cfg.ministration_fields || [],
+    offeringCategories: cfg.offering_categories, church: cfg.church_name, place: cfg.church_place, madeBy: me.usher.full_name });
+}
+
+/* The figures for a period, in one place: the Admin App's summary and the
+   monthly email are the same arithmetic, so they are the same code. */
+async function periodData(env, cfg, from, to) {
   const events = ((await env.DB.prepare(
     "SELECT * FROM events WHERE date>=? AND date<=? AND status<>'cancelled' ORDER BY date, start_time, id").bind(from, to).all()).results) || [];
   const reports = ((await env.DB.prepare(
@@ -2410,8 +3387,7 @@ async function aReportsPeriod(env, cfg, b, me) {
     for (const f of numFields) totals.ministration[f.key] = (totals.ministration[f.key] || 0) + (Number(row.ministration[f.key]) || 0);
     return row;
   });
-  return { ok: true, from, to, rows, totals, ministrationFields: cfg.ministration_fields || [], offeringCategories: cfg.offering_categories,
-           church: cfg.church_name, place: cfg.church_place, madeBy: me.usher.full_name };
+  return { rows, totals };
 }
 
 /* ==========================================================================
@@ -2476,14 +3452,36 @@ async function pushOne(env, sub, keys, selfOrigin) {
   }
 }
 
-/* Every notification not yet sent to phones, from the last two hours. Each
+/* QUIET HOURS. From quiet_from to quiet_to, London time, phones are woken
+   only for urgent_types; everything else is in the app at once and wakes
+   the phone when quiet hours end. quiet_from equal to quiet_to: never quiet. */
+function quietHours(cfg) {
+  const from = Number(cfg.quiet_from), to = Number(cfg.quiet_to);
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from === to || from < 0 || from > 23 || to < 0 || to > 23) return 0;
+  return (to - from + 24) % 24;
+}
+function quietNow(cfg, at) {
+  if (!quietHours(cfg)) return false;
+  const hh = londonParts(at instanceof Date ? at : new Date(at == null ? Date.now() : at)).hh;
+  const from = Number(cfg.quiet_from), to = Number(cfg.quiet_to);
+  return from < to ? hh >= from && hh < to : hh >= from || hh < to;
+}
+
+/* Every notification not yet sent to phones, from the last two hours (and
+   the quiet hours before them, so what waited overnight still goes). Each
    is marked before sending, so two writes close together never push twice.
+   In quiet hours only urgent ones are taken; the rest stay unmarked.
    Returns how many phones were woken. */
 async function pushPending(env, cfg, selfOrigin) {
   cfg = cfg || await loadConfig(env);
-  const since = Date.now() - 2 * 3600000;
+  const since = Date.now() - (quietHours(cfg) + 2) * 3600000;
+  const urgent = Array.isArray(cfg.urgent_types) ? cfg.urgent_types.map(String) : [];
+  const quiet = quietNow(cfg, Date.now());
+  if (quiet && !urgent.length) return 0;
   const rows = ((await env.DB.prepare(
-    "SELECT id, usher_id, type FROM notifications WHERE pushed_at IS NULL AND created_at>? ORDER BY created_at LIMIT 100").bind(since).all()).results) || [];
+    "SELECT id, usher_id, type FROM notifications WHERE pushed_at IS NULL AND created_at>?" +
+    (quiet ? " AND type IN (" + urgent.map(() => "?").join(",") + ")" : "") + " ORDER BY created_at LIMIT 100"
+  ).bind(since, ...(quiet ? urgent : [])).all()).results) || [];
   if (!rows.length) return 0;
   const now = Date.now();
   await run(env, rows.map((n) => env.DB.prepare("UPDATE notifications SET pushed_at=? WHERE id=? AND pushed_at IS NULL").bind(now, n.id)));
@@ -2495,6 +3493,7 @@ async function pushPending(env, cfg, selfOrigin) {
   const keys = await vapidKeys(env);
   let n = 0;
   for (const sub of subs) if (await pushOne(env, sub, keys, selfOrigin)) n++;
+  await run(env, [stSent(env, "push", rows[0].type, rows.length + " notification" + (rows.length === 1 ? "" : "s"), subs.length, n, "")]);
   return n;
 }
 
@@ -2538,19 +3537,15 @@ async function aPushWhat(env, cfg, b) {
   if (test) {
     await env.DB.prepare("DELETE FROM settings WHERE k=?").bind(tkey).run();
     if (Date.now() - (Number(test) || 0) < 5 * 60000) {
-      return { ok: true, title: "Alerts are working", body: "This phone will be told the moment anything new arrives.", tag: "test", url: "./#notes", unread };
+      return { ok: true, title: "Test.", body: "", tag: "test", url: "./#notes", unread };
     }
   }
   const n = await env.DB.prepare(
     "SELECT * FROM notifications WHERE usher_id=? AND read_at IS NULL ORDER BY created_at DESC LIMIT 1").bind(sub.usher_id).first();
   if (!n) return Object.assign(plain, { unread });
   const extra = unread > 1 ? " (" + (unread - 1) + " more in the app)" : "";
-  let url = "./#notes";
-  if (n.ref_type === "report" && n.type === "report_filed" && permissionsFor(cfg, await rolesOf(env, sub.usher_id)).has("admin.app")) url = "./admin/#report/" + n.ref_id;
-  else if (n.ref_type === "report") url = "./#rep/" + n.ref_id;
-  else if (n.ref_type === "authorisation") url = "./admin/#approvals";
-  else if (n.ref_type === "event") url = "./#report/" + n.ref_id;
-  return { ok: true, title: n.title, body: (n.body || "") + extra, tag: "n|" + n.id, url, unread };
+  const isAdmin = permissionsFor(cfg, await rolesOf(env, sub.usher_id)).has("admin.app");
+  return { ok: true, title: n.title, body: (n.body || "") + extra, tag: "n|" + n.id, url: "./" + linkFor(n, isAdmin), unread };
 }
 
 /* The bell's test, from the Driver App's testpush: one push to this phone,
@@ -2600,7 +3595,14 @@ const MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS push_subs_usher ON push_subs(usher_id)",
   "ALTER TABLE ushers ADD COLUMN pin_must_change INTEGER DEFAULT 0",
   "CREATE TABLE IF NOT EXISTS queued_done (id TEXT PRIMARY KEY, usher_id TEXT NOT NULL, action TEXT NOT NULL, at INTEGER NOT NULL, answer TEXT NOT NULL)",
-  "CREATE INDEX IF NOT EXISTS queued_done_at ON queued_done(at)"
+  "CREATE INDEX IF NOT EXISTS queued_done_at ON queued_done(at)",
+  "CREATE TABLE IF NOT EXISTS sent_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, kind TEXT NOT NULL, type TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', to_count INTEGER NOT NULL DEFAULT 0, reached INTEGER NOT NULL DEFAULT 0, by_id TEXT NOT NULL DEFAULT '')",
+  "CREATE INDEX IF NOT EXISTS sent_log_at ON sent_log(at)",
+  "ALTER TABLE notifications ADD COLUMN ics_json TEXT",
+  "ALTER TABLE ushers ADD COLUMN installed_at INTEGER",
+  "ALTER TABLE events ADD COLUMN rule_id TEXT DEFAULT ''",
+  "CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT DEFAULT '', audience TEXT NOT NULL DEFAULT 'all', usher_ids TEXT DEFAULT '', send_at INTEGER, sent_at INTEGER, pinned_until TEXT DEFAULT '', created_by TEXT, created_at INTEGER)",
+  "CREATE INDEX IF NOT EXISTS messages_due ON messages(sent_at, send_at)"
 ];
 /* Changes made once, each remembered by name, on the audit like any other.
    A setting saved in Admin -> Settings replaces the whole default, so a rule
@@ -2621,6 +3623,16 @@ const ONCE = [
   { name: "email_report_filed", key: "email_types",
     why: "Filed reports are emailed to the Head Usher and Assistant Head Usher",
     change: (v) => Array.isArray(v) && v.indexOf("report_filed") === -1 ? v.concat(["report_filed"]) : null },
+  { name: "email_duty_calendar", key: "email_types",
+    why: "A duty email carries the calendar entry, so the duty is in the usher's own diary",
+    change: (v) => {
+      if (!Array.isArray(v)) return null;
+      const add = ["duty", "duty_reminder"].filter((t) => v.indexOf(t) === -1);
+      return add.length ? v.concat(add) : null;
+    } },
+  { name: "email_install_steps", key: "email_types",
+    why: "The steps for adding Ushers to a phone are emailed as well, since an uninstalled phone is woken by nothing",
+    change: (v) => Array.isArray(v) && v.indexOf("install") === -1 ? v.concat(["install"]) : null },
   { name: "file_uncountersigned_reports", run: fileUncountersigned }
 ];
 
@@ -2751,7 +3763,13 @@ const ACTIONS = {
   "push.unsubscribe":       { fn: aPushUnsubscribe },
   "push.what":              { auth: false, fn: aPushWhat },
   "push.test":              { fn: aPushTest },
-  "notifications.count":    { fn: aNotificationsCount }
+  "notifications.count":    { fn: aNotificationsCount },
+  "sent.list":              { fn: aSentList },
+  "incharge.set":           { fn: aInChargeSet, write: true },
+  "install.steps":          { fn: aInstallSteps, write: true },
+  "duty.cover":             { fn: aDutyCover, write: true },
+  "messages.list":          { fn: aMessageList },
+  "message.remind":         { fn: aMessageRemind, write: true }
 };
 
 async function handle(request, env, ctx) {

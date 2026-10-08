@@ -73,7 +73,7 @@
     C.foot(document.getElementById("foot"));
   }
   function loading() { show(h("p", { class: "muted" }, "Loading…")); }
-  function failed(e) { show(msg(e && e.network ? "No connection, and this screen has not been opened on this device before. It shows once the signal is back." : String(e && e.message || e), "bad")); }
+  function failed(e) { show(msg(e && e.network ? "No connection. This screen has not been opened on this phone yet." : String(e && e.message || e), "bad")); }
   function money(p) { return C.money(p); }
   function chip(code, label) { return h("span", { class: "chip status-" + (code || "") }, label || "Not started"); }
   function pinInput(id) { return h("input", { id: id, type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" }); }
@@ -86,13 +86,13 @@
   function paintQueue() {
     var q = C.queue(), b = document.getElementById("queueBanner");
     b.hidden = !q.length;
-    b.textContent = q.length ? q.length + " saved on this device, waiting for connection" +
+    b.textContent = q.length ? q.length + " saved on this phone. Not sent yet" +
       (q.some(function (x) { return x.lastError; }) ? ". One was refused: see why at the top of the page." : "") : "";
   }
   function queueCard() {
     var q = C.queue();
     if (!q.length) return null;
-    return h("div", { class: "card" }, h("b", {}, "Saved on this device, waiting for connection"),
+    return h("div", { class: "card" }, h("b", {}, "Saved on this phone. Not sent yet."),
       q.map(function (x) {
         return h("div", { class: "row" }, h("span", { class: "grow" }, x.label),
           x.lastError ? h("span", { class: "chip bad" }, x.lastError) : h("span", { class: "chip warn" }, "Waiting"),
@@ -110,9 +110,13 @@
     document.getElementById("title").textContent = "";
     var who = h("select", { id: "who" }, h("option", { value: "" }, "Choose your name"));
     var typed = h("input", { id: "whoTyped", placeholder: "e.g. John Smith", autocomplete: "name", hidden: true });
+    var find = h("input", { id: "whoFind", placeholder: "Type to find your name", hidden: true });
+    var notYou = h("button", { class: "ghost", id: "notYou", hidden: true, onclick: function () {
+      C.forgetWho(); who.value = ""; notYou.hidden = true; who.focus();
+    } }, "Not you?");
     var pin = h("input", { id: "pin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var out = h("div");
-    var go = h("button", { onclick: function () {
+    function submit() {
       out.textContent = "";
       var body = { pin: pin.value };
       if (!typed.hidden) body.name = typed.value; else body.usherId = who.value;
@@ -120,23 +124,54 @@
       go.disabled = true;
       C.api("login", body).then(function (j) {
         go.disabled = false;
-        if (!j.ok) { out.appendChild(msg(j.message + (j.left !== undefined ? " " + j.left + " tries left." : ""), "bad")); return; }
+        if (!j.ok) {
+          pin.value = ""; pin.focus();
+          out.appendChild(msg(j.message + (j.left !== undefined ? " " + j.left + " tries left." : ""), "bad"));
+          return;
+        }
         C.setToken(j.token);
+        C.rememberPin(j.me.name, pin.value);
+        if (body.usherId) C.rememberWho(body.usherId, j.me.name);
         start();
       }, function () { go.disabled = false; out.appendChild(msg("No connection. Try again when you have signal.", "bad")); });
-    } }, "Sign in");
+    }
+    var go = h("button", { onclick: submit }, "Sign in");
+    C.pinBox(pin, submit);
+    who.addEventListener("change", function () { if (who.value) pin.focus(); });
+    find.addEventListener("input", function () { paintPeople(people, find.value); });
     show(h("h1", {}, "Sign in to Admin"),
-      h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), who, typed, h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
+      h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), find, who, typed, notYou,
+        h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
+
+    var people = [];
+    function paintPeople(list, filter) {
+      people = list || [];
+      var want = String(filter || "").trim().toLowerCase();
+      var shown = want ? people.filter(function (p) { return p.name.toLowerCase().indexOf(want) !== -1; }) : people;
+      var had = who.value;
+      C.clear(who);
+      who.appendChild(h("option", { value: "" }, "Choose your name"));
+      shown.forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
+      find.hidden = people.length < 15;
+      var last = C.lastWho();
+      var pick = shown.some(function (p) { return p.id === had; }) ? had
+        : (last && shown.some(function (p) { return p.id === last.id; }) ? last.id : "");
+      who.value = pick;
+      notYou.hidden = !pick;
+      if (pick && !pin.value) pin.focus();
+    }
+    paintPeople(C.peopleCached("admin"));
     C.api("people", { app: "admin" }).then(function (j) {
       if (j.firstSetup) { C.clear(out); out.appendChild(msg("Nobody is set up yet. Open the Ushers App for First-time setup.")); return; }
-      if (j.typeName) { who.hidden = true; typed.hidden = false; return; }
-      (j.people || []).forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
-    }, function () { who.hidden = true; typed.hidden = false; });
+      if (j.typeName) { who.hidden = true; find.hidden = true; notYou.hidden = true; typed.hidden = false; return; }
+      C.peopleCache("admin", j.people || []);
+      paintPeople(j.people || []);
+    }, function () { if (!people.length) { who.hidden = true; find.hidden = true; notYou.hidden = true; typed.hidden = false; } });
   }
 
   function start() {
     if (!C.token()) return signIn();
-    C.api("me").then(function (j) {
+    C.api("me", { installed: C.installed() }).then(function (j) {
       if (!j.ok) return start();
       ME = j.me; CONF = j.config; PUSH_KEY = j.pushKey || "";
       /* Just given the default PIN: the Ushers App asks whether to change it. */
@@ -218,6 +253,7 @@
               s.reportId ? h("a", { class: "btn ghost", href: "#report/" + s.reportId }, "View") : null),
             s.ministration && mf && s.ministration[mf.key] ? h("div", { class: "muted" }, mf.label + ": " + s.ministration[mf.key]) : null);
         })));
+        parts.push(inChargeCard(d, load));
         parts.push(rotaCard(d.next, "Next Sunday"));
         if (d.olderOutstanding.length) {
           parts.push(h("div", { class: "card" }, h("h2", {}, "Older reports not submitted"), d.olderOutstanding.map(function (e) {
@@ -235,6 +271,45 @@
     }
     loading(); load();
     timer = setInterval(load, (C.CFG.refreshSeconds || 30) * 1000);
+  }
+
+  /* ---- in charge today -------------------------------------------------- */
+
+  /* A contact line, nothing more: whoever is named here gains no
+     permission, so the card says so where it is set. */
+  function inChargeCard(d, again) {
+    var ic = d.inCharge;
+    var head = h("div", { class: "row" }, h("h2", { class: "grow" }, "In charge today"),
+      ic ? h("span", {}, ic.name) : h("span", { class: "muted" }, "Nobody yet"));
+    if (!d.canSetInCharge) return h("div", { class: "card" }, head);
+    var out = h("div");
+    var who = h("select");
+    var open = h("button", { class: "ghost" }, "Change");
+    var box = h("div", { hidden: true },
+      h("p", { class: "muted" }, ic && ic.byDefault ? "The Head Usher, unless somebody else is named."
+        : ic && ic.today ? "Today only." : "Until changed back."),
+      who, h("p"),
+      h("div", { class: "row" },
+        h("button", { onclick: function () { set({ usherId: who.value, todayOnly: true }); } }, "Today only"),
+        h("button", { class: "ghost", onclick: function () { set({ usherId: who.value }); } }, "Until changed back"),
+        ic && !ic.byDefault ? h("button", { class: "ghost", onclick: function () { set({ clear: true }); } }, "Back to the Head Usher") : null),
+      h("p", { class: "muted" }, "A name to go to. It gives no approval or any other permission."),
+      out);
+    open.onclick = function () {
+      box.hidden = !box.hidden;
+      if (!who.options.length) activeUshers().then(function (people) {
+        people.forEach(function (u) { who.appendChild(h("option", { value: u.usherId, selected: ic && u.usherId === ic.usherId }, u.name)); });
+      });
+    };
+    function set(args) {
+      C.clear(out);
+      C.api("incharge.set", args).then(function (j) {
+        out.appendChild(j.ok ? msg(j.told ? "Saved. " + j.told + " on duty today told." : "Saved.", "ok") : msg(j.message, "bad"));
+        if (j.ok) setTimeout(again, 700);
+      }, function () { out.appendChild(msg("No connection.", "bad")); });
+    }
+    head.appendChild(open);
+    return h("div", { class: "card" }, head, box);
   }
 
   /* ---- rota ------------------------------------------------------------- */
@@ -392,6 +467,19 @@
 
   /* ---- approvals -------------------------------------------------------- */
 
+  /* The cover drop-down: active people, each marked if they are already on
+     something that day and with when they last served. */
+  function coverPicker(a) {
+    var sel = h("select", {}, h("option", { value: "" }, "Nobody yet — arrange it later"));
+    (a.cover || []).forEach(function (u) {
+      sel.appendChild(h("option", { value: u.usherId }, u.name +
+        (u.onDutyThatDay ? " · already on that day" : "") +
+        (u.lastServed ? " · last served " + C.dateLabel(u.lastServed) : " · has not served yet")));
+    });
+    return { box: h("div", {}, h("label", {}, "Who covers it"), sel), value: function () { return sel.value; } };
+  }
+
+
   function approvals() {
     loading();
     Promise.all([C.api("authorisations.list", { status: "pending" }), C.api("authorisations.list", {})]).then(function (r) {
@@ -401,9 +489,19 @@
       pending.forEach(function (a) {
         var note = h("input", { placeholder: "e.g. Confirmed with the Head Usher" });
         var pin = pinInput("p-" + a.id), out = h("div");
+        /* Digits only; Approve and Reject stay their own tap, because the
+           PIN alone cannot say which one was meant. */
+        C.pinBox(pin, null);
+        /* A "can't make it" is decided and covered in one go where the
+           cover is known: the picker says who is already on something that
+           day and when each person last served, so a name is not chosen
+           blind. Approving without naming one leaves the duty open and the
+           request waiting for cover. */
+        var cover = a.cover ? coverPicker(a) : null;
         function decide(decision) {
           C.clear(out);
-          C.api("authorisation.decide", { id: a.id, decision: decision, note: note.value, pin: pin.value }).then(function (x) {
+          C.api("authorisation.decide", { id: a.id, decision: decision, note: note.value, pin: pin.value,
+                                          coverId: cover ? cover.value() : "" }).then(function (x) {
             if (!x.ok) return out.appendChild(msg(x.message + (x.left !== undefined ? " " + x.left + " tries left." : ""), "bad"));
             approvals();
           }, function () { out.appendChild(msg("No connection. Deciding needs a signal, so your PIN can be checked.", "bad")); });
@@ -413,11 +511,33 @@
           a.about.rostered ? h("div", {}, "Rostered: " + a.about.rostered) : null,
           a.reason ? h("div", { class: "muted" }, a.reason) : null,
           a.about.reportId ? h("a", { href: "#report/" + a.about.reportId }, "See the report") : null,
+          cover ? cover.box : null,
           a.canDecide ? [h("label", {}, "Note"), note, h("label", { for: "p-" + a.id }, "Your PIN"), pin, h("p"),
             h("div", { class: "row" }, h("button", { onclick: function () { decide("approve"); } }, "Approve"),
               h("button", { class: "danger", onclick: function () { decide("reject"); } }, "Reject"))]
             : h("div", { class: "muted" }, "Somebody else must decide this one."), out));
       });
+      /* Approved, nobody covering it yet: the duty is a gap until somebody
+         is named, so it is asked for here rather than left to be noticed. */
+      var waiting = r[1].authorisations.filter(function (a) { return a.needsCover; });
+      if (waiting.length) {
+        parts.push(h("h2", {}, "Cover still to arrange"));
+        waiting.forEach(function (a) {
+          var pin = pinInput("c-" + a.id), out = h("div"), pick = coverPicker(a);
+          C.pinBox(pin, null);
+          parts.push(h("div", { class: "card" }, h("b", {}, a.about.title ? a.about.title + " · " + C.dateLabel(a.about.date) : "A duty"),
+            h("div", {}, a.subject + " is off this duty."), pick.box,
+            h("label", { for: "c-" + a.id }, "Your PIN"), pin, h("p"),
+            h("button", { onclick: function () {
+              C.clear(out);
+              if (!pick.value()) return out.appendChild(msg("Choose who is covering it.", "bad"));
+              C.api("duty.cover", { id: a.id, coverId: pick.value(), pin: pin.value }).then(function (x) {
+                if (!x.ok) return out.appendChild(msg(x.message + (x.left !== undefined ? " " + x.left + " tries left." : ""), "bad"));
+                approvals();
+              }, function () { out.appendChild(msg("No connection. Naming the cover needs a signal, so your PIN can be checked.", "bad")); });
+            } }, "Save the cover"), out));
+        });
+      }
       if (all.length) {
         parts.push(h("h2", {}, "Decided"));
         parts.push(h("div", { class: "card" }, h("table", {}, all.map(function (a) {
@@ -443,6 +563,18 @@
         return;
       }
       var parts = [h("h1", {}, "Ushers")];
+      /* Who has the app on a phone at all. On iPhone no alert reaches a
+         phone until they do, so the count is worth a line of its own. */
+      var notOn = j.ushers.filter(function (u) { return u.active && !u.installed; });
+      var onCount = j.ushers.filter(function (u) { return u.active; }).length - notOn.length;
+      var steps = h("div");
+      parts.push(h("div", { class: "card" }, h("div", { class: "row" },
+          h("b", { class: "grow" }, "Installed: " + onCount + " of " + (onCount + notOn.length)),
+          notOn.length && j.canSend ? h("button", { class: "ghost", onclick: function () { sendSteps(null, steps); } },
+            "Send install steps to all " + notOn.length) : null),
+        notOn.length ? h("div", { class: "muted" }, notOn.map(function (u) { return u.name; }).join(", ") + " have not added it to a phone yet.")
+          : h("div", { class: "muted" }, "Everybody has it on a phone."),
+        steps));
       if (j.canManage) parts.push(h("p", { class: "muted" }, "To make someone Head Usher, Assistant Head Usher" +
         (j.canGrantAny ? ", Treasurer or System Administrator" : "") + ", or to remove someone, tap Edit details and roles under their name."));
       if (j.canManage) parts.push(usherForm(null, j));
@@ -452,15 +584,26 @@
         if (i === on.length) parts.push(h("h2", {}, "Removed"), h("p", { class: "muted" }, "They cannot sign in. To bring someone back, tap Edit details and roles and tick Active."));
         parts.push(h("div", { class: "card" }, h("div", { class: "row" }, h("b", { class: "grow" }, u.name), u.active ? null : h("span", { class: "chip bad" }, "Removed"),
             u.hasPin ? null : h("span", { class: "chip warn" }, "No PIN"),
-            u.active && !u.alerts ? h("span", { class: "chip warn", title: "No phone has alerts on: they are emailed instead" }, "Alerts off") : null),
+            u.active && !u.alerts ? h("span", { class: "chip warn", title: "No phone has alerts on: they are emailed instead" }, "Alerts off") : null,
+            u.active && !u.installed ? h("span", { class: "chip warn", title: "Ushers is not on a Home Screen for them, so alerts cannot reach their phone" }, "Not installed") : null),
           h("div", {}, u.roles.map(function (r) { return h("span", { class: "chip" }, labelOf(r)); })),
           h("div", { class: "muted" }, [u.email, u.phone].filter(Boolean).join(" · ")),
+          u.active && !u.installed && j.canSend ? (function () { var o = h("div");
+            return h("div", {}, h("button", { class: "ghost", onclick: function () { sendSteps(u.usherId, o); } }, "Send install steps"), o); })() : null,
           canEdit(u, j) ? h("a", { class: "btn ghost", href: "#ushers/" + encodeURIComponent(u.usherId) }, "Edit details and roles")
             : j.canManage ? h("p", { class: "muted" }, "Only a System Administrator can change or remove a Treasurer or System Administrator.") : null));
       });
       show.apply(null, parts);
     }, failed);
   }
+  /* The steps go to one person, or to everybody who has not installed it. */
+  function sendSteps(usherId, out) {
+    C.clear(out);
+    C.api("install.steps", usherId ? { usherIds: [usherId] } : {}).then(function (j) {
+      out.appendChild(j.ok ? msg("Sent to " + j.sent + ": " + j.names.join(", "), "ok") : msg(j.message, "bad"));
+    }, function () { out.appendChild(msg("No connection.", "bad")); });
+  }
+
   /* Mirrors the server: without roles.grant_any, nobody who is Treasurer or
      System Administrator can be edited, have their PIN reset or be removed. */
   function canEdit(u, j) {
@@ -512,8 +655,8 @@
           var bad = (rs || []).filter(function (x) { return !x.ok; })[0];
           if (bad) throw new Error(bad.message);
           if (queued || (rs || []).some(function (x) { return x.queued; })) {
-            return out.appendChild(msg("No signal. Saved on this device; it is sent when the signal is back." +
-              (rolesLater ? " They are added as an Usher: give the other roles once they appear in the list." : ""), "ok"));
+            return out.appendChild(msg("Saved on this phone. Not sent yet." +
+              (rolesLater ? " Added as an Usher: give the other roles once they appear in the list." : ""), "ok"));
           }
           location.hash = "#ushers"; ushers();
         }).catch(function (e) { out.appendChild(msg(e.network ? "No connection." : e.message, "bad")); });
@@ -534,7 +677,7 @@
       u && u.active ? h("button", { class: "danger", onclick: function () {
         C.clear(out);
         if (!confirm("Remove " + u.name + "?\n\nThey will no longer be able to sign in, every role but Usher is taken away and they come off every duty from today. " +
-          "Their reports and dues stay on the record. You can bring them back by ticking Active.")) return;
+          "Reports and dues kept.")) return;
         C.send("usher.remove", { usherId: u.usherId }, "Remove " + u.name).then(function (x) {
           if (!x.ok) throw new Error(x.message);
           if (x.queued) return out.appendChild(msg(x.message, "ok"));
@@ -560,6 +703,7 @@
       var parts = [h("div", { class: "row" }, h("h1", { class: "grow" }, "Notifications"),
         h("button", { class: "ghost", onclick: function () { C.send("notifications.read", { all: true }, "Mark notifications read").then(notes, failed); } }, "Mark all read"))];
       parts.push(alertsCard());
+      parts.push(sentCard());
       if (!j.notifications.length) parts.push(h("p", { class: "muted" }, "Nothing yet."));
       j.notifications.forEach(function (n) {
         var link = n.refType === "report" ? "#report/" + n.refId : n.refType === "authorisation" ? "#approvals" :
@@ -572,6 +716,28 @@
       });
       show.apply(null, parts);
     }, failed);
+  }
+
+  /* What went out: one line per batch of phone alerts or emails, so a
+     message that reached nobody is as plain as one that reached everybody.
+     Read only, and never a money figure. */
+  function sentCard() {
+    var box = h("div", { class: "card" }, h("h3", {}, "What went out"), h("p", { class: "muted" }, "Loading…"));
+    C.api("sent.list", { days: 14 }).then(function (j) {
+      C.clear(box);
+      box.appendChild(h("h3", {}, "What went out"));
+      if (!j.ok) { box.appendChild(h("p", { class: "muted" }, j.message)); return; }
+      if (!j.sent.length) { box.appendChild(h("p", { class: "muted" }, "Nothing in the last " + j.days + " days.")); return; }
+      box.appendChild(h("table", {}, j.sent.map(function (x) {
+        return h("tr", {}, h("td", {}, C.timeLabel(x.at)),
+          h("td", {}, x.title + (x.by ? " · " + x.by : "")),
+          h("td", { class: "num" }, x.reached + " of " + x.toCount + " " + (x.kind === "email" ? "emailed" : "phones")));
+      })));
+    }, function () {
+      C.clear(box);
+      box.appendChild(h("h3", {}, "What went out"), h("p", { class: "muted" }, "No connection."));
+    });
+    return box;
   }
 
   /* Alerts on this phone or computer: the same notifications, as an alert. */
@@ -610,16 +776,73 @@
   /* ---- message ---------------------------------------------------------- */
 
   function message() {
-    var title = h("input", { placeholder: "e.g. Ushers meeting after service" });
-    var body = h("textarea", { rows: "4", placeholder: "e.g. Please stay for ten minutes after the Second Service." });
-    var out = h("div");
-    show(h("h1", {}, "Message the ushers"), h("div", { class: "card" }, h("label", {}, "Title"), title, h("label", {}, "Message"), body, h("p"),
-      h("button", { onclick: function () {
-        C.clear(out);
-        C.send("notify.send", { all: true, title: title.value, body: body.value }, "Message: " + (title.value || "to all ushers")).then(function (x) {
-          out.appendChild(x.queued ? msg(x.message, "ok") : x.ok ? msg("Sent to " + x.sent + ".", "ok") : msg(x.message, "bad"));
-        });
-      } }, "Send to all active ushers"), out));
+    loading();
+    Promise.all([C.api("messages.list"), activeUshers()]).then(function (r) {
+      var j = r[0], people = r[1];
+      var title = h("input", { placeholder: "e.g. Ushers meeting after service" });
+      var body = h("textarea", { rows: "4", placeholder: "e.g. Please stay for ten minutes after the Second Service." });
+      var out = h("div");
+      /* Who it is for is read when it goes, not when it is written, so a
+         message set for Sunday morning reaches whoever is on duty then. */
+      var who = h("select", {}, (j.audiences || []).map(function (x) { return h("option", { value: x.key }, x.label); }));
+      var chosen = {};
+      var picked = h("div", { class: "people", hidden: true }, people.map(function (u) {
+        return h("label", { class: "check" }, h("input", { type: "checkbox",
+          onchange: function (e) { chosen[u.usherId] = e.target.checked; } }), u.name);
+      }));
+      who.onchange = function () { picked.hidden = who.value !== "chosen"; };
+      var when = h("select", {}, h("option", { value: "" }, "Now"), h("option", { value: "later" }, "At a time I choose"));
+      var at = h("input", { type: "datetime-local" });
+      var atRow = h("div", { hidden: true }, h("label", {}, "When it goes"), at);
+      when.onchange = function () { atRow.hidden = when.value !== "later"; };
+      var pin = h("input", { type: "date" });
+      show(h("h1", {}, "Message the ushers"),
+        h("div", { class: "card" },
+          h("label", {}, "Title"), title, h("label", {}, "Message"), body,
+          h("label", {}, "Who it goes to"), who, picked,
+          h("label", {}, "When"), when, atRow,
+          h("label", {}, "Keep it on Home until (optional)"), pin, h("p"),
+          h("button", { onclick: function () {
+            C.clear(out);
+            var args = { title: title.value, body: body.value, audience: who.value, pinnedUntil: pin.value || "" };
+            if (who.value === "chosen") args.usherIds = Object.keys(chosen).filter(function (k) { return chosen[k]; });
+            if (when.value === "later") {
+              if (!at.value) return out.appendChild(msg("Choose when it goes.", "bad"));
+              args.sendAt = new Date(at.value).getTime();
+            }
+            C.send("notify.send", args, "Message: " + (title.value || "to the ushers")).then(function (x) {
+              out.appendChild(x.queued ? msg(x.message, "ok") : !x.ok ? msg(x.message, "bad")
+                : x.scheduled ? msg("Set for " + C.timeLabel(x.sendAt) + ", to " + x.audienceLabel + ".", "ok")
+                : msg("Sent to " + x.sent + " (" + x.audienceLabel + "): " + x.phones + " phones, " +
+                      x.emails + " emails, " + x.unreachable + " unreachable.", "ok"));
+              if (x.ok && !x.queued) setTimeout(message, 1200);
+            });
+          } }, "Send"), out),
+        messagesSoFar(j));
+    }, failed);
+  }
+
+  /* What has been sent, how many have read it, and the ones still waiting
+     to go. "Seen by" counts the people who opened it, not the phones it
+     reached. */
+  function messagesSoFar(j) {
+    if (!j.messages || !j.messages.length) return h("p", { class: "muted" }, "Nothing sent yet.");
+    return h("div", {}, h("h2", {}, "Sent and waiting"), j.messages.map(function (m) {
+      var out = h("div");
+      return h("div", { class: "card" },
+        h("div", { class: "row" }, h("b", { class: "grow" }, m.title),
+          m.sentAt ? h("span", { class: "chip" }, "Seen by " + m.seen + " of " + m.to)
+            : h("span", { class: "chip warn" }, "Goes " + C.timeLabel(m.sendAt))),
+        h("div", { class: "muted" }, "To " + m.audienceLabel + (m.by ? " · " + m.by : "") +
+          (m.pinnedUntil ? " · on Home until " + C.dateLabel(m.pinnedUntil) : "")),
+        m.body ? h("div", { class: "muted" }, m.body) : null,
+        m.sentAt && m.unseen ? h("button", { class: "ghost", onclick: function () {
+          C.clear(out);
+          C.api("message.remind", { id: m.id }).then(function (x) {
+            out.appendChild(x.ok ? msg("Reminded " + x.sent + ".", "ok") : msg(x.message, "bad"));
+          }, function () { out.appendChild(msg("No connection.", "bad")); });
+        } }, "Remind the " + m.unseen + " who have not read it") : null, out);
+    }));
   }
 
   /* ---- audit and settings ---------------------------------------------- */
@@ -633,19 +856,71 @@
     }, failed);
   }
 
+  /* Repeating events, as patterns rather than dates typed one at a time:
+     the prayer meeting on the first Saturday, the retreat in September.
+     Pausing one stops the events still to come without losing the pattern. */
+  function repeatingCard(config, again) {
+    var rules = (config.event_rules || []).slice();
+    var out = h("div");
+    function save(next, what) {
+      C.clear(out);
+      C.api("config.set", { key: "event_rules", value: next, reason: what }).then(function (x) {
+        if (!x.ok) return out.appendChild(msg(x.message, "bad"));
+        out.appendChild(msg("Saved.", "ok"));
+        setTimeout(again, 700);
+      }, function () { out.appendChild(msg("No connection.", "bad")); });
+    }
+    var kinds = Object.keys(CONF.eventTypes).filter(function (k) { return !CONF.eventTypes[k].sunday; });
+    var id = h("input", { placeholder: "prayer" }), title = h("input", { placeholder: "Prayer Meeting" });
+    var kind = h("select", {}, kinds.map(function (k) { return h("option", { value: k }, CONF.eventTypes[k].label); }));
+    var pattern = h("select", {},
+      [["first-saturday", "the first Saturday of each month"], ["last-friday", "the last Friday of each month"],
+       ["nth-weekday:2:sun", "the second Sunday of each month"], ["weekly:wed", "every Wednesday"],
+       ["yearly:09:first-saturday", "the first Saturday of September, each year"]]
+        .map(function (x) { return h("option", { value: x[0] }, x[1]); }));
+    var time = h("input", { placeholder: "17:00" });
+    return h("div", { class: "card" }, h("h2", {}, "Repeating events"),
+      rules.length ? rules.map(function (r, i) {
+        return h("div", { class: "row" },
+          h("span", { class: "grow" }, (r.title || r.type) + " · " + (r.time || "no time") + " · " + (r.rule || "")),
+          r.paused ? h("span", { class: "chip warn" }, "Paused") : null,
+          h("button", { class: "ghost", onclick: function () {
+            var next = rules.slice();
+            next[i] = Object.assign({}, r, { paused: !r.paused });
+            save(next, (r.paused ? "Started again: " : "Paused: ") + r.id);
+          } }, r.paused ? "Start again" : "Pause"),
+          h("button", { class: "ghost", onclick: function () {
+            save(rules.filter(function (x, n) { return n !== i; }), "Deleted: " + r.id);
+          } }, "Delete"));
+      }) : h("p", { class: "muted" }, "None yet. The Sunday services come from the rota, not from here."),
+      h("h3", {}, "Add one"),
+      h("label", {}, "Short id"), id, h("label", {}, "Name"), title,
+      h("label", {}, "Kind of event"), kind, h("label", {}, "Pattern"), pattern,
+      h("label", {}, "Time"), time, h("p"),
+      h("button", { onclick: function () {
+        C.clear(out);
+        if (!id.value) return out.appendChild(msg("Give it a short id.", "bad"));
+        save(rules.concat([{ id: id.value, title: title.value, type: kind.value, rule: pattern.value, time: time.value, paused: false }]),
+             "Added: " + id.value);
+      } }, "Add"),
+      h("p", { class: "muted" }, "Events already past are never changed. Pausing or deleting one stops the ones still to come."),
+      out);
+  }
+
   function settings() {
     loading();
     C.api("config.get").then(function (j) {
       var parts = [h("h1", {}, "Settings")];
       if (window.UshersTesting && can("ushers.manage") && can("roles.grant_any")) parts.push(window.UshersTesting.card(CONF));
-      parts.push(h("h2", {}, "Rules"), h("p", { class: "muted" }, "Each rule is stored on the server and written to the CONFIG tab. Values are JSON."));
+      parts.push(repeatingCard(j.config, settings));
+      parts.push(h("h2", {}, "Rules"), h("p", { class: "muted" }, "Values are JSON."));
       Object.keys(j.config).forEach(function (k) {
         var box = h("textarea", { rows: typeof j.config[k] === "object" && j.config[k] !== null ? "4" : "1" }, JSON.stringify(j.config[k], null, 1));
         var out = h("span");
         parts.push(h("div", { class: "card" }, h("b", {}, k), box, h("p"), h("button", { class: "ghost", onclick: function () {
           var v;
           try { v = JSON.parse(box.value); } catch (e) { out.textContent = " Not valid JSON."; return; }
-          C.send("config.set", { key: k, value: v }, "Setting: " + k).then(function (x) { out.textContent = x.queued ? " Saved on this device; sent when the signal is back." : x.ok ? " Saved." : " " + x.message; });
+          C.send("config.set", { key: k, value: v }, "Setting: " + k).then(function (x) { out.textContent = x.queued ? " Saved on this phone. Not sent yet." : x.ok ? " Saved." : " " + x.message; });
         } }, "Save"), out));
       });
       show.apply(null, parts);

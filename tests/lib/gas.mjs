@@ -420,7 +420,12 @@ export function makeGas(opts) {
     base64Decode(s) { return [...Buffer.from(String(s), "base64")].map((n) => (n > 127 ? n - 256 : n)); },
     getUuid() { return "uuid-" + Math.random().toString(36).slice(2); },
     sleep() {},
-    newBlob(v) { return { getDataAsString: () => String(v), getBytes: () => [...Buffer.from(String(v))] }; },
+    /* Real Apps Script takes (data, contentType, name) and the name is what
+       the recipient sees on the attachment, so the fake keeps all three. */
+    newBlob(v, type, name) {
+      return { getDataAsString: () => String(v), getBytes: () => [...Buffer.from(String(v))],
+               getContentType: () => type || "application/octet-stream", getName: () => name || "" };
+    },
     DigestAlgorithm: { SHA_256: "SHA_256", MD5: "MD5" },
     Charset: { UTF_8: "UTF_8" }
   };

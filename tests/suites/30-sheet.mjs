@@ -106,7 +106,7 @@ export default async function ({ root }) {
     const map = ctx.headerMap(sh);
     const names = sh.getRange(2, map.FULL_NAME, sh.getLastRow() - 1, 1).getValues().map((x) => x[0]);
     a.same(names, ["Sam Admin", "John Smith"]);
-    a.eq(gas.mail[0].to, "sam@example.org");
+    a.same(gas.mail.map((m) => m.to).sort(), ["john@example.org", "sam@example.org"]);
     for (const tab of Object.keys(ctx.TABS)) a.eq(gas.ss.getSheetByName(tab).protections.length, 1, tab + " protected after the drain");
   });
 
@@ -148,20 +148,59 @@ export default async function ({ root }) {
   s.test("Check everything shows the knock, the last collection and the server's clock", (a) => {
     const { gas, ctx } = loadCodeGs(root, { props: PROPS, userEmail: "owner@example.org" });
     ctx.setUpSheet();
-    const health = (checks) => gas.setFetchReply(() => ({ code: 200, body: JSON.stringify({ ok: true, server: "w0.3.5",
-      checks: Object.assign({ pinPepper: true, sheetToken: true, waitingForSheet: 0 }, checks) }) }));
+    const health = (checks, people) => gas.setFetchReply(() => ({ code: 200, body: JSON.stringify({ ok: true, server: "w0.3.5",
+      checks: Object.assign({ pinPepper: true, sheetToken: true, waitingForSheet: 0 }, checks), people: people }) }));
     health({ sheetKnock: false, sheetLastDrained: 0, clockLastTick: 0 });
     let lines = ctx.healthLines().join("\n");
-    a.ok(lines.includes("✗ The server has SHEET_WEBAPP_URL"), lines);
-    a.ok(lines.includes("✗ The sheet has never collected"), lines);
-    a.ok(lines.includes("✗ The server's clock has never run"), lines);
+    a.has(lines, "✗ The server has SHEET_WEBAPP_URL");
+    a.has(lines, "✗ The sheet has never collected");
+    a.has(lines, "✗ The server's clock has never run");
+    a.has(lines, "NEEDS ATTENTION");
     health({ sheetKnock: true, sheetLastDrained: Date.now() - 12 * 60000, clockLastTick: Date.now() - 2 * 60000 });
     lines = ctx.healthLines().join("\n");
-    a.ok(lines.includes("✓ The server has SHEET_WEBAPP_URL"), lines);
-    a.ok(lines.includes("✓ The sheet last collected 12 minutes ago"), lines);
-    a.ok(lines.includes("✓ The server's clock last ran 2 minutes ago"), lines);
+    a.has(lines, "✓ The server has SHEET_WEBAPP_URL");
+    a.has(lines, "✓ The sheet last collected 12 minutes ago");
+    a.has(lines, "✓ The server's clock last ran 2 minutes ago");
+    a.has(lines, "Nothing needs attention.");
+    a.hasnt(lines, "NEEDS ATTENTION");
     health({ sheetKnock: true, sheetLastDrained: Date.now(), clockLastTick: Date.now() - 3 * 3600000 });
-    a.ok(ctx.healthLines().join("\n").includes("✗ The server's clock last ran 3 hours ago"));
+    a.has(ctx.healthLines().join("\n"), "✗ The server's clock last ran 3 hours ago");
+  });
+
+  s.test("Check everything names people, and sorts them into the three blocks", (a) => {
+    const { gas, ctx } = loadCodeGs(root, { props: PROPS, userEmail: "owner@example.org" });
+    ctx.setUpSheet();
+    const ok = { pinPepper: true, sheetToken: true, sheetKnock: true, waitingForSheet: 0,
+      sheetLastDrained: Date.now(), clockLastTick: Date.now() - 60000 };
+    gas.setFetchReply(() => ({ code: 200, body: JSON.stringify({ ok: true, server: "w0.3.11", checks: ok, people: {
+      ushers: 9, alertsOn: 7, alertsOff: ["John Smith", "Mary Jones"], unreachable: ["Mary Jones"],
+      defaultPin: ["Peter Obi"], sunday: "2026-10-11",
+      sundayGaps: ["Sunday Second Service: 1 of 2"], reportsOverdue: ["Vigil 03/10/2026"]
+    } }) }));
+    const lines = ctx.healthLines();
+    const text = lines.join("\n");
+    const block = (name) => text.slice(text.indexOf(name), text.indexOf(name) === -1 ? 0 : undefined).split(/\n(?=[A-Z]{4})/)[0];
+    a.has(block("NEEDS ATTENTION"), "Nothing can reach: Mary Jones");
+    a.has(block("NEEDS ATTENTION"), "Sunday 2026-10-11 is short — Sunday Second Service: 1 of 2");
+    a.has(block("NEEDS ATTENTION"), "Report still missing: Vigil 03/10/2026");
+    a.has(block("STILL TO DO"), "No alerts yet for: John Smith, Mary Jones");
+    a.has(block("STILL TO DO"), "Still on the default PIN: Peter Obi");
+    a.has(block("FINE"), "Alerts on: 7 of 9");
+    a.hasnt(block("FINE"), "Nothing can reach");
+  });
+
+  s.test("with nobody to chase, the people lines say so", (a) => {
+    const { gas, ctx } = loadCodeGs(root, { props: PROPS, userEmail: "owner@example.org" });
+    ctx.setUpSheet();
+    gas.setFetchReply(() => ({ code: 200, body: JSON.stringify({ ok: true, server: "w0.3.11",
+      checks: { pinPepper: true, sheetToken: true, sheetKnock: true, waitingForSheet: 0, sheetLastDrained: Date.now(), clockLastTick: Date.now() },
+      people: { ushers: 9, alertsOn: 9, alertsOff: [], unreachable: [], defaultPin: [], sunday: "2026-10-11", sundayGaps: [], reportsOverdue: [] } }) }));
+    const text = ctx.healthLines().join("\n");
+    a.has(text, "Nothing needs attention.");
+    a.has(text, "✓ Alerts on: 9 of 9");
+    a.has(text, "✓ Sunday 2026-10-11 is fully rostered");
+    a.has(text, "✓ No reports outstanding");
+    a.hasnt(text, "STILL TO DO");
   });
 
   s.test("the same rows drained twice are written once", (a) => {

@@ -1,3 +1,8 @@
+-- The schema as it stood at server w0.3.5 (commit 4a5dc03), kept on
+-- purpose: a live database can still look like this, so the Worker has to
+-- bring it up to date by itself. Never refresh this file to match the
+-- current schema; add a newer fixture only when this one can no longer be
+-- a live state.
 -- ==========================================================================
 -- Ushering App, D1 schema
 --
@@ -28,13 +33,6 @@ CREATE TABLE IF NOT EXISTS ushers (
   pin_hash    TEXT,
   pin_iter    INTEGER,
   pin_set_at  INTEGER,
-  -- 1 = the PIN was set for them (the default PIN); at the next sign-in they
-  -- are asked once whether to keep it, before anything else.
-  pin_must_change INTEGER DEFAULT 0,
-  -- when this person first opened Ushers from a phone's Home Screen; on
-  -- iPhone alerts do not work until they have, so an empty column is a
-  -- person no alert can reach.
-  installed_at INTEGER,
   created_at  INTEGER,
   updated_at  INTEGER
 );
@@ -96,9 +94,6 @@ CREATE TABLE IF NOT EXISTS events (
   thanksgiving  INTEGER DEFAULT 0,
   status        TEXT DEFAULT 'scheduled',  -- scheduled | cancelled
   notes         TEXT DEFAULT '',
-  -- made by a repeating rule in Settings (event_rules), so changing the
-  -- rule can move the ones still to come and leave the past alone.
-  rule_id       TEXT DEFAULT '',
   created_by    TEXT,
   created_at    INTEGER,
   updated_at    INTEGER
@@ -112,10 +107,7 @@ CREATE TABLE IF NOT EXISTS appointments (
   event_id    TEXT NOT NULL,
   usher_id    TEXT NOT NULL,
   duty        TEXT NOT NULL,         -- ushering | counting | ...
-  -- active: on duty. removed: taken off by a coordinator. released: they
-  -- asked to be let off and it was approved, and no cover has been named
-  -- yet, so the name stays on the record and the duty shows as a gap.
-  status      TEXT DEFAULT 'active', -- active | removed | released
+  status      TEXT DEFAULT 'active', -- active | removed
   created_by  TEXT,
   created_at  INTEGER,
   removed_by  TEXT,
@@ -238,8 +230,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   read_at     INTEGER,
   emailed     INTEGER DEFAULT 0,
   dedupe      TEXT UNIQUE,         -- stops a reminder going twice
-  pushed_at   INTEGER,             -- sent to the person's phones
-  ics_json    TEXT                 -- the diary entry a duty email carries
+  pushed_at   INTEGER              -- sent to the person's phones
 );
 CREATE INDEX IF NOT EXISTS notifications_usher ON notifications(usher_id, read_at);
 
@@ -313,46 +304,3 @@ CREATE TABLE IF NOT EXISTS settings (
   k  TEXT PRIMARY KEY,
   v  TEXT
 );
-
--- Changes a phone made with no signal and sent later, by the phone's own id,
--- so one sent twice (the answer lost on the way back) is done once.
-/* WHAT WENT OUT. One row per batch of phone alerts or emails, so the Head
-   Usher can see whether a message went and how many it reached, including a
-   batch that reached nobody. No money figures here. */
-/* MESSAGES from Admin -> Message. Kept because a message can be scheduled,
-   pinned to Home for a while, and counted as read, none of which a
-   notification on its own can answer. */
-CREATE TABLE IF NOT EXISTS messages (
-  id            TEXT PRIMARY KEY,
-  title         TEXT NOT NULL,
-  body          TEXT DEFAULT '',
-  audience      TEXT NOT NULL DEFAULT 'all',  -- all | sunday | first | counters | admins | chosen
-  usher_ids     TEXT DEFAULT '',              -- for 'chosen', comma separated
-  send_at       INTEGER,                      -- when it should go (now, or later)
-  sent_at       INTEGER,                      -- when it went; empty while it waits
-  pinned_until  TEXT DEFAULT '',              -- London date it stays on Home until
-  created_by    TEXT,
-  created_at    INTEGER
-);
-CREATE INDEX IF NOT EXISTS messages_due ON messages(sent_at, send_at);
-
-CREATE TABLE IF NOT EXISTS sent_log (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  at           INTEGER NOT NULL,
-  kind         TEXT NOT NULL,          -- push | email
-  type         TEXT NOT NULL DEFAULT '',
-  title        TEXT NOT NULL DEFAULT '',
-  to_count     INTEGER NOT NULL DEFAULT 0,
-  reached      INTEGER NOT NULL DEFAULT 0,
-  by_id        TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS sent_log_at ON sent_log(at);
-
-CREATE TABLE IF NOT EXISTS queued_done (
-  id        TEXT PRIMARY KEY,
-  usher_id  TEXT NOT NULL,
-  action    TEXT NOT NULL,
-  at        INTEGER NOT NULL,
-  answer    TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS queued_done_at ON queued_done(at);

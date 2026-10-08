@@ -3,8 +3,8 @@
    touched (it is on another origin). One worker at the root covers the
    Admin App under admin/ too, so opening either app once with signal is
    enough for both to open with none. Same idea as the Driver App's sw.js. */
-const CACHE = "ushers-v0.3.12";
-const SHELL = ["./", "./index.html", "./config.js", "./shared/core.js", "./shared/reports.js", "./shared/style.css", "./shared/logo.png",
+const CACHE = "ushers-v0.3.20";
+const SHELL = ["./", "./index.html", "./install.html", "./config.js", "./shared/core.js", "./shared/reports.js", "./shared/style.css", "./shared/logo.png",
   "./shared/pdf.js", "./shared/vendor/jspdf.umd.min.js",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png",
   "./admin/", "./admin/index.html", "./admin/testing.js", "./admin/manifest.webmanifest",

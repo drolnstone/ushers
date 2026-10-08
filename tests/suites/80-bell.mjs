@@ -48,6 +48,8 @@ export default async function ({ root }) {
     a.ok((await call("push.subscribe", { endpoint: ep }, T.A)).ok);
     a.eq((await call("notifications.count", {}, T.A)).alertPhones, 1);
     a.eq((await call("push.test", { endpoint: ep }, T.hu)).error, "not_subscribed", "nobody can buzz someone else's phone");
+    /* Quiet hours off, so this holds whatever hour the tests run at. */
+    for (const key of ["quiet_from", "quiet_to"]) a.ok((await call("config.set", { key, value: 0 }, T.admin)).ok);
     a.ok((await call("notify.send", { title: "Real one", body: "x", usherIds: [ID.A] }, T.hu)).ok);
     await call.settle();
     outbound.length = 0;
@@ -56,7 +58,7 @@ export default async function ({ root }) {
     a.eq(outbound.filter((o) => o.url === ep).length, 1, "one push to that phone");
     a.eq((await call("push.test", { endpoint: ep }, T.A)).error, "busy", "a double tap sends one");
     const w = await call("push.what", { endpoint: ep });
-    a.eq(w.title, "Alerts are working");
+    a.eq(w.title, "Test.", "a test says only that it is a test");
     a.eq(w.unread, 1, "the unread count rides along for the home-screen icon");
     const w2 = await call("push.what", { endpoint: ep });
     a.eq(w2.title, "Real one", "the next push is the ordinary one again");
@@ -78,7 +80,7 @@ export default async function ({ root }) {
     a.eq(sent.length, 1);
     a.eq(sent[0].to, "hu@example.org", "only the person with no phone alerts");
     a.has(sent[0].body, "Prayer meeting moved");
-    a.has(sent[0].body, "tap the bell");
+    a.has(sent[0].body, "https://drolnstone.github.io/ushers/#notes", "a link to the screen it is about");
     a.eq(await mod.emailUnalerted(env, await mod.loadConfig(env), Date.now() + 120 * 60000), 0, "and only once");
   });
 

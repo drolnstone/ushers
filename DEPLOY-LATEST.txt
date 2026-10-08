@@ -1,0 +1,57 @@
+USHERS
+======
+  app v0.3.20 · server w0.3.19 · sheet v0.3.4
+
+  Everything in the handover, built. Since app v0.3.12 · server w0.3.7 ·
+  sheet v0.3.1:
+
+  - An usher is told when they are taken off a duty, or the event is off.
+  - Phones stay quiet between 21:00 and 08:00, except a countersign or
+    approval request.
+  - Signing in: the name used last is already chosen, the list shows before
+    the server answers, the fourth digit signs in.
+  - The screens say what to do and what happened, never how the app works.
+  - A duty email carries a calendar entry for the usher's own diary, with a
+    reminder the day before.
+  - Every email ends with a link to the screen it is about.
+  - "Check everything" on the sheet names people: alerts off, unreachable,
+    still on the default PIN, not installed, Sundays short of ushers.
+  - The Admin App shows what went out: how many phones and emails each
+    message reached, including the ones it reached nobody with.
+  - Both apps offer to add Ushers to the phone, and chase anybody who has
+    not once a week. install.html is the one-page guide to share.
+  - Home says who is in charge today, with a Call button.
+  - An usher can say beforehand that they cannot make a duty; the Head Usher
+    decides and names the cover.
+  - The month's figures are emailed on the last Sunday evening, the year's
+    in December. Money only to whoever may see it.
+  - Repeating events (the prayer meeting, the retreat) as patterns in
+    Settings, and extra reminders per kind of event.
+  - Admin -> Message chooses who, when, and whether it stays on Home, and
+    shows how many have read it.
+
+YOU ARE ON              GOING TO
+  Pages   v0.3.12         v0.3.20   (merge)
+  Worker  w0.3.7          w0.3.19   (paste)
+  Code.gs v0.3.1          v0.3.4    (paste and New version)
+
+IN THIS ORDER
+1. Cloudflare -> Workers & Pages -> ushers-api -> Edit code. Replace
+   everything with the whole of
+   https://raw.githubusercontent.com/drolnstone/ushers/claude/repo-takeover-vwdkmi/server/worker.js
+   then Deploy. (New tables and columns are added by the Worker itself on
+   its first call; nothing to run by hand.)
+2. The sheet -> Extensions -> Apps Script. Replace everything with the whole
+   of
+   https://raw.githubusercontent.com/drolnstone/ushers/claude/repo-takeover-vwdkmi/Code.gs
+   then Save, Deploy, Manage deployments, the pencil, New version, Deploy.
+   Then back on the sheet: Ushering -> Set up the sheet.
+3. Merge the pull request. GitHub Pages updates itself; a phone picks the
+   new app up the next time it is opened.
+
+AFTER IT
+A. The foot of both apps reads
+   app v0.3.20 · server w0.3.19 · sheet v0.3.4.
+B. One thing to try: Admin -> Ushers now says "Installed: n of m" and marks
+   anybody who has not added Ushers to a phone. Open the Ushers App from a
+   Home Screen once and the mark goes.

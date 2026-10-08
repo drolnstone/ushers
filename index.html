@@ -59,7 +59,7 @@
   function msg(text, kind) { return h("div", { class: "msg " + (kind || "") }, text); }
   function show() { C.clear(main); main.appendChild(h.apply(null, ["div", {}].concat(Array.prototype.slice.call(arguments)))); C.foot(document.getElementById("foot")); }
   function loading() { show(h("p", { class: "muted" }, "Loading…")); }
-  function offline(err) { show(msg(err && err.network ? "No connection, and this screen has not been opened on this phone before. It shows once the signal is back." : String(err), "bad")); }
+  function offline(err) { show(msg(err && err.network ? "No connection. This screen has not been opened on this phone yet." : String(err), "bad")); }
   function statusChip(code, label) { return h("span", { class: "chip status-" + (code || "") }, label || "Not started"); }
 
   C.onSignedOut = function () { ME = null; signIn(); };
@@ -68,7 +68,7 @@
   function paintQueue() {
     var q = C.queue(), b = document.getElementById("queueBanner");
     b.hidden = !q.length;
-    b.textContent = q.length ? q.length + " saved on this phone — waiting for connection" +
+    b.textContent = q.length ? q.length + " saved on this phone. Not sent yet" +
       (q.some(function (x) { return x.lastError; }) ? ". One was refused: open Home to see why." : "") : "";
   }
 
@@ -82,9 +82,13 @@
     document.getElementById("treasurerTab").hidden = true;
     var who = h("select", { id: "who" }, h("option", { value: "" }, "Choose your name"));
     var typed = h("input", { id: "whoTyped", placeholder: "e.g. John Smith", autocomplete: "name", hidden: true });
+    var find = h("input", { id: "whoFind", placeholder: "Type to find your name", hidden: true });
+    var notYou = h("button", { class: "ghost", id: "notYou", hidden: true, onclick: function () {
+      C.forgetWho(); who.value = ""; notYou.hidden = true; who.focus();
+    } }, "Not you?");
     var pin = h("input", { id: "pin", type: "password", inputmode: "numeric", autocomplete: "current-password", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var out = h("div");
-    var go = h("button", { onclick: function () {
+    function submit() {
       out.textContent = "";
       var body = { pin: pin.value };
       if (!typed.hidden) body.name = typed.value; else body.usherId = who.value;
@@ -92,19 +96,50 @@
       go.disabled = true;
       C.api("login", body).then(function (j) {
         go.disabled = false;
-        if (!j.ok) { out.appendChild(msg(j.message + (j.left !== undefined ? " " + j.left + " tries left." : ""), "bad")); return; }
+        if (!j.ok) {
+          pin.value = ""; pin.focus();
+          out.appendChild(msg(j.message + (j.left !== undefined ? " " + j.left + " tries left." : ""), "bad"));
+          return;
+        }
         C.setToken(j.token);
         C.rememberPin(j.me.name, pin.value);
+        if (body.usherId) C.rememberWho(body.usherId, j.me.name);
         start();
       }, function (e) { go.disabled = false; out.appendChild(msg("No connection. Try again when you have signal.", "bad")); });
-    } }, "Sign in");
+    }
+    var go = h("button", { onclick: submit }, "Sign in");
+    C.pinBox(pin, submit);
+    /* Choosing a name moves straight to the PIN, so the number pad opens. */
+    who.addEventListener("change", function () { if (who.value) pin.focus(); });
+    find.addEventListener("input", function () { paintPeople(people, find.value); });
     show(h("h1", {}, "Sign in"),
-      h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), who, typed, h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
+      h("div", { class: "card" }, h("label", { for: "who" }, "Your name"), find, who, typed, notYou,
+        h("label", { for: "pin" }, "PIN"), pin, h("p"), go, out));
+
+    var people = [];
+    function paintPeople(list, filter) {
+      people = list || [];
+      var want = String(filter || "").trim().toLowerCase();
+      var shown = want ? people.filter(function (p) { return p.name.toLowerCase().indexOf(want) !== -1; }) : people;
+      var had = who.value;
+      C.clear(who);
+      who.appendChild(h("option", { value: "" }, "Choose your name"));
+      shown.forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
+      find.hidden = people.length < 15;
+      var last = C.lastWho();
+      var pick = shown.some(function (p) { return p.id === had; }) ? had
+        : (last && shown.some(function (p) { return p.id === last.id; }) ? last.id : "");
+      who.value = pick;
+      notYou.hidden = !pick;
+      if (pick && !pin.value) pin.focus();
+    }
+    paintPeople(C.peopleCached("ushers"));
     C.api("people").then(function (j) {
       if (j.firstSetup) return firstSetup();
-      if (j.typeName) { who.hidden = true; typed.hidden = false; return; }
-      (j.people || []).forEach(function (p) { who.appendChild(h("option", { value: p.id }, p.name)); });
-    }, function () { who.hidden = true; typed.hidden = false; });
+      if (j.typeName) { who.hidden = true; find.hidden = true; notYou.hidden = true; typed.hidden = false; return; }
+      C.peopleCache("ushers", j.people || []);
+      paintPeople(j.people || []);
+    }, function () { if (!people.length) { who.hidden = true; find.hidden = true; notYou.hidden = true; typed.hidden = false; } });
   }
 
   /* First-time setup: makes the first System Administrator. Shown only
@@ -130,7 +165,7 @@
       }, function () { go.disabled = false; out.appendChild(msg("No connection.", "bad")); });
     } }, "Create the System Administrator");
     show(h("h1", {}, "First-time setup"),
-      h("p", { class: "muted" }, "Nobody is set up yet. This makes the first System Administrator, who then adds everyone else."),
+      h("p", { class: "muted" }, "Nobody is set up yet."),
       h("div", { class: "card" }, h("label", { for: "bt" }, "Setup token"), tok, h("label", { for: "bn" }, "Your full name"), name,
         h("label", { for: "bp1" }, "Choose a PIN (4 digits)"), p1, h("label", { for: "bp2" }, "PIN again"), p2, h("p"), go, out));
   }
@@ -140,7 +175,7 @@
   function start() {
     if (!C.token()) return signIn();
     loading();
-    C.api("me").then(function (j) {
+    C.api("me", { installed: C.installed() }).then(function (j) {
       if (!j.ok) return signIn();
       ME = j.me; CONF = j.config; PUSH_KEY = j.pushKey || "";
       document.getElementById("title").textContent = ME.name;
@@ -189,7 +224,35 @@
       h("div", {}, duty),
       d.cancelled ? h("div", { class: "chip bad" }, "Cancelled") : null,
       d.reportDue && !d.cancelled ? h("div", { class: "row" }, statusChip(d.reportStatus, d.reportStatusLabel),
-        h("a", { class: "btn ghost", href: "#report/" + d.eventId }, d.reportStatus && d.reportStatus !== "draft" ? "View report" : "Open report")) : null);
+        h("a", { class: "btn ghost", href: "#report/" + d.eventId }, d.reportStatus && d.reportStatus !== "draft" ? "View report" : "Open report")) : null,
+      cantMake(d));
+  }
+
+  /* "I can't make it": the usher says so beforehand instead of simply not
+     being there. The Head Usher decides and finds the cover; nobody else is
+     told anything until then. */
+  function cantMake(d) {
+    if (!d.appointmentId || d.cancelled || d.date < C.londonToday()) return null;
+    if (d.released === "pending") return h("div", { class: "chip warn" }, "Asked to be let off");
+    if (d.released === "approved") return h("div", { class: "chip" }, "Off this duty");
+    var out = h("div");
+    var open = h("button", { class: "ghost" }, "I can't make it");
+    var why = h("input", { type: "text", placeholder: "Why you cannot make it" });
+    var box = h("div", { hidden: true }, why, h("p"),
+      h("div", { class: "row" }, h("button", { onclick: function () { ask(); } }, "Send to the Head Usher"),
+        h("button", { class: "ghost", onclick: function () { box.hidden = true; } }, "Keep the duty")),
+      h("p", { class: "muted" }, "The Head Usher decides and arranges the cover. Nobody else hears about it."),
+      out);
+    open.onclick = function () { box.hidden = !box.hidden; if (!box.hidden) why.focus(); };
+    function ask() {
+      C.clear(out);
+      C.api("authorisation.request", { kind: "duty_release", appointmentId: d.appointmentId, reason: why.value }).then(function (j) {
+        if (!j.ok) return out.appendChild(msg(j.message, "bad"));
+        out.appendChild(msg("Sent. The Head Usher will come back to you.", "ok"));
+        setTimeout(home, 900);
+      }, function () { out.appendChild(msg("No connection. Try again when you have signal.", "bad")); });
+    }
+    return h("div", {}, open, box);
   }
 
   function home() {
@@ -198,9 +261,19 @@
       if (!j.ok) return show(msg(j.message, "bad"));
       C.bellSet(j.unread);
       var parts = [h("h1", {}, "What am I doing?")];
+      if (j.inCharge && !j.inCharge.isMe) {
+        parts.push(h("div", { class: "card" }, h("div", { class: "row" },
+          h("span", { class: "grow" }, h("b", {}, "In charge today: " + j.inCharge.name)),
+          j.inCharge.phone ? h("a", { class: "btn ghost", href: "tel:" + j.inCharge.phone }, "Call") : null)));
+      }
+      /* Pinned by the Head Usher: it stays here until its date rather than
+         being found again in the notifications list. */
+      (j.pinned || []).forEach(function (m) {
+        parts.push(h("div", { class: "card" }, h("b", {}, m.title), m.body ? h("div", {}, m.body) : null));
+      });
       var q = C.queue();
       if (q.length) {
-        parts.push(h("div", { class: "card" }, h("b", {}, "Saved on this phone — waiting for connection"),
+        parts.push(h("div", { class: "card" }, h("b", {}, "Saved on this phone. Not sent yet."),
           q.map(function (x) {
             return h("div", { class: "row" }, h("span", { class: "grow" }, x.label),
               x.lastError ? h("span", { class: "chip bad" }, x.lastError) : h("span", { class: "chip warn" }, "Waiting"),
@@ -394,6 +467,7 @@
       cs.addEventListener("change", function () { state.countersignerId = cs.value; saved.countersignerName = cs.options[cs.selectedIndex].text; keep(); });
     }
     var send = h("button", { onclick: function () { if (amend) sendAmendment(); else submit(); } }, amend ? "Sign and submit amendment" : "Sign and submit");
+    C.pinBox(pin, function () { if (amend) sendAmendment(); else submit(); }, CONF.pinMax);
     parts.push(h("div", { class: "card" }, h("h2", {}, "Sign"),
       ev.countersign ? [h("label", { for: "cs" }, "Countersigner"), cs] : null,
       h("label", { for: "sig" }, "Type your full name to sign"), sig,
@@ -427,7 +501,7 @@
           C.queueAdd({ id: body.submissionId, eventId: ev.id, action: "report.submit", label: ev.title + " · " + C.dateLabel(ev.date),
                        body: Object.assign({ offline: true, signedAt: Date.now() }, body) });
           paintQueue();
-          show(h("h1", {}, ev.title), msg("Saved on device — waiting for connection. It will be sent automatically.", "ok"), h("a", { class: "btn", href: "#home" }, "Home"));
+          show(h("h1", {}, ev.title), msg("Saved on this phone. Not sent yet.", "ok"), h("a", { class: "btn", href: "#home" }, "Home"));
         });
       });
     }
@@ -462,13 +536,13 @@
         h("p", { class: "muted" }, a.approver ? "As an approver you can amend it straight away." + (r.parts && r.parts.countersign ? " It will still need countersigning." : "") : "Your request to amend this report was approved."),
         h("button", { class: "ghost", onclick: function () { editReport(j, r); } }, "Amend report"));
     }
-    if (a.approval === "pending") return h("div", { class: "card" }, h("h3", {}, "Amend this report"), msg("You have asked to amend it. You will be told when it is decided."));
+    if (a.approval === "pending") return h("div", { class: "card" }, h("h3", {}, "Amend this report"), msg("Asked."));
     var reason = h("input", { id: "amend-why", placeholder: "e.g. The Tithe was counted twice" });
     return h("div", { class: "card" }, h("h3", {}, "Something wrong?"),
       h("label", { for: "amend-why" }, "Ask to amend this report: what needs changing?"), reason, h("p"),
       h("button", { class: "ghost", onclick: function () {
         C.send("authorisation.request", { kind: "report_amendment", reportId: r.id, reason: reason.value }, "Ask to amend " + j.event.title).then(function (x) {
-          C.clear(out).appendChild(msg(x.queued ? x.message : x.ok ? "Asked. You will be told when it is decided." : x.message, x.ok ? "ok" : "bad"));
+          C.clear(out).appendChild(msg(x.queued ? x.message : x.ok ? "Asked." : x.message, x.ok ? "ok" : "bad"));
         }, function () { C.clear(out).appendChild(msg("No connection.", "bad")); });
       } }, "Ask to amend"), out);
   }
@@ -477,11 +551,11 @@
     var reason = h("input", { id: "why", placeholder: "e.g. I did this duty in place of John" });
     var out = h("div");
     var box = h("div", { class: "card" }, h("b", {}, "You are not on the rota for this."),
-      j.submitApproval === "pending" ? msg("You have asked for approval. You will be told when it is decided.") : [
+      j.submitApproval === "pending" ? msg("Asked.") : [
         h("label", { for: "why" }, "Why are you submitting this report?"), reason, h("p"),
         h("button", { onclick: function () {
           C.send("authorisation.request", { kind: "report_submission", eventId: j.event.id, reason: reason.value }, "Ask to submit " + j.event.title).then(function (r) {
-            C.clear(out).appendChild(msg(r.queued ? r.message : r.ok ? "Asked. You will be told when it is decided." : r.message, r.ok ? "ok" : "bad"));
+            C.clear(out).appendChild(msg(r.queued ? r.message : r.ok ? "Asked." : r.message, r.ok ? "ok" : "bad"));
           }, function () { C.clear(out).appendChild(msg("No connection.", "bad")); });
         } }, "Ask for approval")], out);
     return box;
@@ -559,12 +633,13 @@
           if (!ok || !CONF.offlineSigning) return out.appendChild(msg("No connection. Countersign when you have signal.", "bad"));
           C.queueAdd({ id: sid, action: "report.countersign", label: "Countersign " + j.event.title, body: Object.assign({ offline: true, signedAt: Date.now() }, body) });
           paintQueue();
-          out.appendChild(msg("Saved on device — waiting for connection.", "ok"));
+          out.appendChild(msg("Saved on this phone. Not sent yet.", "ok"));
         });
       });
     } }, "Countersign");
+    C.pinBox(pin, function () { btn.click(); }, CONF.pinMax);
     return h("div", { class: "card" }, h("h2", {}, "Countersign"),
-      h("p", {}, "Check the report above. You are confirming it, not filling in another one."),
+      h("p", {}, "Check the report above."),
       h("label", { class: "check" }, agree, "I have reviewed this report and it is correct."),
       h("label", { for: "csig" }, "Type your full name to sign"), sig, h("label", { for: "cpin" }, "PIN"), pin, h("p"), btn, out);
   }
@@ -656,7 +731,7 @@
           .map(function (x) { return h("div", { class: "stat" }, h("b", {}, x[1]), h("span", {}, x[0])); })),
           h("p"), h("button", { class: "ghost", onclick: function (e) {
             e.target.disabled = true;
-            C.send("dues.remind", {}, "Remind everyone behind on dues").then(function (x) { e.target.textContent = x.queued ? "Saved; reminders go when the signal is back" : x.ok ? "Reminders sent: " + x.sent : x.message; });
+            C.send("dues.remind", {}, "Remind everyone behind on dues").then(function (x) { e.target.textContent = x.queued ? "Saved on this phone. Not sent yet." : x.ok ? "Reminders sent: " + x.sent : x.message; });
           } }, "Remind everyone who is behind"))];
       parts.push(h("div", { class: "card" }, h("table", {}, h("tr", {}, h("th", {}, "Name"), h("th", { class: "num" }, "Paid"), h("th", { class: "num" }, "Outstanding"), h("th", {}, "Status")),
         j.members.map(function (m) {
@@ -741,11 +816,7 @@
        are in, so the PIN is keyed straight through. The last one stops
        there; Change PIN is still their own tap. */
     [old, nw, again].forEach(function (box, i, all) {
-      box.addEventListener("input", function () {
-        var v = box.value.replace(/\D/g, "").slice(0, max);
-        if (box.value !== v) box.value = v;
-        if (v.length === max && all[i + 1]) all[i + 1].focus();
-      });
+      C.pinBox(box, all[i + 1] ? function () { all[i + 1].focus(); } : null, max);
     });
     show(h("h1", {}, forced === true ? "Change your default PIN" : "Change PIN"),
       h("div", { class: "card" },
