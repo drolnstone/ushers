@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.11";
+const SERVER_VERSION = "w0.3.12";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -1868,9 +1868,21 @@ async function aNotifySend(env, cfg, b, me) {
     }
   }
   if (!list.length) fail(400, "nobody", "Choose who to send it to.");
+  /* How far it reaches: a phone with alerts on, an email address, or
+     neither. Counted before sending, from the same lists the sending code
+     uses, and told to the sender as one notification. */
+  const off = (await peopleAlertsOff(env)).map((u) => u.id);
+  const phones = list.filter((u) => off.indexOf(u.id) === -1).length;
+  const emails = list.filter((u) => off.indexOf(u.id) !== -1 && String(u.email || "").trim()).length;
+  const nowhere = list.length - phones - emails;
   await run(env, [list.map((u) => stNotify(env, cfg, u, "admin_message", title, body, "", "")),
-    stAudit(env, me.usher.id, "notify.send", "notification", "", null, { to: list.map((u) => u.id), title }, "")]);
-  return { ok: true, sent: list.length };
+    stSent(env, "push", "admin_message", title, list.length, phones, me.usher.id),
+    stSent(env, "email", "admin_message", title, list.length, emails, me.usher.id),
+    stAudit(env, me.usher.id, "notify.send", "notification", "", null, { to: list.map((u) => u.id), title }, ""),
+    stNotify(env, cfg, me.usher, "sent_report", "Sent to " + list.length + ": " + title,
+      phones + " phone" + (phones === 1 ? "" : "s") + ", " + emails + " email" + (emails === 1 ? "" : "s") +
+      ", " + nowhere + " unreachable.", "", "")]);
+  return { ok: true, sent: list.length, phones, emails, unreachable: nowhere };
 }
 
 /* ==========================================================================
@@ -2382,9 +2394,32 @@ async function clockTick(env, now) {
         "The report for " + x.title + " on " + ukDate(x.date) + " has not been submitted.", "event", x.eid, "report:" + x.eid + ":" + x.id)) sent++;
     }
   }
+  if (sent) await run(env, [stSent(env, "push", "reminder", "Reminders", sent, sent, "")]);
   try { await emailUnalerted(env, cfg, at.getTime()); } catch (e) { console.log("unalerted", e && e.message); }
   await env.DB.prepare("INSERT INTO settings (k, v) VALUES ('clock_tick', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(String(Date.now())).run();
   return sent;
+}
+
+/* ==========================================================================
+   WHAT WENT OUT — one line per batch of alerts or emails, so "did it go,
+   and to how many?" has an answer. Never any money figures.
+   ========================================================================== */
+
+function stSent(env, kind, type, title, toCount, reached, byId) {
+  return env.DB.prepare(
+    "INSERT INTO sent_log (at, kind, type, title, to_count, reached, by_id) VALUES (?,?,?,?,?,?,?)"
+  ).bind(Date.now(), kind, type || "", text(title, 140), Number(toCount) || 0, Number(reached) || 0, byId || "");
+}
+
+async function aSentList(env, cfg, b, me) {
+  need(me, "admin.app");
+  const days = Math.min(90, Math.max(1, Number(b.days) || 14));
+  const names = await namesMap(env);
+  const rows = ((await env.DB.prepare(
+    "SELECT * FROM sent_log WHERE at>? ORDER BY at DESC LIMIT 200").bind(Date.now() - days * 86400000).all()).results) || [];
+  return { ok: true, days, sent: rows.map((r) => ({
+    at: r.at, kind: r.kind, type: r.type, title: r.title, toCount: r.to_count, reached: r.reached,
+    by: names[r.by_id] || "" })) };
 }
 
 /* ==========================================================================
@@ -2503,6 +2538,7 @@ async function emailUnalerted(env, cfg, nowMs) {
     st.push(stOutbox(env, "@email", { to: u.email, subject: text(subject, 140), body: body.slice(0, 3000) }));
     for (const n of list) st.push(env.DB.prepare("UPDATE notifications SET emailed=2 WHERE id=? AND emailed=0").bind(n.id));
   }
+  st.push(stSent(env, "email", "unalerted", rows.length + " unread for people with alerts off", Object.keys(by).length, Object.keys(by).length, ""));
   await run(env, st);
   return Object.keys(by).length;
 }
@@ -2658,6 +2694,7 @@ async function pushPending(env, cfg, selfOrigin) {
   const keys = await vapidKeys(env);
   let n = 0;
   for (const sub of subs) if (await pushOne(env, sub, keys, selfOrigin)) n++;
+  await run(env, [stSent(env, "push", rows[0].type, rows.length + " notification" + (rows.length === 1 ? "" : "s"), subs.length, n, "")]);
   return n;
 }
 
@@ -2759,7 +2796,9 @@ const MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS push_subs_usher ON push_subs(usher_id)",
   "ALTER TABLE ushers ADD COLUMN pin_must_change INTEGER DEFAULT 0",
   "CREATE TABLE IF NOT EXISTS queued_done (id TEXT PRIMARY KEY, usher_id TEXT NOT NULL, action TEXT NOT NULL, at INTEGER NOT NULL, answer TEXT NOT NULL)",
-  "CREATE INDEX IF NOT EXISTS queued_done_at ON queued_done(at)"
+  "CREATE INDEX IF NOT EXISTS queued_done_at ON queued_done(at)",
+  "CREATE TABLE IF NOT EXISTS sent_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, kind TEXT NOT NULL, type TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', to_count INTEGER NOT NULL DEFAULT 0, reached INTEGER NOT NULL DEFAULT 0, by_id TEXT NOT NULL DEFAULT '')",
+  "CREATE INDEX IF NOT EXISTS sent_log_at ON sent_log(at)"
 ];
 /* Changes made once, each remembered by name, on the audit like any other.
    A setting saved in Admin -> Settings replaces the whole default, so a rule
@@ -2910,7 +2949,8 @@ const ACTIONS = {
   "push.unsubscribe":       { fn: aPushUnsubscribe },
   "push.what":              { auth: false, fn: aPushWhat },
   "push.test":              { fn: aPushTest },
-  "notifications.count":    { fn: aNotificationsCount }
+  "notifications.count":    { fn: aNotificationsCount },
+  "sent.list":              { fn: aSentList }
 };
 
 async function handle(request, env, ctx) {

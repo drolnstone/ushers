@@ -305,6 +305,21 @@ CREATE TABLE IF NOT EXISTS settings (
 
 -- Changes a phone made with no signal and sent later, by the phone's own id,
 -- so one sent twice (the answer lost on the way back) is done once.
+/* WHAT WENT OUT. One row per batch of phone alerts or emails, so the Head
+   Usher can see whether a message went and how many it reached, including a
+   batch that reached nobody. No money figures here. */
+CREATE TABLE IF NOT EXISTS sent_log (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  at           INTEGER NOT NULL,
+  kind         TEXT NOT NULL,          -- push | email
+  type         TEXT NOT NULL DEFAULT '',
+  title        TEXT NOT NULL DEFAULT '',
+  to_count     INTEGER NOT NULL DEFAULT 0,
+  reached      INTEGER NOT NULL DEFAULT 0,
+  by_id        TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS sent_log_at ON sent_log(at);
+
 CREATE TABLE IF NOT EXISTS queued_done (
   id        TEXT PRIMARY KEY,
   usher_id  TEXT NOT NULL,

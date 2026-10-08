@@ -94,6 +94,12 @@ notified → Coordinator dashboard.
   ATTENDANCE, MINISTRATION and OFFERING have a row per version with
   `CURRENT` = Yes or No: filter on Yes before adding up. A countersignature
   made for an older version is refused.
+- **What went out.** The Admin App's Notifications tab has "What went out":
+  one line per batch of phone alerts or emails from the last fortnight, with
+  who sent it and how many it reached, a batch that reached nobody included.
+  After a Message the sender also gets one notification, "Sent to 31: 24
+  phones, 7 emails, 0 unreachable". Reminder runs list a line and notify
+  nobody. Admins only, and never a money figure.
 - **Check everything names people.** The sheet's Ushering → Check
   everything answers in three blocks. *Needs attention*: anything broken
   today, anyone nothing can reach (no phone alerts and no email), a coming

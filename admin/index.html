@@ -598,6 +598,7 @@
       var parts = [h("div", { class: "row" }, h("h1", { class: "grow" }, "Notifications"),
         h("button", { class: "ghost", onclick: function () { C.send("notifications.read", { all: true }, "Mark notifications read").then(notes, failed); } }, "Mark all read"))];
       parts.push(alertsCard());
+      parts.push(sentCard());
       if (!j.notifications.length) parts.push(h("p", { class: "muted" }, "Nothing yet."));
       j.notifications.forEach(function (n) {
         var link = n.refType === "report" ? "#report/" + n.refId : n.refType === "authorisation" ? "#approvals" :
@@ -610,6 +611,28 @@
       });
       show.apply(null, parts);
     }, failed);
+  }
+
+  /* What went out: one line per batch of phone alerts or emails, so a
+     message that reached nobody is as plain as one that reached everybody.
+     Read only, and never a money figure. */
+  function sentCard() {
+    var box = h("div", { class: "card" }, h("h3", {}, "What went out"), h("p", { class: "muted" }, "Loading…"));
+    C.api("sent.list", { days: 14 }).then(function (j) {
+      C.clear(box);
+      box.appendChild(h("h3", {}, "What went out"));
+      if (!j.ok) { box.appendChild(h("p", { class: "muted" }, j.message)); return; }
+      if (!j.sent.length) { box.appendChild(h("p", { class: "muted" }, "Nothing in the last " + j.days + " days.")); return; }
+      box.appendChild(h("table", {}, j.sent.map(function (x) {
+        return h("tr", {}, h("td", {}, C.timeLabel(x.at)),
+          h("td", {}, x.title + (x.by ? " · " + x.by : "")),
+          h("td", { class: "num" }, x.reached + " of " + x.toCount + " " + (x.kind === "email" ? "emailed" : "phones")));
+      })));
+    }, function () {
+      C.clear(box);
+      box.appendChild(h("h3", {}, "What went out"), h("p", { class: "muted" }, "No connection."));
+    });
+    return box;
   }
 
   /* Alerts on this phone or computer: the same notifications, as an alert. */
@@ -655,7 +678,9 @@
       h("button", { onclick: function () {
         C.clear(out);
         C.send("notify.send", { all: true, title: title.value, body: body.value }, "Message: " + (title.value || "to all ushers")).then(function (x) {
-          out.appendChild(x.queued ? msg(x.message, "ok") : x.ok ? msg("Sent to " + x.sent + ".", "ok") : msg(x.message, "bad"));
+          out.appendChild(x.queued ? msg(x.message, "ok") : x.ok
+            ? msg("Sent to " + x.sent + ": " + x.phones + " phones, " + x.emails + " emails, " + x.unreachable + " unreachable.", "ok")
+            : msg(x.message, "bad"));
         });
       } }, "Send to all active ushers"), out));
   }
