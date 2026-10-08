@@ -228,7 +228,8 @@ CREATE TABLE IF NOT EXISTS notifications (
   read_at     INTEGER,
   emailed     INTEGER DEFAULT 0,
   dedupe      TEXT UNIQUE,         -- stops a reminder going twice
-  pushed_at   INTEGER              -- sent to the person's phones
+  pushed_at   INTEGER,             -- sent to the person's phones
+  ics_json    TEXT                 -- the diary entry a duty email carries
 );
 CREATE INDEX IF NOT EXISTS notifications_usher ON notifications(usher_id, read_at);
 

@@ -244,17 +244,19 @@ export default async function ({ root }) {
     a.eq(types.SUN_SECOND.countersign, true);
     a.eq(types.PRAYER.countersign, false);
     a.eq(types.NAMING.countersign, false);
-    a.same(JSON.parse(env2.DB._one("SELECT v FROM config WHERE k='email_types'").v), ["countersign_request", "approval_request", "report_filed"]);
+    a.same(JSON.parse(env2.DB._one("SELECT v FROM config WHERE k='email_types'").v),
+           ["countersign_request", "approval_request", "report_filed", "duty", "duty_reminder"]);
     const audits = env2.DB._rows("SELECT * FROM audit WHERE action='config.set' AND actor_id='system'");
-    a.eq(audits.length, 2);
+    a.eq(audits.length, 3);
     a.has(audits.map((x) => x.reason).join(" | "), "Only First and Second Service are countersigned");
-    a.eq(env2.DB._rows("SELECT * FROM outbox WHERE tab='CONFIG'").length, 2, "and on the CONFIG tab");
+    a.has(audits.map((x) => x.reason).join(" | "), "carries the calendar entry");
+    a.eq(env2.DB._rows("SELECT * FROM outbox WHERE tab='CONFIG'").length, 3, "and on the CONFIG tab");
     /* An administrator may change it again afterwards: it is not undone. */
     types.PRAYER.countersign = true;
     env2.DB._exec("UPDATE config SET v='" + JSON.stringify(types).replace(/'/g, "''") + "' WHERE k='event_types'");
     await mod.migrateOnce(env2);
     a.eq(JSON.parse(env2.DB._one("SELECT v FROM config WHERE k='event_types'").v).PRAYER.countersign, true, "done once only");
-    a.eq(env2.DB._rows("SELECT * FROM audit WHERE action='config.set' AND actor_id='system'").length, 2);
+    a.eq(env2.DB._rows("SELECT * FROM audit WHERE action='config.set' AND actor_id='system'").length, 3);
   });
 
   s.test("a write just after a knock still knocks, a moment later, so its email is not left for the five-minute clock", async (a) => {

@@ -115,6 +115,12 @@ notified → Coordinator dashboard.
   is the same screen the phone alert opens, from one place in the code.
   Looking costs nothing: a link only opens the app, carries no token and
   does nothing by itself; the PIN is what acts.
+- **The duty in your own diary.** A duty email carries a calendar entry
+  timed to the service's real start, so a tap puts it in the phone's diary
+  with a reminder the day before. It is timed, never all-day, and the entry
+  belongs to the appointment: a reminder updates the same entry instead of
+  adding a second, and coming off the duty, or the event being cancelled,
+  takes it out again. An event with no start time sends none.
 - **Words.** Prompts and instructions only: the screens say what to do and
   what happened, never how the app works. Every sentence cut for that
   reason is kept in `tests/suites/05-words.mjs`, which fails if one comes

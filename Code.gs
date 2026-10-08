@@ -20,7 +20,7 @@
    Menu: Ushering > Set up the sheet (once), then Check everything.
    ========================================================================== */
 
-var SHEET_VERSION = "v0.3.2";
+var SHEET_VERSION = "v0.3.3";
 
 /* The tabs and the headers each starts with. A missing header is added at
    the end; a header is never renamed or moved by this script, and a column
@@ -72,6 +72,34 @@ function sendMail(o) {
   if (name && !m.name) m.name = name;
   if (reply && !m.replyTo) m.replyTo = reply;
   return MailApp.sendEmail(m);
+}
+
+/* A CALENDAR ENTRY for a duty email, so the duty lands in the usher's own
+   diary. Timed, never all-day: an all-day entry puts the alarm at midnight,
+   which is the lesson the Driver App learnt. The UID is the appointment, so
+   a re-send updates the same entry; METHOD:CANCEL takes it out again. */
+function icsFile(ics, name) {
+  if (!ics || !ics.uid || !ics.date || !ics.start) return null;
+  var day = String(ics.date).replace(/-/g, "");
+  var at = function (hhmm) { return day + "T" + String(hhmm).replace(":", "") + "00"; };
+  var method = ics.method === "CANCEL" ? "CANCEL" : "REQUEST";
+  var lines = [
+    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//RCCG Dominion Assembly//Ushering//EN",
+    "CALSCALE:GREGORIAN", "METHOD:" + method,
+    "BEGIN:VEVENT",
+    "UID:" + ics.uid,
+    "DTSTAMP:" + Utilities.formatDate(new Date(), "Europe/London", "yyyyMMdd'T'HHmmss"),
+    "SEQUENCE:" + (method === "CANCEL" ? 1 : 0),
+    "STATUS:" + (method === "CANCEL" ? "CANCELLED" : "CONFIRMED"),
+    "DTSTART;TZID=Europe/London:" + at(ics.start),
+    "DTEND;TZID=Europe/London:" + at(ics.end || ics.start),
+    "SUMMARY:" + String(ics.title || "Ushering duty").replace(/[\r\n]+/g, " ")
+  ];
+  if (method !== "CANCEL") {
+    lines = lines.concat(["BEGIN:VALARM", "TRIGGER:-P1D", "ACTION:DISPLAY", "DESCRIPTION:Ushering duty tomorrow", "END:VALARM"]);
+  }
+  lines = lines.concat(["END:VEVENT", "END:VCALENDAR"]);
+  return Utilities.newBlob(lines.join("\r\n") + "\r\n", "text/calendar", name || "duty.ics");
 }
 
 /* ---- header-driven access (reused from the Driver App) ------------------ */
@@ -286,7 +314,15 @@ function drain() {
              lapses. A row with no address is acknowledged and not counted. */
           try {
             if (r.row && r.row.to) {
-              sendMail({ to: r.row.to, subject: r.row.subject, body: r.row.body });
+              var m = { to: r.row.to, subject: r.row.subject, body: r.row.body };
+              var list = r.row.ics instanceof Array ? r.row.ics : [r.row.ics];
+              var files = list.map(function (ics, i) {
+                /* Two entries in one email need two names, or a mail client
+                   shows only the first. */
+                return icsFile(ics, list.length > 1 ? "duty-" + (i + 1) + ".ics" : "duty.ics");
+              }).filter(function (f) { return !!f; });
+              if (files.length) m.attachments = files;
+              sendMail(m);
               emailed++;
             }
             done.push(r.id);

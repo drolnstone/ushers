@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.12";
+const SERVER_VERSION = "w0.3.13";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -94,7 +94,7 @@ const DEFAULT_CONFIG = {
   rota_weeks_ahead: 8,
   push_types: null,                   // null = every notification also goes to phones with alerts on
   unalerted_email_minutes: 60,       // someone with alerts on no phone is emailed what is still unread after this long (0 = never)
-  email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "report_filed", "dues_reminder", "admin_message"],
+  email_types: ["countersign_request", "approval_request", "approval_decision", "report_status", "report_filed", "dues_reminder", "admin_message", "duty", "duty_reminder"],
   report_notify_roles: ["head_usher", "assistant_head_usher"]  // told of every report once it is filed
 };
 
@@ -351,17 +351,35 @@ function linkTo(cfg, n, isAdmin) {
   return base + "/" + linkFor(n, isAdmin);
 }
 
+/* A calendar entry for a duty email, so the duty lands in the usher's own
+   diary. uid is the appointment, so a re-send updates the entry rather than
+   adding a second one; method CANCEL takes it out again. Nothing is made
+   for an event with no start time. */
+function icsFor(e, appointmentId, duty, method) {
+  if (!e || !e.start_time || !appointmentId) return null;
+  const mins = Number(String(e.start_time).slice(0, 2)) * 60 + Number(String(e.start_time).slice(3, 5));
+  const end = p2(Math.floor((mins + 120) / 60) % 24) + ":" + p2((mins + 120) % 60);
+  return {
+    uid: "ap-" + appointmentId + "@ushers",
+    date: e.date, start: e.start_time, end: end,
+    title: e.title + (duty === "counting" ? " — offering counting" : " — ushering"),
+    method: method || "REQUEST"
+  };
+}
+
 /* A notification, its sheet row, and an email when the type is important
    and the person has an address. isAdmin: the person holds admin.app, so
-   an emailed link opens the Admin App's screen. */
-function stNotify(env, cfg, usher, type, title, body, refType, refId, dedupe, isAdmin) {
+   an emailed link opens the Admin App's screen. ics: a calendar entry
+   attached to that email. */
+function stNotify(env, cfg, usher, type, title, body, refType, refId, dedupe, isAdmin, ics) {
   if (!usher) return [];
   const id = uuid(), at = Date.now();
   const email = cfg.email_types.indexOf(type) !== -1 && usher.email ? 1 : 0;
   const out = [
     env.DB.prepare(
-      "INSERT INTO notifications (id, usher_id, type, title, body, ref_type, ref_id, created_at, emailed, dedupe) VALUES (?,?,?,?,?,?,?,?,?,?)"
-    ).bind(id, usher.id, type, text(title, 140), text(body, 1000), refType || "", String(refId || ""), at, email, dedupe || null),
+      "INSERT INTO notifications (id, usher_id, type, title, body, ref_type, ref_id, created_at, emailed, dedupe, ics_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+    ).bind(id, usher.id, type, text(title, 140), text(body, 1000), refType || "", String(refId || ""), at, email, dedupe || null,
+           ics ? JSON.stringify(ics) : null),
     stOutbox(env, "NOTIFICATIONS", {
       NOTIFICATION_ID: id, USHER_ID: usher.id, FULL_NAME: usher.full_name, TYPE: type, TITLE: text(title, 140),
       REF_TYPE: refType || "", REF_ID: String(refId || ""), CREATED_AT: londonStamp(at)
@@ -369,8 +387,10 @@ function stNotify(env, cfg, usher, type, title, body, refType, refId, dedupe, is
   ];
   if (email) {
     const link = linkTo(cfg, { type, ref_type: refType || "", ref_id: String(refId || "") }, isAdmin);
-    out.push(stOutbox(env, "@email", { to: usher.email, subject: text(title, 140),
-      body: text(body, 1000) + (link ? "\n\nOpen: " + link : "") }));
+    const row = { to: usher.email, subject: text(title, 140),
+      body: text(body, 1000) + (link ? "\n\nOpen: " + link : "") };
+    if (ics) row.ics = ics;
+    out.push(stOutbox(env, "@email", row));
   }
   return out;
 }
@@ -845,7 +865,8 @@ async function aRotaSet(env, cfg, b, me) {
     st.push(stOutbox(env, "APPOINTMENTS", apptRow(Object.assign({}, a, { status: "removed" }), e, names[a.usher_id] || "", me.usher.id), "APPOINTMENT_ID"));
     if (tell) {
       st.push(stNotify(env, cfg, await getUsher(env, a.usher_id), "duty", "You are no longer on duty: " + e.title,
-        e.title + " on " + ukDate(e.date) + ". You have been taken off " + (duty === "counting" ? "offering counting." : "ushering."), "event", e.id));
+        e.title + " on " + ukDate(e.date) + ". You have been taken off " + (duty === "counting" ? "offering counting." : "ushering."), "event", e.id,
+        null, false, icsFor(e, a.id, duty, "CANCEL")));
     }
   }
   const have = current.map((a) => a.usher_id);
@@ -857,7 +878,8 @@ async function aRotaSet(env, cfg, b, me) {
     st.push(stAudit(env, me.usher.id, "appointment.add", "appointment", a.id, null, { event: e.id, usher: id, duty }, text(b.reason, 200)));
     st.push(stOutbox(env, "APPOINTMENTS", apptRow(a, e, names[id] || "", me.usher.id), "APPOINTMENT_ID"));
     st.push(stNotify(env, cfg, usherOf[id], "duty", "You are on duty: " + e.title,
-      e.title + " on " + ukDate(e.date) + (duty === "counting" ? ", offering counting." : ", ushering."), "event", e.id));
+      e.title + " on " + ukDate(e.date) + (duty === "counting" ? ", offering counting." : ", ushering."), "event", e.id,
+      null, false, icsFor(e, a.id, duty)));
   }
   await run(env, st);
   return { ok: true };
@@ -919,8 +941,10 @@ async function aEventCancel(env, cfg, b, me) {
       const u = await getUsher(env, a.usher_id);
       if (!u || !u.active) continue;
       st.push(b.restore
-        ? stNotify(env, cfg, u, "duty", "Back on: " + e.title, e.title + " on " + ukDate(e.date) + ". You are on duty again.", "event", e.id)
-        : stNotify(env, cfg, u, "duty", "Cancelled: " + e.title, e.title + " on " + ukDate(e.date) + " will not take place.", "event", e.id));
+        ? stNotify(env, cfg, u, "duty", "Back on: " + e.title, e.title + " on " + ukDate(e.date) + ". You are on duty again.", "event", e.id,
+            null, false, icsFor(e, a.id, a.duty))
+        : stNotify(env, cfg, u, "duty", "Cancelled: " + e.title, e.title + " on " + ukDate(e.date) + " will not take place.", "event", e.id,
+            null, false, icsFor(e, a.id, a.duty, "CANCEL")));
     }
   }
   await run(env, st);
@@ -2358,10 +2382,10 @@ async function knockSheet(env) {
    THE CLOCK — reminders, once each (dedupe keys)
    ========================================================================== */
 
-async function remind(env, cfg, u, type, title, body, refType, refId, dedupe) {
+async function remind(env, cfg, u, type, title, body, refType, refId, dedupe, ics) {
   const seen = await env.DB.prepare("SELECT 1 AS n FROM notifications WHERE dedupe=?").bind(dedupe).first();
   if (seen) return false;
-  await run(env, stNotify(env, cfg, u, type, title, body, refType, refId, dedupe));
+  await run(env, stNotify(env, cfg, u, type, title, body, refType, refId, dedupe, false, ics));
   return true;
 }
 
@@ -2374,12 +2398,13 @@ async function clockTick(env, now) {
     for (const days of cfg.duty_reminder_days) {
       const day = keyAddDays(today, days);
       const rows = ((await env.DB.prepare(
-        "SELECT a.id AS aid, a.duty, e.id AS eid, e.title, e.date, u.* FROM appointments a JOIN events e ON e.id=a.event_id JOIN ushers u ON u.id=a.usher_id " +
+        "SELECT a.id AS aid, a.duty, e.id AS eid, e.title, e.date, e.start_time, u.* FROM appointments a JOIN events e ON e.id=a.event_id JOIN ushers u ON u.id=a.usher_id " +
         "WHERE e.date=? AND e.status<>'cancelled' AND a.status='active' AND u.active=1").bind(day).all()).results) || [];
       for (const x of rows) {
         if (await remind(env, cfg, x, "duty_reminder", "Duty reminder: " + x.title,
           "You are on " + (x.duty === "counting" ? "offering counting" : "ushering") + " duty on " + ukDate(x.date) + ".",
-          "event", x.eid, "duty:" + x.aid + ":" + days)) sent++;
+          "event", x.eid, "duty:" + x.aid + ":" + days,
+          icsFor({ date: x.date, start_time: x.start_time, title: x.title }, x.aid, x.duty))) sent++;
       }
     }
   }
@@ -2517,7 +2542,7 @@ async function emailUnalerted(env, cfg, nowMs) {
   const who = (await peopleAlertsOff(env)).filter((u) => String(u.email || "").trim()).map((u) => u.id);
   if (!who.length) return 0;
   const rows = ((await env.DB.prepare(
-    "SELECT n.id, n.usher_id, n.type, n.title, n.body, n.ref_type, n.ref_id, n.created_at FROM notifications n " +
+    "SELECT n.id, n.usher_id, n.type, n.title, n.body, n.ref_type, n.ref_id, n.created_at, n.ics_json FROM notifications n " +
     "WHERE n.emailed=0 AND n.read_at IS NULL AND n.created_at<=? AND n.created_at>? " +
     "AND n.usher_id IN (" + who.map(() => "?").join(",") + ") ORDER BY n.created_at LIMIT 200"
   ).bind(now - mins * 60000, now - 48 * 3600000, ...who).all()).results) || [];
@@ -2535,7 +2560,12 @@ async function emailUnalerted(env, cfg, nowMs) {
       const link = linkTo(cfg, n, isAdmin);
       return "• " + n.title + (n.body ? "\n  " + n.body : "") + (link ? "\n  " + link : "");
     }).join("\n\n") + (cfg.app_url ? "" : "\n\nOpen the Ushers App to see them.");
-    st.push(stOutbox(env, "@email", { to: u.email, subject: text(subject, 140), body: body.slice(0, 3000) }));
+    /* A duty in the batch still lands in the diary: the digest carries the
+       same entries the single email would have. */
+    const diary = list.map((n) => { try { return n.ics_json ? JSON.parse(n.ics_json) : null; } catch (e) { return null; } }).filter(Boolean);
+    const mail = { to: u.email, subject: text(subject, 140), body: body.slice(0, 3000) };
+    if (diary.length) mail.ics = diary;
+    st.push(stOutbox(env, "@email", mail));
     for (const n of list) st.push(env.DB.prepare("UPDATE notifications SET emailed=2 WHERE id=? AND emailed=0").bind(n.id));
   }
   st.push(stSent(env, "email", "unalerted", rows.length + " unread for people with alerts off", Object.keys(by).length, Object.keys(by).length, ""));
@@ -2798,7 +2828,8 @@ const MIGRATIONS = [
   "CREATE TABLE IF NOT EXISTS queued_done (id TEXT PRIMARY KEY, usher_id TEXT NOT NULL, action TEXT NOT NULL, at INTEGER NOT NULL, answer TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS queued_done_at ON queued_done(at)",
   "CREATE TABLE IF NOT EXISTS sent_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, kind TEXT NOT NULL, type TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', to_count INTEGER NOT NULL DEFAULT 0, reached INTEGER NOT NULL DEFAULT 0, by_id TEXT NOT NULL DEFAULT '')",
-  "CREATE INDEX IF NOT EXISTS sent_log_at ON sent_log(at)"
+  "CREATE INDEX IF NOT EXISTS sent_log_at ON sent_log(at)",
+  "ALTER TABLE notifications ADD COLUMN ics_json TEXT"
 ];
 /* Changes made once, each remembered by name, on the audit like any other.
    A setting saved in Admin -> Settings replaces the whole default, so a rule
@@ -2819,6 +2850,13 @@ const ONCE = [
   { name: "email_report_filed", key: "email_types",
     why: "Filed reports are emailed to the Head Usher and Assistant Head Usher",
     change: (v) => Array.isArray(v) && v.indexOf("report_filed") === -1 ? v.concat(["report_filed"]) : null },
+  { name: "email_duty_calendar", key: "email_types",
+    why: "A duty email carries the calendar entry, so the duty is in the usher's own diary",
+    change: (v) => {
+      if (!Array.isArray(v)) return null;
+      const add = ["duty", "duty_reminder"].filter((t) => v.indexOf(t) === -1);
+      return add.length ? v.concat(add) : null;
+    } },
   { name: "file_uncountersigned_reports", run: fileUncountersigned }
 ];
 
