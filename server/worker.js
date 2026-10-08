@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.10";
+const SERVER_VERSION = "w0.3.11";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -2299,9 +2299,9 @@ async function setting(env, k) {
   try { const r = await env.DB.prepare("SELECT v FROM settings WHERE k=?").bind(k).first(); return r ? r.v : ""; } catch (e) { return ""; }
 }
 
-async function aHealth(env, cfg) {
+async function aHealth(env, cfg, b) {
   const waiting = await env.DB.prepare("SELECT count(*) AS n FROM outbox WHERE done_at IS NULL").first();
-  return {
+  const out = {
     ok: true, sheet: await setting(env, "sheet_version"),
     checks: {
       pinPepper: !!env.PIN_PEPPER, sheetToken: !!env.SHEET_TOKEN, sheetKnock: !!env.SHEET_WEBAPP_URL,
@@ -2309,6 +2309,10 @@ async function aHealth(env, cfg) {
       clockLastTick: Number(await setting(env, "clock_tick")) || 0
     }
   };
+  /* Names only for the sheet, which holds the SHEET_TOKEN. The plain health
+     answer stays open and names nobody. */
+  if (sheetTokenOk(env, b)) out.people = await healthPeople(env, cfg);
+  return out;
 }
 
 /* After a write, knock on the sheet's web app so it drains now (and sends
@@ -2383,6 +2387,83 @@ async function clockTick(env, now) {
   return sent;
 }
 
+/* ==========================================================================
+   WHO NEEDS ATTENTION — one function per concern, used BOTH by the code
+   that sends and by Check everything. A report built from its own query
+   can certify as fine the very silence it was meant to catch, so there is
+   only ever one query.
+   ========================================================================== */
+
+/* Active people with alerts on no phone. The email below goes to these. */
+async function peopleAlertsOff(env) {
+  return ((await env.DB.prepare(
+    "SELECT u.id, u.full_name, u.email FROM ushers u WHERE u.active=1 " +
+    "AND NOT EXISTS (SELECT 1 FROM push_subs p WHERE p.usher_id=u.id) ORDER BY u.full_name COLLATE NOCASE"
+  ).all()).results) || [];
+}
+
+/* Nothing reaches these at all: no phone alerts and no email address. */
+async function peopleUnreachable(env) {
+  return (await peopleAlertsOff(env)).filter((u) => !String(u.email || "").trim());
+}
+
+/* Still on the default PIN: never changed it, never answered the question. */
+async function peopleDefaultPin(env) {
+  return ((await env.DB.prepare(
+    "SELECT id, full_name FROM ushers WHERE active=1 AND pin_must_change=1 ORDER BY full_name COLLATE NOCASE"
+  ).all()).results) || [];
+}
+
+/* A Sunday that is short: nobody ushering, or too few counters. */
+async function sundayGaps(env, cfg, key) {
+  const out = [];
+  const events = ((await env.DB.prepare("SELECT * FROM events WHERE sunday_key=? AND status<>'cancelled' ORDER BY id").bind(key).all()).results) || [];
+  for (const e of events) {
+    const t = cfg.event_types[e.type] || {};
+    const on = (await activeAppointments(env, [e.id])).filter((a) => a.duty === t.duty);
+    const want = t.exact ? Number(cfg[t.exact]) || 0 : 1;
+    if (on.length < want) out.push({ eventId: e.id, title: e.title, date: e.date, on: on.length, want: want, exact: !!t.exact });
+  }
+  return out;
+}
+
+/* Events whose report is still missing, up to and including today. The same
+   query the report reminder uses, so one cannot go quiet while the other
+   says all is well. */
+async function reportsOverdue(env, cfg, todayKey) {
+  const today = todayKey || londonKey(new Date());
+  const rows = ((await env.DB.prepare(
+    "SELECT e.id, e.title, e.date, e.type FROM events e LEFT JOIN reports r ON r.event_id=e.id " +
+    "WHERE e.date<=? AND e.date>=? AND e.status<>'cancelled' AND (r.id IS NULL OR r.status='draft') ORDER BY e.date DESC"
+  ).bind(today, keyAddDays(today, -42)).all()).results) || [];
+  return rows.filter((e) => {
+    const t = cfg.event_types[e.type] || {};
+    return !!t.attendance || !!t.offering;
+  });
+}
+
+/* What Check everything says about people. Names are personal, so this is
+   only given to the sheet, which holds the SHEET_TOKEN. */
+async function healthPeople(env, cfg) {
+  const today = londonKey(new Date());
+  const thisSunday = sundayOnOrAfter(today);
+  const active = await env.DB.prepare("SELECT count(*) AS n FROM ushers WHERE active=1").first();
+  const off = await peopleAlertsOff(env);
+  const total = active ? Number(active.n) || 0 : 0;
+  const name = (u) => u.full_name;
+  return {
+    ushers: total,
+    alertsOn: total - off.length,
+    alertsOff: off.map(name),
+    unreachable: (await peopleUnreachable(env)).map(name),
+    defaultPin: (await peopleDefaultPin(env)).map(name),
+    sunday: thisSunday,
+    sundayGaps: (await sundayGaps(env, cfg, thisSunday)).map((g) =>
+      g.exact ? g.title + ": " + g.on + " of " + g.want : g.title + ": nobody on duty"),
+    reportsOverdue: (await reportsOverdue(env, cfg, today)).map((e) => e.title + " " + ukDate(e.date))
+  };
+}
+
 /* NOBODY LEFT IN THE DARK. A person who has never turned alerts on, on any
    phone, is woken by nothing: a duty reminder or a "report not yet
    submitted" that was not one of the emailed types would sit in the app
@@ -2396,11 +2477,15 @@ async function emailUnalerted(env, cfg, nowMs) {
   if (mins <= 0) return 0;
   const now = nowMs || Date.now();
   if (quietNow(cfg, now)) return 0;
+  /* The same list Check everything names, so one cannot go quiet while the
+     other says all is well. */
+  const who = (await peopleAlertsOff(env)).filter((u) => String(u.email || "").trim()).map((u) => u.id);
+  if (!who.length) return 0;
   const rows = ((await env.DB.prepare(
-    "SELECT n.id, n.usher_id, n.type, n.title, n.body, n.ref_type, n.ref_id, n.created_at FROM notifications n JOIN ushers u ON u.id=n.usher_id " +
-    "WHERE n.emailed=0 AND n.read_at IS NULL AND n.created_at<=? AND n.created_at>? AND u.active=1 AND COALESCE(u.email,'')<>'' " +
-    "AND NOT EXISTS (SELECT 1 FROM push_subs p WHERE p.usher_id=n.usher_id) ORDER BY n.created_at LIMIT 200"
-  ).bind(now - mins * 60000, now - 48 * 3600000).all()).results) || [];
+    "SELECT n.id, n.usher_id, n.type, n.title, n.body, n.ref_type, n.ref_id, n.created_at FROM notifications n " +
+    "WHERE n.emailed=0 AND n.read_at IS NULL AND n.created_at<=? AND n.created_at>? " +
+    "AND n.usher_id IN (" + who.map(() => "?").join(",") + ") ORDER BY n.created_at LIMIT 200"
+  ).bind(now - mins * 60000, now - 48 * 3600000, ...who).all()).results) || [];
   if (!rows.length) return 0;
   const by = {};
   for (const n of rows) (by[n.usher_id] = by[n.usher_id] || []).push(n);

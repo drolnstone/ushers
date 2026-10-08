@@ -10,7 +10,7 @@ export async function department(mod, root, people, envOver) {
   const env = makeEnv(root, envOver);
   const call = client(mod, env);
   const T = {}, ID = {};
-  const boot = await call("bootstrap", { token: "test-bootstrap", fullName: "Sam Admin", pin: "9999" });
+  const boot = await call("bootstrap", { token: "test-bootstrap", fullName: "Sam Admin", pin: "9999", email: "admin@example.org" });
   if (!boot.ok) throw new Error("bootstrap: " + JSON.stringify(boot));
   ID.admin = (await call("people")).people.find((x) => x.name === "Sam Admin").id;
   T.admin = (await call("login", { usherId: ID.admin, pin: "9999" })).token;

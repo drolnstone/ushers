@@ -94,6 +94,16 @@ notified → Coordinator dashboard.
   ATTENDANCE, MINISTRATION and OFFERING have a row per version with
   `CURRENT` = Yes or No: filter on Yes before adding up. A countersignature
   made for an older version is refused.
+- **Check everything names people.** The sheet's Ushering → Check
+  everything answers in three blocks. *Needs attention*: anything broken
+  today, anyone nothing can reach (no phone alerts and no email), a coming
+  Sunday that is short of ushers or counters, a report still missing.
+  *Still to do*: alerts not yet on, anyone still on their default PIN.
+  *Fine*: the rest, with "Alerts on: n of m". Only the first block counts
+  as a fault. The names come from the server, which builds them from the
+  same queries it sends by, so the report cannot certify the silence it
+  exists to catch; `/api/health` without the sheet's token still names
+  nobody.
 - **Emails carry a link.** Every email ends with the address of the screen
   it is about, built from `app_url`: a report, Approvals, Notifications. It
   is the same screen the phone alert opens, from one place in the code.
