@@ -4,7 +4,7 @@
 
 import { Suite } from "../lib/t.mjs";
 import { loadWorker } from "../lib/worker.mjs";
-import { department, notesOf } from "../lib/people.mjs";
+import { at, department, notesOf } from "../lib/people.mjs";
 
 export default async function ({ root }) {
   const { mod } = await loadWorker(root);
@@ -71,13 +71,17 @@ export default async function ({ root }) {
   });
 
   s.test("the email to people with alerts off lists its run too", async (a) => {
-    const E = await department(mod, root, [["hu", "Grace Okafor", ["usher", "head_usher"]], ["C", "Peter Obi", null, { email: "c@example.org" }]]);
-    a.ok((await E.call("notify.send", { title: "Hall change", body: "", usherIds: [E.ID.C] }, E.T.hu)).ok);
-    E.env.DB._exec("UPDATE notifications SET type='duty_reminder', emailed=0");
-    a.eq(await mod.emailUnalerted(E.env, await mod.loadConfig(E.env), Date.now() + 61 * 60000), 1);
-    const line = (await E.call("sent.list", {}, E.T.hu)).sent.filter((x) => x.type === "unalerted");
-    a.eq(line.length, 1);
-    a.eq(line[0].reached, 1);
+    /* Emails wait out the quiet hours, so this runs at midday rather than
+       whenever the suite happens to run. */
+    await at("2026-11-10T12:00:00Z", async () => {
+      const E = await department(mod, root, [["hu", "Grace Okafor", ["usher", "head_usher"]], ["C", "Peter Obi", null, { email: "c@example.org" }]]);
+      a.ok((await E.call("notify.send", { title: "Hall change", body: "", usherIds: [E.ID.C] }, E.T.hu)).ok);
+      E.env.DB._exec("UPDATE notifications SET type='duty_reminder', emailed=0");
+      a.eq(await mod.emailUnalerted(E.env, await mod.loadConfig(E.env), Date.now() + 61 * 60000), 1);
+      const line = (await E.call("sent.list", {}, E.T.hu)).sent.filter((x) => x.type === "unalerted");
+      a.eq(line.length, 1);
+      a.eq(line[0].reached, 1);
+    });
   });
 
   s.test("a plain usher cannot read it", async (a) => {

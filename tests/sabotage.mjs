@@ -64,7 +64,9 @@ const SABOTAGE = [
   { name: "the upgrade of an old database", suite: "04-old-database", file: "server/worker.js",
     find: '"ALTER TABLE notifications ADD COLUMN ics_json TEXT",', replace: "" },
   { name: "the bare address", suite: "17-bare-address", file: "server/worker.js",
-    find: 'const path = /^\\/(api\\/?)?$/.test(url.pathname) ? "/api/health" : url.pathname;', replace: "const path = url.pathname;" }
+    find: 'const path = /^\\/(api\\/?)?$/.test(url.pathname) ? "/api/health" : url.pathname;', replace: "const path = url.pathname;" },
+  { name: "the foot fills in", suite: "18-foot", file: "shared/core.js",
+    find: "if (footEl && versions.server + versions.sheet !== was) foot(footEl);", replace: "" }
 ];
 
 const only = process.argv.slice(2).filter((a) => !a.startsWith("-"));

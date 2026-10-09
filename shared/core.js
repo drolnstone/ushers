@@ -18,7 +18,7 @@
    refused one. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.20";
+  var APP_VERSION = "v0.3.21";
   var CFG = window.USHERS_CONFIG || {};
   var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:", saved: "ushers.saved.v1:",
             lastWho: "ushers.lastWho.v1", people: "ushers.people.v1:" };
@@ -157,8 +157,12 @@
       return res.json().catch(function () { return { ok: false, error: "bad_answer", message: "The server gave an unreadable answer." }; })
         .then(function (j) {
           j._status = res.status;
+          var was = versions.server + versions.sheet;
           if (j.server) versions.server = j.server;
           if (j.sheet) versions.sheet = j.sheet;
+          /* The first screen is drawn before the server has answered, so the
+             foot fills in the server and sheet as soon as they are known. */
+          if (footEl && versions.server + versions.sheet !== was) foot(footEl);
           if (res.status === 401) { setToken(""); if (core.onSignedOut) core.onSignedOut(); }
           if (res.status >= 500) { var e = new Error(j.message || "Server error"); e.network = true; throw e; }
           return j;
@@ -330,7 +334,9 @@
   }
   function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
 
+  var footEl = null;
   function foot(el) {
+    footEl = el;
     clear(el);
     el.appendChild(h("div", {}, "app " + versions.app + (versions.server ? " · server " + versions.server : "") +
                      (versions.sheet ? " · sheet " + versions.sheet : "")));

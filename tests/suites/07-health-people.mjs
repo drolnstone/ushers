@@ -4,7 +4,7 @@
 
 import { Suite } from "../lib/t.mjs";
 import { loadWorker } from "../lib/worker.mjs";
-import { department } from "../lib/people.mjs";
+import { at, department } from "../lib/people.mjs";
 
 export default async function ({ root }) {
   const { mod } = await loadWorker(root);
@@ -102,16 +102,20 @@ export default async function ({ root }) {
   });
 
   s.test("the sender and the report share one query, so neither can go quiet alone", async (a) => {
-    const E = await department(mod, root, [["hu", "Grace Okafor", ["usher", "head_usher"]], ["C", "Peter Obi", null, { email: "c@example.org" }]]);
-    a.ok((await E.call("notify.send", { title: "Hall change", body: "", usherIds: [E.ID.C] }, E.T.hu)).ok);
-    E.env.DB._exec("UPDATE notifications SET type='duty_reminder', emailed=0");
-    const c = await mod.loadConfig(E.env);
-    a.ok((await mod.healthPeople(E.env, c)).alertsOff.indexOf("Peter Obi") !== -1, "the report names him");
-    a.eq(await mod.emailUnalerted(E.env, c, Date.now() + 61 * 60000), 1, "and the email reaches him");
-    a.ok((await E.call("push.subscribe", { endpoint: "https://push.example/send/h7-C" }, E.T.C)).ok);
-    a.eq((await mod.healthPeople(E.env, c)).alertsOff.indexOf("Peter Obi"), -1, "both read the same list");
-    E.env.DB._exec("UPDATE notifications SET emailed=0, read_at=NULL");
-    a.eq(await mod.emailUnalerted(E.env, c, Date.now() + 61 * 60000), 0);
+    /* Emails wait out the quiet hours, so this runs at midday rather than
+       whenever the suite happens to run. */
+    await at("2026-11-10T12:00:00Z", async () => {
+      const E = await department(mod, root, [["hu", "Grace Okafor", ["usher", "head_usher"]], ["C", "Peter Obi", null, { email: "c@example.org" }]]);
+      a.ok((await E.call("notify.send", { title: "Hall change", body: "", usherIds: [E.ID.C] }, E.T.hu)).ok);
+      E.env.DB._exec("UPDATE notifications SET type='duty_reminder', emailed=0");
+      const c = await mod.loadConfig(E.env);
+      a.ok((await mod.healthPeople(E.env, c)).alertsOff.indexOf("Peter Obi") !== -1, "the report names him");
+      a.eq(await mod.emailUnalerted(E.env, c, Date.now() + 61 * 60000), 1, "and the email reaches him");
+      a.ok((await E.call("push.subscribe", { endpoint: "https://push.example/send/h7-C" }, E.T.C)).ok);
+      a.eq((await mod.healthPeople(E.env, c)).alertsOff.indexOf("Peter Obi"), -1, "both read the same list");
+      E.env.DB._exec("UPDATE notifications SET emailed=0, read_at=NULL");
+      a.eq(await mod.emailUnalerted(E.env, c, Date.now() + 61 * 60000), 0);
+    });
   });
 
   s.test("the open health answer names nobody; only the sheet's token gets names", async (a) => {
