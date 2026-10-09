@@ -1,6 +1,6 @@
 # Setting up the Ushering App
 
-Versions: app v0.3.20 · server w0.3.20 · sheet v0.3.4.
+Versions: app v0.3.21 · server w0.3.20 · sheet v0.3.4.
 
 Already done once (skip if so): the D1 database exists with `server/schema.sql`
 run in its Console, the Worker exists, and `config.js` points at it
@@ -89,7 +89,7 @@ test people**.
 
 A. `/api/health` shows `pinPepper`, `sheetToken` and `sheetKnock` true, and
    after five minutes `clockLastTick` is no longer 0.
-B. The foot of both apps reads app v0.3.20 · server w0.3.20 · sheet v0.3.4
+B. The foot of both apps reads app v0.3.21 · server w0.3.20 · sheet v0.3.4
    (the sheet number appears after the first drain).
 C. The Admin App's sign-in lists only Head Ushers, Assistant Head Ushers and
    System Administrators. A Head Usher moves between the apps with Open

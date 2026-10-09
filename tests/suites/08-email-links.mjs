@@ -4,7 +4,7 @@
 
 import { Suite } from "../lib/t.mjs";
 import { loadWorker } from "../lib/worker.mjs";
-import { department, emailsTo } from "../lib/people.mjs";
+import { at, department, emailsTo } from "../lib/people.mjs";
 
 export default async function ({ root }) {
   const { mod } = await loadWorker(root);
@@ -70,39 +70,51 @@ export default async function ({ root }) {
   });
 
   s.test("the email to somebody with alerts on no phone links each line", async (a) => {
-    const E = await department(mod, root, [["hu", "Grace Okafor", ["usher", "head_usher"]], ["C", "Peter Obi", null, { email: "c@example.org" }]]);
-    a.ok((await E.call("notify.send", { title: "Hall change", body: "Side door", usherIds: [E.ID.C] }, E.T.hu)).ok);
-    /* An admin message is emailed as it is made, so for this check it is
-       turned into the sort that is not: a duty reminder. */
-    E.env.DB._exec("UPDATE notifications SET type='duty_reminder', emailed=0");
-    a.eq(await mod.emailUnalerted(E.env, await mod.loadConfig(E.env), Date.now() + 61 * 60000), 1);
-    const m = emailsTo(E.env, "c@example.org").pop();
-    a.has(m.body, "Hall change");
-    a.has(m.body, BASE + "/#notes");
+    /* Emails wait out the quiet hours, so this runs at midday rather than
+       whenever the suite happens to run. */
+    await at("2026-11-10T12:00:00Z", async () => {
+      const E = await department(mod, root, [["hu", "Grace Okafor", ["usher", "head_usher"]], ["C", "Peter Obi", null, { email: "c@example.org" }]]);
+      a.ok((await E.call("notify.send", { title: "Hall change", body: "Side door", usherIds: [E.ID.C] }, E.T.hu)).ok);
+      /* An admin message is emailed as it is made, so for this check it is
+         turned into the sort that is not: a duty reminder. */
+      E.env.DB._exec("UPDATE notifications SET type='duty_reminder', emailed=0");
+      a.eq(await mod.emailUnalerted(E.env, await mod.loadConfig(E.env), Date.now() + 61 * 60000), 1);
+      const m = emailsTo(E.env, "c@example.org").pop();
+      a.has(m.body, "Hall change");
+      a.has(m.body, BASE + "/#notes");
+    });
   });
 
   s.test("another church can move the apps: the links follow app_url", async (a) => {
-    const E = await department(mod, root, [["hu", "Grace Okafor", ["usher", "head_usher"]], ["C", "Peter Obi", null, { email: "c@example.org" }]]);
-    a.ok((await E.call("config.set", { key: "app_url", value: "https://example.church/ushers/" }, E.T.admin)).ok);
-    a.ok((await E.call("notify.send", { title: "Moved", body: "", usherIds: [E.ID.C] }, E.T.hu)).ok);
-    /* An admin message is emailed as it is made, so for this check it is
-       turned into the sort that is not: a duty reminder. */
-    E.env.DB._exec("UPDATE notifications SET type='duty_reminder', emailed=0");
-    a.eq(await mod.emailUnalerted(E.env, await mod.loadConfig(E.env), Date.now() + 61 * 60000), 1);
-    a.has(emailsTo(E.env, "c@example.org").pop().body, "https://example.church/ushers/#notes");
+    /* Emails wait out the quiet hours, so this runs at midday rather than
+       whenever the suite happens to run. */
+    await at("2026-11-10T12:00:00Z", async () => {
+      const E = await department(mod, root, [["hu", "Grace Okafor", ["usher", "head_usher"]], ["C", "Peter Obi", null, { email: "c@example.org" }]]);
+      a.ok((await E.call("config.set", { key: "app_url", value: "https://example.church/ushers/" }, E.T.admin)).ok);
+      a.ok((await E.call("notify.send", { title: "Moved", body: "", usherIds: [E.ID.C] }, E.T.hu)).ok);
+      /* An admin message is emailed as it is made, so for this check it is
+         turned into the sort that is not: a duty reminder. */
+      E.env.DB._exec("UPDATE notifications SET type='duty_reminder', emailed=0");
+      a.eq(await mod.emailUnalerted(E.env, await mod.loadConfig(E.env), Date.now() + 61 * 60000), 1);
+      a.has(emailsTo(E.env, "c@example.org").pop().body, "https://example.church/ushers/#notes");
+    });
   });
 
   s.test("with no app_url set, the email still says where to look", async (a) => {
-    const E = await department(mod, root, [["hu", "Grace Okafor", ["usher", "head_usher"]], ["C", "Peter Obi", null, { email: "c@example.org" }]]);
-    a.ok((await E.call("config.set", { key: "app_url", value: "" }, E.T.admin)).ok);
-    a.ok((await E.call("notify.send", { title: "No address", body: "", usherIds: [E.ID.C] }, E.T.hu)).ok);
-    /* An admin message is emailed as it is made, so for this check it is
-       turned into the sort that is not: a duty reminder. */
-    E.env.DB._exec("UPDATE notifications SET type='duty_reminder', emailed=0");
-    a.eq(await mod.emailUnalerted(E.env, await mod.loadConfig(E.env), Date.now() + 61 * 60000), 1);
-    const m = emailsTo(E.env, "c@example.org").pop();
-    a.has(m.body, "Open the Ushers App to see them.");
-    a.hasnt(m.body, "http");
+    /* Emails wait out the quiet hours, so this runs at midday rather than
+       whenever the suite happens to run. */
+    await at("2026-11-10T12:00:00Z", async () => {
+      const E = await department(mod, root, [["hu", "Grace Okafor", ["usher", "head_usher"]], ["C", "Peter Obi", null, { email: "c@example.org" }]]);
+      a.ok((await E.call("config.set", { key: "app_url", value: "" }, E.T.admin)).ok);
+      a.ok((await E.call("notify.send", { title: "No address", body: "", usherIds: [E.ID.C] }, E.T.hu)).ok);
+      /* An admin message is emailed as it is made, so for this check it is
+         turned into the sort that is not: a duty reminder. */
+      E.env.DB._exec("UPDATE notifications SET type='duty_reminder', emailed=0");
+      a.eq(await mod.emailUnalerted(E.env, await mod.loadConfig(E.env), Date.now() + 61 * 60000), 1);
+      const m = emailsTo(E.env, "c@example.org").pop();
+      a.has(m.body, "Open the Ushers App to see them.");
+      a.hasnt(m.body, "http");
+    });
   });
 
   s.test("the phone alert and the email open the same screen", (a) => {
