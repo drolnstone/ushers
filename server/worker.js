@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.19";
+const SERVER_VERSION = "w0.3.20";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -3776,7 +3776,10 @@ async function handle(request, env, ctx) {
   const cors = corsHeaders(env, request);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const url = new URL(request.url);
-  const m = /^\/api\/([a-zA-Z.]+)$/.exec(url.pathname);
+  /* The bare address answers like /api/health, as the Driver App's does, so
+     opening the Worker in a browser shows it is up rather than an error. */
+  const path = /^\/(api\/?)?$/.test(url.pathname) ? "/api/health" : url.pathname;
+  const m = /^\/api\/([a-zA-Z.]+)$/.exec(path);
   if (!m) return json({ ok: false, error: "not_found" }, 404, cors);
   const spec = ACTIONS[m[1]];
   if (!spec) return json({ ok: false, error: "not_found" }, 404, cors);

@@ -62,7 +62,9 @@ const SABOTAGE = [
     find: 'need(me, "rota.manage");\n  const today = londonKey(new Date());\n  const before = await inChargeNow(env, cfg);',
     replace: '  const today = londonKey(new Date());\n  const before = await inChargeNow(env, cfg);' },
   { name: "the upgrade of an old database", suite: "04-old-database", file: "server/worker.js",
-    find: '"ALTER TABLE notifications ADD COLUMN ics_json TEXT",', replace: "" }
+    find: '"ALTER TABLE notifications ADD COLUMN ics_json TEXT",', replace: "" },
+  { name: "the bare address", suite: "17-bare-address", file: "server/worker.js",
+    find: 'const path = /^\\/(api\\/?)?$/.test(url.pathname) ? "/api/health" : url.pathname;', replace: "const path = url.pathname;" }
 ];
 
 const only = process.argv.slice(2).filter((a) => !a.startsWith("-"));
