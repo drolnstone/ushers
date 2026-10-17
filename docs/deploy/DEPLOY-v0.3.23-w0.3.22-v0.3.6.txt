@@ -1,0 +1,27 @@
+USHERS
+======
+  app v0.3.23 · server w0.3.22 · sheet v0.3.6
+
+  A test of deploy on merge. Nothing changes for ushers: only the three
+  version numbers move, so you can watch each part go live by itself.
+
+YOU ARE ON              GOING TO
+  Pages   v0.3.22         v0.3.23   (merge)
+  Worker  w0.3.21         w0.3.22   (merge: Cloudflare builds it)
+  Code.gs v0.3.5          v0.3.6    (merge: GitHub Actions → Apps Script)
+
+IN THIS ORDER
+1. Merge the pull request. Nothing to paste.
+
+AFTER IT (give it ten minutes)
+A. Cloudflare → Workers & Pages → ushers-api → Deployments: a build from
+   this merge, green, ending "Deployed ushers-api".
+B. GitHub → Actions → Apps Script: a green run for this merge, ending
+   "Code.gs v0.3.6 is live". If it says the secrets are not set, Code.gs
+   was not deployed: do part C of the deploy-on-merge guide, then
+   Actions → Apps Script → Run workflow.
+C. /api/health shows "server":"w0.3.22" and, after the next drain,
+   "sheet":"v0.3.6".
+D. The foot of both apps reads app v0.3.23 · server w0.3.22 · sheet v0.3.6.
+E. Within ten minutes, Ushering → Check everything shows
+   "✓ Set up has run for v0.3.6".

@@ -1,45 +1,27 @@
 USHERS
 ======
-  app v0.3.22 · server w0.3.21 · sheet v0.3.5
+  app v0.3.23 · server w0.3.22 · sheet v0.3.6
 
-  What the Driver App learnt between 10 and 17 October, taken for Ushers.
-
-  1. Alerts, emails and refusals say facts only, no advice, and say "the
-     Head Usher" where they said "the coordinator".
-  2. Admin → Ushers takes only an 11-digit UK phone number.
-  3. When an admin adds or removes someone, or changes their details, PIN
-     or roles, that person and the other admins are told.
-  4. Wrong PINs lock the phone they came from, not the name, so nobody can
-     keep the Head Usher locked out.
-  5. Turning alerts on says which step failed, and an old sign-up is
-     made again.
-  6. Admin → Ushers: tap a phone number to ring it.
-  7. Every typing box shows a faded "e.g." sample.
-  8. The sheet sets itself up after a new Code.gs, and emails you when the
-     server stops (WATCH_EMAIL, or the sheet's owner).
-  9. The browser journey runs on GitHub for every pull request.
- 10. Deploy on merge is ready to switch on (DEPLOY.md, section 5).
+  A test of deploy on merge. Nothing changes for ushers: only the three
+  version numbers move, so you can watch each part go live by itself.
 
 YOU ARE ON              GOING TO
-  Pages   v0.3.21         v0.3.22   (merge)
-  Worker  w0.3.20         w0.3.21   (paste)
-  Code.gs v0.3.4          v0.3.5    (paste, New version)
+  Pages   v0.3.22         v0.3.23   (merge)
+  Worker  w0.3.21         w0.3.22   (merge: Cloudflare builds it)
+  Code.gs v0.3.5          v0.3.6    (merge: GitHub Actions → Apps Script)
 
 IN THIS ORDER
-1. Cloudflare → Workers & Pages → ushers-api → Edit code → replace
-   everything with the whole of server/worker.js from this pull request's
-   branch → Deploy.
-2. The sheet → Extensions → Apps Script → replace everything in Code.gs
-   with the whole of Code.gs from this pull request's branch → Save.
-3. Deploy → Manage deployments → the pencil → Version: New version →
-   Deploy. (No "Set up the sheet" needed: it runs by itself within five
-   minutes.)
-4. Merge the pull request.
+1. Merge the pull request. Nothing to paste.
 
-AFTER IT
-A. The foot of both apps reads app v0.3.22 · server w0.3.21 · sheet v0.3.5.
-B. Within ten minutes, Ushering → Check everything shows
-   "✓ Set up has run for v0.3.5".
-C. Admin → Ushers: typing a phone number with one digit too many is
-   refused with "Not an 11-digit UK phone number."
-D. Admin → Ushers: a phone number is a link; tapping it offers to ring.
+AFTER IT (give it ten minutes)
+A. Cloudflare → Workers & Pages → ushers-api → Deployments: a build from
+   this merge, green, ending "Deployed ushers-api".
+B. GitHub → Actions → Apps Script: a green run for this merge, ending
+   "Code.gs v0.3.6 is live". If it says the secrets are not set, Code.gs
+   was not deployed: do part C of the deploy-on-merge guide, then
+   Actions → Apps Script → Run workflow.
+C. /api/health shows "server":"w0.3.22" and, after the next drain,
+   "sheet":"v0.3.6".
+D. The foot of both apps reads app v0.3.23 · server w0.3.22 · sheet v0.3.6.
+E. Within ten minutes, Ushering → Check everything shows
+   "✓ Set up has run for v0.3.6".
