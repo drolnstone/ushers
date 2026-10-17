@@ -1,0 +1,44 @@
+# The browser journey in tests/browser/journey.mjs: both apps opened in
+# Chrome at phone width against the real Worker, on every pull request and
+# every push to main. From the Driver App (16 Oct 2026): its browser checks
+# ran only by hand, and two had gone out of date unnoticed. Ushers' had too:
+# it stopped at the install offer and the PIN that sends itself.
+#
+# Kept apart from the Tests workflow on purpose: the sheet's deploy waits on
+# Tests, and a browser slow to start on a runner must not hold it up. The
+# pictures of every step are kept with the run.
+name: Browser checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: Europe/London
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22        # node:sqlite, which the stand-in Worker needs
+      - name: Playwright, and the runner's own Chrome
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" playwright@1.56.1
+          mkdir -p node_modules
+          ln -s "$RUNNER_TEMP/pw/node_modules/playwright" node_modules/playwright
+          ln -s "$RUNNER_TEMP/pw/node_modules/playwright-core" node_modules/playwright-core
+          echo "CHROMIUM=$(command -v google-chrome || command -v chromium)" >> "$GITHUB_ENV"
+      - name: The journey through both apps
+        run: node tests/browser/journey.mjs "$RUNNER_TEMP/shots"
+      - name: Keep the pictures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: journey-shots
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore
