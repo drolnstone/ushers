@@ -123,8 +123,7 @@ function headerMap(sh) {
 function colOf(map, heading, tabName) {
   var c = map[heading];
   if (!c) {
-    throw new Error("The " + tabName + " tab has no “" + heading + "” column. " +
-                    "Run Ushering > Set up the sheet, or put the heading back exactly as it was.");
+    throw new Error("The " + tabName + " tab has no “" + heading + "” column.");
   }
   return c;
 }
@@ -279,7 +278,7 @@ function writeTab(ss, tab, rows) {
 
 function workerCall(action, body) {
   var url = prop("WORKER_URL");
-  if (!url || !prop("SHEET_TOKEN")) throw new Error("Set WORKER_URL and SHEET_TOKEN in Script Properties.");
+  if (!url || !prop("SHEET_TOKEN")) throw new Error("WORKER_URL or SHEET_TOKEN is not set in Script Properties.");
   body.sheetToken = prop("SHEET_TOKEN");
   var res = UrlFetchApp.fetch(url.replace(/\/+$/, "") + "/api/" + action, {
     method: "post", contentType: "application/json", payload: JSON.stringify(body), muteHttpExceptions: true
@@ -469,8 +468,8 @@ function healthLines() {
       /* The Cron Trigger runs every five minutes, so a quarter of an hour
          without a tick means it has stopped. */
       var tick = h.checks ? Number(h.checks.clockLastTick) || 0 : 0;
-      if (!tick) bad.push("The server's clock has never run. Add the Cron Trigger to the Worker in Cloudflare");
-      else if (Date.now() - tick > 15 * 60000) bad.push("The server's clock last ran " + agoWords(tick) + ". Check the Worker's Cron Trigger");
+      if (!tick) bad.push("The server's clock has never run");
+      else if (Date.now() - tick > 15 * 60000) bad.push("The server's clock last ran " + agoWords(tick));
       else fine.push("The server's clock last ran " + agoWords(tick));
       fine.push("Waiting to come to the sheet: " + (h.checks ? h.checks.waitingForSheet : "?"));
       peopleLines(h.people, bad, todo, fine);

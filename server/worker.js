@@ -548,11 +548,11 @@ function phoneDefaultPin(phone) {
 
 /* Throws on a wrong PIN or a lockout; returns quietly on a right one. */
 async function verifyPin(env, cfg, usher, pin) {
-  if (!usher.pin_hash) fail(403, "no_pin", "No PIN is set for this person. Ask the coordinator.");
+  if (!usher.pin_hash) fail(403, "no_pin", "No PIN is set for this person.");
   const now = Date.now();
   const f = await env.DB.prepare("SELECT * FROM pin_failures WHERE usher_id=?").bind(usher.id).first();
   if (f && f.locked_until && f.locked_until > now) {
-    fail(423, "locked", "Too many tries. Wait " + cfg.pin_lock_minutes + " minutes.",
+    fail(423, "locked", "Too many tries. Locked for " + cfg.pin_lock_minutes + " minutes.",
          { minutes: Math.ceil((f.locked_until - now) / 60000) });
   }
   const got = await pinHash(env, String(pin || "").replace(/\D/g, ""), usher.pin_salt, usher.pin_iter || pinIterations(env));
@@ -571,7 +571,7 @@ async function verifyPin(env, cfg, usher, pin) {
     ).bind(usher.id, count, first, locked),
     stAuthLog(env, usher.id, locked ? "locked" : "pin_wrong", "")
   ]);
-  if (locked) fail(423, "locked", "Too many tries. Wait " + cfg.pin_lock_minutes + " minutes.", { minutes: cfg.pin_lock_minutes });
+  if (locked) fail(423, "locked", "Too many tries. Locked for " + cfg.pin_lock_minutes + " minutes.", { minutes: cfg.pin_lock_minutes });
   fail(403, "bad_pin", "That PIN is not right.", { left: cfg.pin_max_tries - count });
 }
 
@@ -653,7 +653,7 @@ async function findForLogin(env, b) {
   if (!name) return null;
   const r = await env.DB.prepare("SELECT * FROM ushers WHERE active=1 AND lower(full_name)=?").bind(name).all();
   const list = r.results || [];
-  if (list.length > 1) fail(409, "ambiguous_name", "More than one person has that name. Ask the coordinator.");
+  if (list.length > 1) fail(409, "ambiguous_name", "More than one person has that name.");
   return list[0] || null;
 }
 
@@ -1238,7 +1238,7 @@ async function authEffects(env, cfg, a, decider, names, opt) {
   const about = opt && opt.about ? opt.about : await authAbout(env, a, names);
   if (a.kind === "countersign" && a.subject_id !== decider.id) {
     st.push(stNotify(env, cfg, await getUsher(env, a.subject_id), "countersign_request", "Please countersign: " + (about.title || "a report"),
-      (names[a.requested_by] || "The coordinator") + " has asked you to countersign the report.", "report", a.target_id));
+      (names[a.requested_by] || "The Head Usher") + " has asked you to countersign the report.", "report", a.target_id));
   }
   if (a.kind === "duty_takeover") {
     /* The duty moves to the person who did it; the original stays on the
@@ -1524,7 +1524,7 @@ async function aAuthDecide(env, cfg, b, me) {
   }
   if (requester) {
     st.push(stNotify(env, cfg, requester, "approval_decision", (approve ? "Approved: " : "Not approved: ") + what,
-      approve ? names[a.subject_id] + " has been approved." : "Choose somebody else or ask the coordinator." + (after.decision_note ? " Reason: " + after.decision_note : ""), a.target_type, a.target_id));
+      approve ? names[a.subject_id] + " has been approved." : names[a.subject_id] + " was not approved." + (after.decision_note ? " Reason: " + after.decision_note : ""), a.target_type, a.target_id));
   }
   if (approve) {
     /* A release may be approved with the cover named there and then, or
@@ -1814,7 +1814,7 @@ async function aReportSubmit(env, cfg, b, me) {
       requestedBy: me.usher.id, reason: text(b.reason, 300) || "Not on the rota for this event",
       describe: me.usher.full_name + " asks to submit the report for " + e.title + " on " + ukDate(e.date) + "." });
     await run(env, req.statements);
-    return { ok: false, error: "needs_authorisation", message: "Approval is needed before you can submit. The coordinator has been asked.", authorisationId: req.id };
+    return { ok: false, error: "needs_authorisation", message: "Approval is needed before you can submit. The Head Usher has been asked.", authorisationId: req.id };
   }
 
   const c = cleanReport(cfg, t, b);
@@ -1891,7 +1891,7 @@ async function aReportCountersign(env, cfg, b, me) {
   const r = await env.DB.prepare("SELECT * FROM reports WHERE id=?").bind(text(b.reportId, 20)).first();
   if (!r) fail(404, "no_report", "That report was not found.");
   if (r.status !== "pending_countersignature") fail(409, "not_pending", "This report is not waiting for a countersignature.");
-  if (b.version != null && Number(b.version) !== Number(r.version || 1)) fail(409, "changed", "This report was amended after you opened it. Open it again and check it before countersigning.");
+  if (b.version != null && Number(b.version) !== Number(r.version || 1)) fail(409, "changed", "This report was amended after you opened it.");
   if (r.countersigner_id !== me.usher.id) fail(403, "not_countersigner", "You are not the countersigner for this report.");
   if (r.submitter_id === me.usher.id) fail(403, "self_countersign", "Somebody else must countersign your report.");
   let auth = null;
@@ -1899,7 +1899,7 @@ async function aReportCountersign(env, cfg, b, me) {
     auth = await findAuth(env, "countersign", me.usher.id, "report", r.id, ["approved"]);
     if (!auth) {
       const pending = await findAuth(env, "countersign", me.usher.id, "report", r.id, ["pending"]);
-      if (pending) fail(409, "awaiting_approval", "Waiting for the coordinator to approve you as countersigner.");
+      if (pending) fail(409, "awaiting_approval", "Waiting for the Head Usher to approve you as countersigner.");
       fail(403, "not_authorised", "You are not authorised to countersign this report.");
     }
   }
@@ -1914,7 +1914,7 @@ async function aReportCountersign(env, cfg, b, me) {
     env.DB.prepare("UPDATE reports SET status='verified', countersign_submission_id=?, countersign_signature=?, countersigned_at=?, countersign_pin_check=?, countersign_auth_id=?, verified_at=?, updated_at=? WHERE id=? AND status='pending_countersignature'")
       .bind(sid, signature, now, pinCheck, auth ? auth.id : null, now, now, r.id),
     env.DB.prepare("INSERT INTO report_history (report_id, at, actor_id, from_status, to_status, note) VALUES (?,?,?,?,?,?)")
-      .bind(r.id, now, me.usher.id, "pending_countersignature", "verified", auth ? "Countersigned with the coordinator's approval" : ""),
+      .bind(r.id, now, me.usher.id, "pending_countersignature", "verified", auth ? "Countersigned with the Head Usher's approval" : ""),
     stAudit(env, me.usher.id, "report.countersign", "report", r.id, { status: r.status }, { status: "verified", pinCheck, authorisation: auth ? auth.id : "" }, ""),
     stOutbox(env, "REPORTS", reportRow(after, e, names), "REPORT_ID"),
     stNotify(env, cfg, await getUsher(env, r.submitter_id), "report_status", "Verified: " + e.title + " " + ukDate(e.date),
@@ -1977,7 +1977,7 @@ async function aReportAmend(env, cfg, b, me) {
   const r = await env.DB.prepare("SELECT * FROM reports WHERE id=?").bind(text(b.reportId, 20)).first();
   if (!r) fail(404, "no_report", "That report was not found.");
   if (r.status !== "verified" && r.status !== "pending_countersignature") fail(409, "not_submitted", "Only a submitted report can be amended.");
-  if (b.version != null && Number(b.version) !== Number(r.version || 1)) fail(409, "changed", "This report has changed since you opened it. Open it again.");
+  if (b.version != null && Number(b.version) !== Number(r.version || 1)) fail(409, "changed", "This report has changed since you opened it.");
   const reason = text(b.reason, 500);
   if (reason.length < 3) fail(400, "reason", "Say why the report is being amended.");
   if (b.offline) fail(400, "online_only", "An amendment needs a signal, so the PIN can be checked.");
@@ -1990,7 +1990,7 @@ async function aReportAmend(env, cfg, b, me) {
       requestedBy: me.usher.id, reason,
       describe: me.usher.full_name + " asks to amend the report for " + e.title + " on " + ukDate(e.date) + ". Reason: " + reason });
     await run(env, req.statements);
-    return { ok: false, error: "needs_authorisation", message: "Approval is needed before you can amend this report. The coordinator has been asked.", authorisationId: req.id };
+    return { ok: false, error: "needs_authorisation", message: "Approval is needed before you can amend this report. The Head Usher has been asked.", authorisationId: req.id };
   }
   const auth = state.approval === "approved" ? await findAuth(env, "report_amendment", me.usher.id, "report", r.id, ["approved"]) : null;
 
@@ -2026,7 +2026,7 @@ async function aReportAmend(env, cfg, b, me) {
       .bind(r.id, x.line_no, x.category, x.currency, x.denomination, x.quantity, x.amount));
   }
   st.push(env.DB.prepare("INSERT INTO report_history (report_id, at, actor_id, from_status, to_status, note) VALUES (?,?,?,?,?,?)")
-    .bind(r.id, now, me.usher.id, r.status, finalStatus, "Amended to version " + v + ": " + reason + (auth ? " (with the coordinator's approval)" : "")));
+    .bind(r.id, now, me.usher.id, r.status, finalStatus, "Amended to version " + v + ": " + reason + (auth ? " (with the Head Usher's approval)" : "")));
   if (auth) st.push(stConsume(env, auth, names));
   /* Any countersign request for the old version no longer applies. */
   const open = ((await env.DB.prepare("SELECT * FROM authorisations WHERE kind='countersign' AND target_type='report' AND target_id=? AND status IN ('pending','approved')").bind(r.id).all()).results) || [];
@@ -3522,7 +3522,7 @@ async function aPushUnsubscribe(env, cfg, b, me) {
    notification for whoever switched alerts on there, and always with
    something showable (a push that shows nothing is held against the site). */
 async function aPushWhat(env, cfg, b) {
-  const plain = { ok: true, title: cfg.church_name ? "Ushering" : "Ushering", body: "Open the app for the latest.", tag: "ushers", url: "./#notes" };
+  const plain = { ok: true, title: cfg.church_name ? "Ushering" : "Ushering", body: "New notification.", tag: "ushers", url: "./#notes" };
   const endpoint = String(b.endpoint || "");
   const sub = await env.DB.prepare("SELECT * FROM push_subs WHERE endpoint=?").bind(endpoint).first();
   if (!sub) return plain;
@@ -3555,7 +3555,7 @@ async function aPushTest(env, cfg, b, me, selfOrigin) {
   const endpoint = okEndpoint(b.endpoint);
   if (!endpoint) fail(400, "endpoint", "This phone did not give a push address.");
   const sub = await env.DB.prepare("SELECT * FROM push_subs WHERE endpoint=? AND usher_id=?").bind(endpoint, me.usher.id).first();
-  if (!sub) fail(404, "not_subscribed", "Alerts are not on for this phone. Turn them on first.");
+  if (!sub) fail(404, "not_subscribed", "Alerts are not on for this phone.");
   const tkey = "pushtest:" + endpoint;
   const pending = Number(await setting(env, tkey)) || 0;
   if (pending && Date.now() - pending < 20000) fail(429, "busy", "A test is already on its way.");
@@ -3565,8 +3565,8 @@ async function aPushTest(env, cfg, b, me, selfOrigin) {
     await env.DB.prepare("DELETE FROM settings WHERE k=?").bind(tkey).run();
     const still = await env.DB.prepare("SELECT 1 AS n FROM push_subs WHERE id=?").bind(sub.id).first();
     return { ok: false, error: still ? "push_failed" : "gone",
-             message: still ? "The phone's push service did not take the test. Try again in a minute."
-                            : "This phone's alerts had lapsed. Turn them on again." };
+             message: still ? "The phone's push service did not take the test."
+                            : "This phone's alerts had lapsed." };
   }
   return { ok: true };
 }
@@ -3801,7 +3801,7 @@ async function handle(request, env, ctx) {
       if (!sheetTokenOk(env, b)) fail(403, "forbidden", "Not allowed.");
     } else if (spec.auth !== false) {
       me = await sessionOf(env, cfg, bearer(request));
-      if (!me) fail(401, "signed_out", "Please sign in again.");
+      if (!me) fail(401, "signed_out", "Signed out.");
       /* Someone just given the default PIN is asked once whether to change
          it; until they answer (change or keep), nothing else runs. */
       if (me.usher.pin_must_change && !spec.whileDefaultPin) {
@@ -3841,7 +3841,7 @@ async function handle(request, env, ctx) {
       return json(Object.assign({ ok: false, error: err.code, message: err.message }, err.extra || {}), err.status, cors);
     }
     if (String(err && err.message || "").indexOf("UNIQUE constraint failed") !== -1) {
-      return json({ ok: false, error: "conflict", message: "That was changed at the same moment. Try again." }, 409, cors);
+      return json({ ok: false, error: "conflict", message: "That was changed at the same moment." }, 409, cors);
     }
     console.log("error", err && err.stack || err);
     return json({ ok: false, error: "server", message: "Something went wrong on the server." }, 500, cors);

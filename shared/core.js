@@ -545,7 +545,7 @@
         if (location.hash === BELL.notes && BELL.onNew) BELL.onNew(true);
       }, function (e) {
         BELL.busy = false; bellPaint();
-        toast(e && e.network ? "No connection. Try again when you have signal." : (e && e.message) || "Could not turn alerts on.");
+        toast(e && e.network ? "No connection." : (e && e.message) || "Could not turn alerts on.");
       });
       return;
     }

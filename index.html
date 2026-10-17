@@ -105,7 +105,7 @@
         C.rememberPin(j.me.name, pin.value);
         if (body.usherId) C.rememberWho(body.usherId, j.me.name);
         start();
-      }, function (e) { go.disabled = false; out.appendChild(msg("No connection. Try again when you have signal.", "bad")); });
+      }, function (e) { go.disabled = false; out.appendChild(msg("No connection.", "bad")); });
     }
     var go = h("button", { onclick: submit }, "Sign in");
     C.pinBox(pin, submit);
@@ -250,7 +250,7 @@
         if (!j.ok) return out.appendChild(msg(j.message, "bad"));
         out.appendChild(msg("Sent. The Head Usher will come back to you.", "ok"));
         setTimeout(home, 900);
-      }, function () { out.appendChild(msg("No connection. Try again when you have signal.", "bad")); });
+      }, function () { out.appendChild(msg("No connection.", "bad")); });
     }
     return h("div", {}, open, box);
   }

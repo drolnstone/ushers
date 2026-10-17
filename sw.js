@@ -68,7 +68,7 @@ self.addEventListener("fetch", (e) => {
    because a push that shows nothing is held against the site. */
 self.addEventListener("push", (e) => {
   e.waitUntil((async () => {
-    let say = { title: "Ushers", body: "Open the app for the latest.", tag: "ushers", url: "./#notes" };
+    let say = { title: "Ushers", body: "New notification.", tag: "ushers", url: "./#notes" };
     try {
       const sub = await self.registration.pushManager.getSubscription();
       if (sub && API) {
