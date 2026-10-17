@@ -16,8 +16,11 @@
      SENDER_NAME         optional. Name emails show as sent by
      REPLY_TO            optional. Where replies to emails go
      UNLOCK_MAX_MINUTES  optional. Longest a tab may stay unlocked (5)
+     WATCH_EMAIL         optional. Who hears when the server stops (the
+                         sheet's owner when blank)
 
-   Menu: Ushering > Set up the sheet (once), then Check everything.
+   Menu: Ushering > Set up the sheet (once), then Check everything. After
+   that, a new version of this script sets the sheet up again by itself.
    ========================================================================== */
 
 var SHEET_VERSION = "v0.3.4";
@@ -212,6 +215,8 @@ function withUnlocked(ss, names, fn) {
 /* Every five minutes: protect anything left open too long, and any tab of
    ours with no protection at all. Returns the tabs it protected. */
 function relockOverdue() {
+  try { setUpIfNew(); } catch (err) { Logger.log("set up: " + err); }
+  try { watchServer(); } catch (err) { Logger.log("watch: " + err); }
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var have = tagged(ss), j = unlockedJournal(), now = Date.now(), done = [];
   Object.keys(TABS).forEach(function (n) {
@@ -225,6 +230,60 @@ function relockOverdue() {
   });
   saveJournal(j);
   return done;
+}
+
+/* ---- set up, by itself, once per new version ---------------------------
+   From the Driver App (sheet v1.120.0). After a new version of this script
+   is pasted, the five-minute timer does what Ushering > Set up the sheet
+   does, without the dialog: new tabs and headers, protection, the timers.
+   Three tries at most per version; Check everything says how it went. */
+function setUpIfNew() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty("SET_UP_FOR") === SHEET_VERSION) return false;
+  var tries = props.getProperty("SET_UP_TRIES") || "";
+  var n = tries.indexOf(SHEET_VERSION + ":") === 0 ? Number(tries.split(":")[1]) || 0 : 0;
+  if (n >= 3) return false;
+  props.setProperty("SET_UP_TRIES", SHEET_VERSION + ":" + (n + 1));
+  setUpSheet();
+  return true;
+}
+
+/* ---- the watchdog --------------------------------------------------------
+   From the Driver App (sheet v1.119.0, morningWatch). The server's clock
+   sends every reminder; when it stops, nothing says so until somebody runs
+   Check everything. So every half hour this timer asks the server, and
+   emails WATCH_EMAIL (or the sheet's owner) once when its clock has not run
+   for half an hour or it does not answer, and once when it is back. */
+var WATCH_EVERY_MS = 30 * 60000;
+var WATCH_STALE_MS = 30 * 60000;
+
+function watchServer() {
+  if (!prop("WORKER_URL") || !prop("SHEET_TOKEN")) return null;
+  var props = PropertiesService.getScriptProperties();
+  var now = Date.now();
+  if (now - (Number(props.getProperty("WATCH_AT")) || 0) < WATCH_EVERY_MS) return null;
+  props.setProperty("WATCH_AT", String(now));
+  var fault = "";
+  try {
+    var res = UrlFetchApp.fetch(prop("WORKER_URL").replace(/\/+$/, "") + "/api/health",
+      { method: "post", contentType: "application/json", muteHttpExceptions: true,
+        payload: JSON.stringify({ sheetToken: prop("SHEET_TOKEN") }) });
+    var h = JSON.parse(res.getContentText());
+    var tick = h && h.checks ? Number(h.checks.clockLastTick) || 0 : 0;
+    if (res.getResponseCode() !== 200 || !h.ok) fault = "The server answered " + res.getResponseCode() + ".";
+    else if (!tick) fault = "The server's clock has never run.";
+    else if (now - tick > WATCH_STALE_MS) fault = "The server's clock last ran " + agoWords(tick) + ".";
+  } catch (err) { fault = "The server did not answer."; }
+  var was = props.getProperty("WATCH_FAULT") || "";
+  var to = prop("WATCH_EMAIL") || Session.getEffectiveUser().getEmail();
+  if (fault && !was) {
+    props.setProperty("WATCH_FAULT", fault);
+    if (to) sendMail({ to: to, subject: "Ushers: the server has stopped", body: fault + "\nReminders and alerts are not going out." });
+  } else if (!fault && was) {
+    props.deleteProperty("WATCH_FAULT");
+    if (to) sendMail({ to: to, subject: "Ushers: the server is running again", body: "The server's clock is running." });
+  }
+  return fault;
 }
 
 /* ---- writing rows ------------------------------------------------------- */
@@ -417,6 +476,7 @@ function setUpSheet() {
   ScriptApp.newTrigger("drain").timeBased().everyMinutes(5).create();
   ScriptApp.newTrigger("relockOverdue").timeBased().everyMinutes(5).create();
   saveJournal({});
+  PropertiesService.getScriptProperties().setProperty("SET_UP_FOR", SHEET_VERSION);
 }
 
 function setUp() {
@@ -452,6 +512,9 @@ function healthLines() {
   });
   if (open.length) bad.push("Not protected: " + open.join(", "));
   else fine.push("Every tab is protected");
+  if (prop("SET_UP_FOR") === SHEET_VERSION) fine.push("Set up has run for " + SHEET_VERSION);
+  else bad.push("Set up has not run for " + SHEET_VERSION);
+  if (prop("WATCH_FAULT")) bad.push("Watchdog: " + prop("WATCH_FAULT"));
   if (prop("WORKER_URL") && prop("SHEET_TOKEN")) {
     try {
       var res = UrlFetchApp.fetch(prop("WORKER_URL").replace(/\/+$/, "") + "/api/health",

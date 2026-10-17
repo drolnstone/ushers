@@ -369,7 +369,13 @@ once.
 Every tab is protected so only the owner can edit. A drain unlocks only the
 tabs it writes, writes, and protects them again in a `finally`. The time each
 tab was opened is written down; `relockOverdue` (every five minutes)
-protects anything left open longer than `UNLOCK_MAX_MINUTES` (5).
+protects anything left open longer than `UNLOCK_MAX_MINUTES` (5). The same
+timer does two more things, from the Driver App. After a new version of
+`Code.gs` it runs Set up by itself, once (three tries at most), so a deploy
+needs no Set up step; Check everything says whether it ran. And every half
+hour it asks the server: when the server's clock has not run for half an
+hour, or the server does not answer, it emails `WATCH_EMAIL` (the sheet's
+owner when blank) once, and once more when it is running again.
 Protection is a second layer; the server's permissions are the first.
 
 ## Configuration
@@ -393,7 +399,7 @@ This repository is public. No secret is in any file:
 | Worker variables (Secrets) | `PIN_PEPPER`, `SHEET_TOKEN`, `BOOTSTRAP_TOKEN` (only until the first administrator exists) |
 | Worker variables | `SHEET_WEBAPP_URL`, `ALLOWED_ORIGINS`, `PIN_ITERATIONS`, `PUSH_CONTACT` (all optional) |
 | D1 `settings` table | the phone-alert key pair, made by the Worker on first use (never in code) |
-| Apps Script Script Properties | `WORKER_URL`, `SHEET_TOKEN`, `SENDER_NAME`, `REPLY_TO`, `UNLOCK_MAX_MINUTES` |
+| Apps Script Script Properties | `WORKER_URL`, `SHEET_TOKEN`, `SENDER_NAME`, `REPLY_TO`, `UNLOCK_MAX_MINUTES`, `WATCH_EMAIL` |
 
 `config.js` holds only the server's address. A test fails if a shipped file
 holds anything that looks like a secret.
