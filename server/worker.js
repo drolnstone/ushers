@@ -357,6 +357,7 @@ function linkFor(n, isAdmin) {
   if (n.ref_type === "report") return "#rep/" + n.ref_id;
   if (n.ref_type === "authorisation") return "admin/#approvals";
   if (n.ref_type === "event") return "#report/" + n.ref_id;
+  if (n.ref_type === "usher" && isAdmin) return "admin/#ushers/" + n.ref_id;
   return "#notes";
 }
 
@@ -541,37 +542,97 @@ async function newPinFields(env, cfg, pin) {
 /* The default PIN. A new usher starts on it and every reset drops back to
    it; at the next sign-in they are asked once whether to keep it. Ushers
    are told how it is made at onboarding; the apps never say. */
+/* A UK phone number: eleven digits starting with a zero, however it was
+   typed (spaces, +44, 0044). "" for anything else. From the Driver App,
+   where one extra digit typed by mistake changed a driver's default PIN
+   and kept him out (11 October 2026). */
+function normalisePhone(raw) {
+  let d = String(raw == null ? "" : raw).replace(/[^0-9+]/g, "");
+  if (d.indexOf("+44") === 0) d = "0" + d.substring(3);
+  else if (d.indexOf("0044") === 0) d = "0" + d.substring(4);
+  else if (d.indexOf("44") === 0 && d.length === 12) d = "0" + d.substring(2);
+  d = d.replace(/[^0-9]/g, "");
+  return d.length === 11 && d.charAt(0) === "0" ? d : "";
+}
+
 function phoneDefaultPin(phone) {
   const d = String(phone || "").replace(/\D/g, "");
   return d.length >= 4 ? d.slice(-4) : "";
 }
 
+/* WRONG PINS ARE COUNTED PER PHONE (the Driver App's w2.64.0 to w2.66.0).
+   Counted per name, three wrong PINs from anybody locked that name on every
+   phone, and the sign-in lists the names, so anyone could keep the Head
+   Usher locked out. Now each caller (a salted fingerprint of the address
+   the request came from, never the address itself) has its own
+   pin_max_tries in pin_lock_minutes. Behind that:
+   - one caller has at most PIN_CALLER_HOUR wrong PINs an hour for a name;
+   - a name has PIN_NAME_CEILING wrong PINs an hour from everybody together,
+     then it is locked for the rest of that hour;
+   - a caller that had the right PIN for that name in the last
+     PIN_KNOWN_DAYS goes on past the ceiling: somebody guessing does not
+     have the right PIN.
+   A call with no address (the tests) is counted per name. */
+const PIN_NAME_CEILING = 30;
+const PIN_CALLER_HOUR = 9;
+const PIN_KNOWN_DAYS = 30;
+const HOUR_MS = 3600 * 1000;
+
+async function callerOf(env, request) {
+  const ip = String((request && request.headers && request.headers.get("cf-connecting-ip")) || "").trim();
+  if (!ip) return "";
+  const buf = await crypto.subtle.digest("SHA-256", enc.encode(String((env && env.PIN_PEPPER) || "") + "|caller|" + ip));
+  return hex(buf).slice(0, 16);
+}
+
+async function tryRow(env, k) {
+  return await env.DB.prepare("SELECT n, at FROM pin_tries WHERE k=?").bind(k).first();
+}
+function stTry(env, k, n, at) {
+  return env.DB.prepare("INSERT INTO pin_tries (k, n, at) VALUES (?,?,?) ON CONFLICT(k) DO UPDATE SET n=excluded.n, at=excluded.at").bind(k, n, at);
+}
+/* Every count kept for one person, for a reset to clear. */
+function stTriesClear(env, usherId) {
+  return env.DB.prepare("DELETE FROM pin_tries WHERE k LIKE ? OR k=?").bind("_:" + usherId + ":%", "f:" + usherId);
+}
+function lockedFail(minutes) {
+  fail(423, "locked", "Too many tries. Locked for " + minutes + " minute" + (minutes === 1 ? "" : "s") + ".", { minutes });
+}
+
 /* Throws on a wrong PIN or a lockout; returns quietly on a right one. */
-async function verifyPin(env, cfg, usher, pin) {
+async function verifyPin(env, cfg, usher, pin, caller) {
   if (!usher.pin_hash) fail(403, "no_pin", "No PIN is set for this person.");
-  const now = Date.now();
-  const f = await env.DB.prepare("SELECT * FROM pin_failures WHERE usher_id=?").bind(usher.id).first();
-  if (f && f.locked_until && f.locked_until > now) {
-    fail(423, "locked", "Too many tries. Locked for " + cfg.pin_lock_minutes + " minutes.",
-         { minutes: Math.ceil((f.locked_until - now) / 60000) });
-  }
+  const now = Date.now(), lockMs = cfg.pin_lock_minutes * 60000;
+  const c = String(caller || "");
+  const tk = "c:" + usher.id + ":" + c, hk = c ? "h:" + usher.id + ":" + c : "", fk = "f:" + usher.id, kk = c ? "k:" + usher.id + ":" + c : "";
+  const left = (row, span) => Math.max(1, Math.ceil((span - (now - Number(row.at))) / 60000));
+  const t = await tryRow(env, tk);
+  const tries = t && now - Number(t.at) < lockMs ? Number(t.n) || 0 : 0;
+  if (tries >= cfg.pin_max_tries) lockedFail(left(t, lockMs));
+  const h = hk ? await tryRow(env, hk) : null;
+  const hn = h && now - Number(h.at) < HOUR_MS ? Number(h.n) || 0 : 0;
+  if (hn >= PIN_CALLER_HOUR) lockedFail(left(h, HOUR_MS));
+  const f = await tryRow(env, fk);
+  const fn = f && now - Number(f.at) < HOUR_MS ? Number(f.n) || 0 : 0;
+  const k = kk ? await tryRow(env, kk) : null;
+  const known = !!(k && now - Number(k.at) < PIN_KNOWN_DAYS * 86400000);
+  if (fn >= PIN_NAME_CEILING && !known) lockedFail(left(f, HOUR_MS));
+
   const got = await pinHash(env, String(pin || "").replace(/\D/g, ""), usher.pin_salt, usher.pin_iter || pinIterations(env));
   if (sameHex(got, usher.pin_hash)) {
-    if (f) await env.DB.prepare("DELETE FROM pin_failures WHERE usher_id=?").bind(usher.id).run();
+    const st = [];
+    if (t || h) st.push(env.DB.prepare("DELETE FROM pin_tries WHERE k=? OR k=?").bind(tk, hk || tk));
+    if (kk && !(k && now - Number(k.at) < 86400000)) st.push(stTry(env, kk, 1, now));
+    if (st.length) await run(env, st);
     return true;
   }
-  const windowMs = cfg.pin_lock_minutes * 60000;
-  let count = (f && f.first_at && now - f.first_at < windowMs && !(f.locked_until && f.locked_until <= now)) ? f.count + 1 : 1;
-  const first = count === 1 ? now : f.first_at;
-  const locked = count >= cfg.pin_max_tries ? now + windowMs : null;
-  await run(env, [
-    env.DB.prepare(
-      "INSERT INTO pin_failures (usher_id, count, first_at, locked_until) VALUES (?,?,?,?) " +
-      "ON CONFLICT(usher_id) DO UPDATE SET count=excluded.count, first_at=excluded.first_at, locked_until=excluded.locked_until"
-    ).bind(usher.id, count, first, locked),
-    stAuthLog(env, usher.id, locked ? "locked" : "pin_wrong", "")
-  ]);
-  if (locked) fail(423, "locked", "Too many tries. Locked for " + cfg.pin_lock_minutes + " minutes.", { minutes: cfg.pin_lock_minutes });
+  const count = tries + 1;
+  const st = [stTry(env, tk, count, tries ? Number(t.at) : now), stTry(env, fk, fn + 1, fn ? Number(f.at) : now)];
+  if (hk) st.push(stTry(env, hk, hn + 1, hn ? Number(h.at) : now));
+  const locked = count >= cfg.pin_max_tries;
+  st.push(stAuthLog(env, usher.id, locked ? "locked" : "pin_wrong", ""));
+  await run(env, st);
+  if (locked) lockedFail(cfg.pin_lock_minutes);
   fail(403, "bad_pin", "That PIN is not right.", { left: cfg.pin_max_tries - count });
 }
 
@@ -660,7 +721,7 @@ async function findForLogin(env, b) {
 async function aLogin(env, cfg, b) {
   const u = await findForLogin(env, b);
   if (!u || !u.active) fail(403, "unknown", "That name or PIN is not right.");
-  await verifyPin(env, cfg, u, b.pin);
+  await verifyPin(env, cfg, u, b.pin, b.__caller);
   const token = await createSession(env, cfg, u.id);
   await run(env, [stAuthLog(env, u.id, "login", "")]);
   const me = await usherWithRoles(env, cfg, u.id);
@@ -738,7 +799,7 @@ async function aPinKeep(env, cfg, b, me) {
 }
 
 async function aPinChange(env, cfg, b, me) {
-  await verifyPin(env, cfg, me.usher, b.oldPin);
+  await verifyPin(env, cfg, me.usher, b.oldPin, b.__caller);
   if (String(b.newPin || "") === String(b.oldPin || "")) fail(400, "same_pin", "Choose a PIN different from the one you have.");
   if (phoneDefaultPin(me.usher.phone) && String(b.newPin || "") === phoneDefaultPin(me.usher.phone)) {
     fail(400, "same_pin", "Choose a different PIN.");
@@ -1445,7 +1506,7 @@ async function aAuthRequest(env, cfg, b, me) {
     const names = await namesMap(env);
     /* An approver's own duty change happens at once, so it takes their PIN
        as any approval does. */
-    if (me.perms.has("exceptions.approve")) await verifyPin(env, cfg, me.usher, b.pin);
+    if (me.perms.has("exceptions.approve")) await verifyPin(env, cfg, me.usher, b.pin, b.__caller);
     const req = await authRequest(env, cfg, { kind, subjectId: me.usher.id, targetType: "appointment", targetId: ap.id, me,
       requestedBy: me.usher.id, reason,
       describe: me.usher.full_name + " says they did " + (names[ap.usher_id] || "someone") + "'s duty at " + e.title + " on " + ukDate(e.date) + "." });
@@ -1467,7 +1528,7 @@ async function aDutyCover(env, cfg, b, me) {
   const cover = await getUsher(env, text(b.coverId, 20));
   if (!cover || !cover.active) fail(400, "cover", "Choose somebody from the list.");
   if (cover.id === a.subject_id) fail(400, "cover", "Choose somebody else to cover it.");
-  await verifyPin(env, cfg, me.usher, b.pin);
+  await verifyPin(env, cfg, me.usher, b.pin, b.__caller);
   const e = await getEvent(env, ap.event_id);
   const names = await namesMap(env), now = Date.now();
   const st = [await coverStatements(env, cfg, e, ap, cover, me.usher, names, a.id)];
@@ -1489,7 +1550,7 @@ async function aAuthDecide(env, cfg, b, me) {
   }
   const approve = b.decision === "approve";
   if (!approve && b.decision !== "reject") fail(400, "decision", "Approve or reject.");
-  await verifyPin(env, cfg, me.usher, b.pin);
+  await verifyPin(env, cfg, me.usher, b.pin, b.__caller);
   const now = Date.now(), names = await namesMap(env);
   const after = Object.assign({}, a, { status: approve ? "approved" : "rejected", decided_by: me.usher.id, decided_at: now, decision_note: text(b.note, 300) });
   const st = [
@@ -1640,7 +1701,7 @@ async function signingCheck(env, cfg, me, b) {
     if (!at || at > now + 300000 || now - at > cfg.offline_max_hours * 3600000) fail(400, "offline_stale", "This signature is too old. Sign again.");
     return "device";
   }
-  await verifyPin(env, cfg, me.usher, b.pin);
+  await verifyPin(env, cfg, me.usher, b.pin, b.__caller);
   return "server";
 }
 
@@ -2003,7 +2064,7 @@ async function aReportAmend(env, cfg, b, me) {
     if (!cs || !cs.active) fail(400, "countersigner", "Choose who will countersign.");
     if (cs.id === me.usher.id) fail(400, "self_countersign", "Somebody else must countersign this report.");
   }
-  await verifyPin(env, cfg, me.usher, b.pin);
+  await verifyPin(env, cfg, me.usher, b.pin, b.__caller);
 
   const now = Date.now();
   const oldEntries = await entriesOf(env, r.id);
@@ -2642,7 +2703,9 @@ async function aUsherSave(env, cfg, b, me) {
   if (!name) fail(400, "name", "A full name is needed.");
   const email = text(b.email, 120);
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) fail(400, "email", "That email address does not look right.");
-  const phone = text(b.phone, 30);
+  const typed = text(b.phone, 30);
+  const phone = typed ? normalisePhone(typed) : "";
+  if (typed && !phone) fail(400, "phone", "Not an 11-digit UK phone number.");
   const now = Date.now();
   if (b.usherId) {
     const before = await getUsher(env, text(b.usherId, 20));
@@ -2659,6 +2722,14 @@ async function aUsherSave(env, cfg, b, me) {
       stOutbox(env, "USHERS", usherRow(after, await rolesOf(env, before.id)), "USHER_ID")
     ];
     if (!active) st.push(env.DB.prepare("UPDATE sessions SET revoked_at=? WHERE usher_id=? AND revoked_at IS NULL").bind(now, before.id));
+    const what = [["Name", before.full_name, name], ["Email", before.email, email], ["Phone", before.phone, phone]]
+      .filter((x) => String(x[1] || "") !== String(x[2] || "")).map((x) => x[0]);
+    if (Number(before.active) !== active) what.push(active ? "Active again" : "Not active");
+    if (what.length) {
+      const said = what.join(", ").toLowerCase();
+      st.push(await stTellChange(env, cfg, me, after, active && before.active ? "Your details were changed: " + said : null,
+        "Details changed (" + said + ")"));
+    }
     await run(env, st);
     return { ok: true, usherId: before.id };
   }
@@ -2677,9 +2748,29 @@ async function aUsherSave(env, cfg, b, me) {
     env.DB.prepare("INSERT INTO user_roles (usher_id, role, granted_by, granted_at) VALUES (?,?,?,?)").bind(id, "usher", me.usher.id, now),
     stAudit(env, me.usher.id, "usher.create", "usher", id, null, { name, email, phone, roles: ["usher"] }, ""),
     stOutbox(env, "USHERS", usherRow(Object.assign(u, pin || {}), ["usher"]), "USHER_ID"),
-    pin ? stAuthLog(env, id, "pin_set", "by " + me.usher.id) : null
+    pin ? stAuthLog(env, id, "pin_set", "by " + me.usher.id) : null,
+    await stTellChange(env, cfg, me, u, null, "Added")
   ]);
   return { ok: true, usherId: id, pinFrom: pin ? (phoneDefaultPin(phone) ? "default" : "typed") : "" };
+}
+
+/* CHANGES ARE TOLD. A change an admin makes to somebody (details, roles,
+   a PIN reset, adding or removing them) goes to that person and to the
+   other admins, so a change made by mistake does not go unheard (the
+   Driver App, 11 October 2026). Whoever made it is not told, and test
+   people are left out. */
+async function stTellChange(env, cfg, me, u, mine, theirs) {
+  if (!u || /^Test /.test(u.full_name || "")) return [];
+  const by = me.usher.full_name || "An administrator";
+  const st = [];
+  if (mine && u.id !== me.usher.id && u.active) {
+    st.push(stNotify(env, cfg, u, "account_change", mine, "By " + by + ".", "usher", u.id));
+  }
+  for (const a of await holders(env, cfg, "admin.app")) {
+    if (a.id === me.usher.id || a.id === u.id) continue;
+    st.push(stNotify(env, cfg, a, "account_change", theirs + ": " + u.full_name, "By " + by + ".", "usher", u.id, null, true));
+  }
+  return st;
 }
 
 async function aUsherRoles(env, cfg, b, me) {
@@ -2703,6 +2794,8 @@ async function aUsherRoles(env, cfg, b, me) {
   if (!add.length && !drop.length) return { ok: true, changed: false };
   st.push(stAudit(env, me.usher.id, "roles.change", "usher", u.id, { roles: have }, { roles: want }, text(b.reason, 200)));
   st.push(stOutbox(env, "USHERS", usherRow(u, want), "USHER_ID"));
+  const now_ = want.map((r) => ROLE_LABELS[r] || r).join(", ");
+  st.push(await stTellChange(env, cfg, me, u, "Your roles are now: " + now_, "Roles changed to " + now_));
   await run(env, st);
   return { ok: true, changed: true };
 }
@@ -2742,6 +2835,7 @@ async function aUsherRemove(env, cfg, b, me) {
   }
   st.push(stAudit(env, me.usher.id, "usher.remove", "usher", u.id, { active: u.active, roles: have }, { active: 0, roles: ["usher"] }, text(b.reason, 200)));
   st.push(stOutbox(env, "USHERS", usherRow(after, ["usher"]), "USHER_ID"));
+  st.push(await stTellChange(env, cfg, me, u, null, "Removed"));
   await run(env, st);
   return { ok: true, duties: appts.length };
 }
@@ -2761,11 +2855,12 @@ async function aUsherResetPin(env, cfg, b, me) {
   await run(env, [
     env.DB.prepare("UPDATE ushers SET pin_salt=?, pin_hash=?, pin_iter=?, pin_set_at=?, pin_must_change=?, updated_at=? WHERE id=?")
       .bind(pin.pin_salt, pin.pin_hash, pin.pin_iter, pin.pin_set_at, mustChange, now, u.id),
-    env.DB.prepare("DELETE FROM pin_failures WHERE usher_id=?").bind(u.id),
+    stTriesClear(env, u.id),
     env.DB.prepare("UPDATE sessions SET revoked_at=? WHERE usher_id=? AND revoked_at IS NULL").bind(now, u.id),
     stAudit(env, me.usher.id, "pin.reset", "usher", u.id, null, null, text(b.reason, 200) || "PIN set by administrator"),
     stAuthLog(env, u.id, "pin_set", "by " + me.usher.id),
-    stOutbox(env, "USHERS", usherRow(Object.assign({}, u, pin, { updated_at: now }), await rolesOf(env, u.id)), "USHER_ID")
+    stOutbox(env, "USHERS", usherRow(Object.assign({}, u, pin, { updated_at: now }), await rolesOf(env, u.id)), "USHER_ID"),
+    await stTellChange(env, cfg, me, u, "Your PIN was reset", "PIN reset")
   ]);
   return { ok: true, pinFrom: phoneDefaultPin(u.phone) ? "default" : "typed" };
 }
@@ -3601,6 +3696,7 @@ const MIGRATIONS = [
   "ALTER TABLE notifications ADD COLUMN ics_json TEXT",
   "ALTER TABLE ushers ADD COLUMN installed_at INTEGER",
   "ALTER TABLE events ADD COLUMN rule_id TEXT DEFAULT ''",
+  "CREATE TABLE IF NOT EXISTS pin_tries (k TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL)",
   "CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT DEFAULT '', audience TEXT NOT NULL DEFAULT 'all', usher_ids TEXT DEFAULT '', send_at INTEGER, sent_at INTEGER, pinned_until TEXT DEFAULT '', created_by TEXT, created_at INTEGER)",
   "CREATE INDEX IF NOT EXISTS messages_due ON messages(sent_at, send_at)"
 ];
@@ -3794,6 +3890,8 @@ async function handle(request, env, ctx) {
       try { b = raw ? JSON.parse(raw) : {}; } catch (e) { fail(400, "bad_json", "Bad request."); }
       if (!b || typeof b !== "object" || Array.isArray(b)) fail(400, "bad_json", "Bad request.");
     }
+    /* Never taken from the phone: always worked out here. */
+    b.__caller = await callerOf(env, request);
     await migrate(env);
     const cfg = await loadConfig(env);
     let me = null;

@@ -68,6 +68,14 @@ CREATE TABLE IF NOT EXISTS pin_failures (
   locked_until INTEGER
 );
 
+/* Wrong PINs per caller, per caller-hour, per name-hour, and callers known
+   to have the right PIN (keys c:, h:, f:, k:). From w0.3.21. */
+CREATE TABLE IF NOT EXISTS pin_tries (
+  k  TEXT PRIMARY KEY,
+  n  INTEGER NOT NULL DEFAULT 0,
+  at INTEGER NOT NULL
+);
+
 -- Rules, as JSON values. Defaults live in worker.js; a row here overrides.
 CREATE TABLE IF NOT EXISTS config (
   k           TEXT PRIMARY KEY,
