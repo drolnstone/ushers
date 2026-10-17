@@ -6,6 +6,7 @@
 import { Suite } from "../lib/t.mjs";
 import { loadWorker, makeEnv, client } from "../lib/worker.mjs";
 import { makeDB } from "../lib/d1.mjs";
+import { at } from "../lib/people.mjs";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -16,6 +17,10 @@ export default async function ({ root }) {
   const s = new Suite("a database older than the code");
   const old = readFileSync(join(root, FIXTURE), "utf8");
   let env, call, T = {}, ID = {};
+  /* A Wednesday noon in London: at night quiet hours hold the alerts, and
+     "what went out" would rightly stay empty. */
+  const NOON = "2026-11-11T12:00:00Z";
+  const test = (name, fn) => s.test(name, (a) => at(NOON, () => fn(a)));
 
   s.test("the fixture really is old: it has none of the later tables or columns", (a) => {
     for (const later of ["ics_json", "sent_log", "queued_done", "pin_must_change"]) {
@@ -23,7 +28,7 @@ export default async function ({ root }) {
     }
   });
 
-  s.test("an old database with people, an event and a report in it", async (a) => {
+  test("an old database with people, an event and a report in it", async (a) => {
     env = makeEnv(root, { DB: makeDB(join(root, FIXTURE)) });
     call = client(mod, env);
     /* Rows as the old code would have left them, written with the old
@@ -47,7 +52,7 @@ export default async function ({ root }) {
     a.ok(env.DB._one("SELECT pin_hash FROM ushers WHERE id='U001'").pin_hash, "PINs as the old code left them");
   });
 
-  s.test("the first call brings it up to date", async (a) => {
+  test("the first call brings it up to date", async (a) => {
     const me = await call("login", { usherId: "U001", pin: "1234" });
     a.ok(me.ok, JSON.stringify(me));
     T.hu = me.token;
@@ -60,7 +65,7 @@ export default async function ({ root }) {
     }
   });
 
-  s.test("and then a whole Sunday works on it: rota, duty, report, countersignature", async (a) => {
+  test("and then a whole Sunday works on it: rota, duty, report, countersignature", async (a) => {
     const sunday = mod.sundayOnOrAfter(mod.londonKey(new Date()));
     const first = "S" + sunday.replace(/-/g, "") + "-1";
     a.ok((await call("rota", { from: sunday, weeks: 1 }, T.hu)).ok);
@@ -82,7 +87,7 @@ export default async function ({ root }) {
     a.ok(notes.notifications.some((n) => n.title.indexOf("You are on duty") === 0), "the old notification and the new ones read together");
   });
 
-  s.test("the newest features work on it too: what went out, and a duty in the diary", async (a) => {
+  test("the newest features work on it too: what went out, and a duty in the diary", async (a) => {
     const sent = await call("sent.list", { days: 7 }, T.hu);
     a.ok(sent.ok, JSON.stringify(sent));
     a.ok(sent.sent.length > 0, "the new table is being written");

@@ -29,7 +29,7 @@ crons = ["*/5 * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "Ushers"
-database_id = "PUT-THE-D1-DATABASE-ID-HERE"
+database_id = "ab3c38dc-0e48-422c-8ee8-cbb1c5b6a736"
 
 [observability]
 enabled = true
