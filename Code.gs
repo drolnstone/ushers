@@ -23,7 +23,7 @@
    that, a new version of this script sets the sheet up again by itself.
    ========================================================================== */
 
-var SHEET_VERSION = "v0.3.5";
+var SHEET_VERSION = "v0.3.6";
 
 /* The tabs and the headers each starts with. A missing header is added at
    the end; a header is never renamed or moved by this script, and a column

@@ -18,9 +18,13 @@ export default async function ({ root }) {
   const old = readFileSync(join(root, FIXTURE), "utf8");
   let env, call, T = {}, ID = {};
   /* A Wednesday noon in London: at night quiet hours hold the alerts, and
-     "what went out" would rightly stay empty. */
+     "what went out" would rightly stay empty. The alerts are sent after the
+     answer, so each step waits for them before the clock goes back. */
   const NOON = "2026-11-11T12:00:00Z";
-  const test = (name, fn) => s.test(name, (a) => at(NOON, () => fn(a)));
+  const test = (name, fn) => s.test(name, (a) => at(NOON, async () => {
+    await fn(a);
+    if (call) await call.settle();
+  }));
 
   s.test("the fixture really is old: it has none of the later tables or columns", (a) => {
     for (const later of ["ics_json", "sent_log", "queued_done", "pin_must_change"]) {

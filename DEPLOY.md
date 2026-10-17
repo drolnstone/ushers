@@ -1,6 +1,6 @@
 # Setting up the Ushering App
 
-Versions: app v0.3.22 · server w0.3.21 · sheet v0.3.5.
+Versions: app v0.3.23 · server w0.3.22 · sheet v0.3.6.
 
 Already done once (skip if so): the D1 database exists with `server/schema.sql`
 run in its Console, the Worker exists, and `config.js` points at it
@@ -32,7 +32,7 @@ run in its Console, the Worker exists, and `config.js` points at it
 5. Settings → Triggers → Cron Triggers → add `*/5 * * * *` (reminders and
    the sheet knock).
 6. Open `https://<worker address>/api/health`. It should show
-   `"server":"w0.3.21"`, and `pinPepper` and `sheetToken` true.
+   `"server":"w0.3.22"`, and `pinPepper` and `sheetToken` true.
 
 ## 2. The pages (GitHub Pages)
 
@@ -128,7 +128,7 @@ paste by hand as in sections 1 and 4.
 
 A. `/api/health` shows `pinPepper`, `sheetToken` and `sheetKnock` true, and
    after five minutes `clockLastTick` is no longer 0.
-B. The foot of both apps reads app v0.3.22 · server w0.3.21 · sheet v0.3.5
+B. The foot of both apps reads app v0.3.23 · server w0.3.22 · sheet v0.3.6
    (the sheet number appears after the first drain).
 C. The Admin App's sign-in lists only Head Ushers, Assistant Head Ushers and
    System Administrators. A Head Usher moves between the apps with Open
