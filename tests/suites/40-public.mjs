@@ -15,6 +15,7 @@ export default async function ({ root }) {
   s.test("no secret values in shipped files", (a) => {
     const bad = [
       [/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]{20,}/, "an Apps Script deployment address"],
+      [/\bAKfycb[A-Za-z0-9_-]{20,}/, "an Apps Script deployment ID (the /exec address)"],
       [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, "a private key"],
       [/\b(PIN_PEPPER|SHEET_TOKEN|BOOTSTRAP_TOKEN)\s*[:=]\s*["'][^"']{6,}["']/, "a secret assigned in code"],
       [/\b[a-f0-9]{40,}\b/, "a long hex string"],

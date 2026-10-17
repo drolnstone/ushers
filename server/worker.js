@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.20";
+const SERVER_VERSION = "w0.3.21";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.

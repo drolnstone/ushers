@@ -1,6 +1,6 @@
 # Setting up the Ushering App
 
-Versions: app v0.3.21 · server w0.3.20 · sheet v0.3.4.
+Versions: app v0.3.22 · server w0.3.21 · sheet v0.3.5.
 
 Already done once (skip if so): the D1 database exists with `server/schema.sql`
 run in its Console, the Worker exists, and `config.js` points at it
@@ -32,7 +32,7 @@ run in its Console, the Worker exists, and `config.js` points at it
 5. Settings → Triggers → Cron Triggers → add `*/5 * * * *` (reminders and
    the sheet knock).
 6. Open `https://<worker address>/api/health`. It should show
-   `"server":"w0.3.20"`, and `pinPepper` and `sheetToken` true.
+   `"server":"w0.3.21"`, and `pinPepper` and `sheetToken` true.
 
 ## 2. The pages (GitHub Pages)
 
@@ -71,7 +71,8 @@ test people**.
      `https://ushers-api.asimbassey.workers.dev`)
    - `SHEET_TOKEN`: the same value as the Worker's
    - optional: `SENDER_NAME`, `REPLY_TO` (for emails), `UNLOCK_MAX_MINUTES`
-     (the unlock window, 5 if left out)
+     (the unlock window, 5 if left out), `WATCH_EMAIL` (who is emailed when
+     the server stops; the sheet's owner if left out)
 4. Deploy the web app:
    - First time: Deploy → New deployment → Web app, execute as Me, access
      Anyone → Deploy → copy the address ending `/exec`.
@@ -80,16 +81,54 @@ test people**.
      web app keeps running the old code.
 5. Put the `/exec` address in the Worker as the Text variable
    `SHEET_WEBAPP_URL`. It never goes in GitHub.
-6. Reload the sheet → Ushering → Set up the sheet (allow the permissions).
-   It protects every tab, writes a GUIDE tab and starts the five-minute
-   drain.
+6. First time only: reload the sheet → Ushering → Set up the sheet (allow
+   the permissions). It protects every tab, writes a GUIDE tab and starts
+   the five-minute timers. After that, each new version of `Code.gs` sets
+   the sheet up again by itself within five minutes.
 7. Ushering → Check everything: every line should be ✓.
+
+## 5. Going live on merge (once)
+
+From then on, merging a pull request puts the Worker and `Code.gs` live by
+themselves, but only when every test passes. Until both parts are set up,
+paste by hand as in sections 1 and 4.
+
+**The Worker (Cloudflare)**
+
+1. Workers & Pages → D1 → the database → copy its **Database ID**, and send
+   it in the project chat. It goes into `wrangler.toml` (it is not a secret:
+   it is useless without your Cloudflare sign-in).
+2. Once that is merged: Workers & Pages → `ushers-api` → Settings → Build →
+   Connect → GitHub → `drolnstone/ushers`, branch `main`.
+3. Build command: leave empty. Deploy command: `npx wrangler deploy`. Root
+   directory: `/`. Save.
+4. The next merge builds it: Settings → Build shows the run, and a failing
+   test stops it with the live Worker left as it was. Secrets and Text
+   variables in the dashboard are kept.
+
+**Code.gs (GitHub Actions)**
+
+1. https://script.google.com/home/usersettings → Google Apps Script API: On.
+2. On a computer with Node: `npm install -g @google/clasp@2.4.2`, then
+   `clasp login` and sign in with the Google account that owns the sheet.
+   It writes a file `.clasprc.json` in your home folder.
+3. Apps Script → Project Settings → copy the **Script ID**.
+4. Apps Script → Deploy → Manage deployments → the web app → copy the
+   **Deployment ID**.
+5. GitHub → `drolnstone/ushers` → Settings → Secrets and variables →
+   Actions → New repository secret, three times:
+   - `CLASPRC_JSON`: the whole of `.clasprc.json`
+   - `SCRIPT_ID`: the Script ID
+   - `DEPLOYMENT_ID`: the Deployment ID. It is the `/exec` address in
+     disguise, so it lives only here, never in a file.
+6. Actions → Apps Script → Run workflow. It ends with "Code.gs … is live",
+   or "already live".
 
 ## Afterwards, check
 
 A. `/api/health` shows `pinPepper`, `sheetToken` and `sheetKnock` true, and
    after five minutes `clockLastTick` is no longer 0.
-B. The foot of both apps reads app v0.3.21 · server w0.3.20 · sheet v0.3.4
+B. The foot of both apps reads app v0.3.22 · server w0.3.21 · sheet v0.3.5
    (the sheet number appears after the first drain).
 C. The Admin App's sign-in lists only Head Ushers, Assistant Head Ushers and
    System Administrators. A Head Usher moves between the apps with Open
