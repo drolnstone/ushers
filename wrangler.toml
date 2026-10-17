@@ -1,0 +1,35 @@
+# The Cloudflare Worker ushers-api, as Cloudflare's Git deploy builds it
+# (Workers & Pages → ushers-api → Settings → Build → connect this repository,
+# deploy command `npx wrangler deploy`, root /). From the Driver App: the
+# Worker goes live when a change reaches main, instead of being pasted.
+#
+# The tests run first: wrangler deploy runs [build] before it uploads, and a
+# failing check stops the deploy, so the Worker that is live stays live.
+#
+# Secrets (PIN_PEPPER, SHEET_TOKEN) and Text variables (ALLOWED_ORIGINS,
+# PUSH_CONTACT, SHEET_WEBAPP_URL) stay in the dashboard: keep_vars leaves
+# them alone, and a deploy never touches secrets.
+#
+# database_id is not a secret (it is useless without the Cloudflare account)
+# but it must be the live one: Workers & Pages → D1 → the database → its ID.
+
+name = "ushers-api"
+main = "server/worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+keep_vars = true
+
+[build]
+command = "node tests/run-tests.mjs"
+
+# Reminders, the sheet knock and the drain backstop (DEPLOY.md, step 1.5).
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "Ushers"
+database_id = "PUT-THE-D1-DATABASE-ID-HERE"
+
+[observability]
+enabled = true

@@ -207,6 +207,8 @@ and to anyone with alerts on no phone as part of their digest.
 | Summary for *month* / *year* | `summary_roles` (Head Usher, Assistant) and anyone holding the offering or dues permission | the last Sunday of the month from `summary_hour` (19), the year's as well in December | app, phone, email | the month's record arrives without anyone asking for it | `15-summary` |
 | Reminder: *event* | everybody on that duty, or one role | each pattern in `reminder_patterns`, at its own hour | app, phone, email + diary entry | the department's own rhythm, not just the standard reminder | `13b-reminder-patterns` |
 | Add Ushers to your phone | anybody not on a Home Screen | Wednesdays from `reminder_hour`, and when Admin sends the steps | app, phone, email | an uninstalled iPhone is woken by nothing | `09-install` |
+| Your details were changed / Your PIN was reset / Your roles are now: … | the person changed (not when removed) | an admin changes their phone, name, email, PIN or roles | app, phone | a change made by mistake does not go unheard | `87-minibus-oct` |
+| Added / Removed / Details changed / PIN reset / Roles changed: *name* | the other admins (Admin App holders) | any of those changes | app, phone | the same, from the Driver App (11 Oct) | `87-minibus-oct` |
 | In charge today: *name* | everybody on a duty that day | the name is changed | app, phone | they are the people who may need somebody this morning | `16-in-charge` |
 | Test. | the phone that asked | Notifications → Send a test alert | phone | proves the chain without pretending to be real news | `80-bell`, `05-words` |
 
@@ -347,8 +349,14 @@ reset drops back to it; how it is made is told to ushers at onboarding and is
 never shown in either app. At the next sign-in they are asked once, "Do you
 wish to keep your default PIN?": Yes keeps it, No leads them to a new PIN
 (they can still change it later on the PIN tab). Someone with no default PIN gets a
-starting PIN typed by whoever adds or resets them. Three wrong tries pause that
-name for five minutes. A sign-in makes a session token, stored on the server
+starting PIN typed by whoever adds or resets them. A phone number must be an
+11-digit UK number (spaces, +44 and 0044 are taken and saved as digits).
+Wrong PINs are counted per phone, as the Driver App does: three wrong tries
+pause that phone for five minutes, not the name, so nobody can keep someone
+else locked out. One phone has at most nine wrong tries an hour for a name;
+thirty an hour from everybody together pause the name for the rest of the
+hour, except on a phone that has had the right PIN for it in the last 30
+days. A reset clears every count. A sign-in makes a session token, stored on the server
 only as a hash. Both apps live on one site, so they share the token: **Open
 Admin App** and **Open Ushers App** need no second sign-in. The Admin App
 also has its own sign-in at `/admin/`, so it can be opened or added to the
@@ -361,7 +369,13 @@ once.
 Every tab is protected so only the owner can edit. A drain unlocks only the
 tabs it writes, writes, and protects them again in a `finally`. The time each
 tab was opened is written down; `relockOverdue` (every five minutes)
-protects anything left open longer than `UNLOCK_MAX_MINUTES` (5).
+protects anything left open longer than `UNLOCK_MAX_MINUTES` (5). The same
+timer does two more things, from the Driver App. After a new version of
+`Code.gs` it runs Set up by itself, once (three tries at most), so a deploy
+needs no Set up step; Check everything says whether it ran. And every half
+hour it asks the server: when the server's clock has not run for half an
+hour, or the server does not answer, it emails `WATCH_EMAIL` (the sheet's
+owner when blank) once, and once more when it is running again.
 Protection is a second layer; the server's permissions are the first.
 
 ## Configuration
@@ -385,7 +399,7 @@ This repository is public. No secret is in any file:
 | Worker variables (Secrets) | `PIN_PEPPER`, `SHEET_TOKEN`, `BOOTSTRAP_TOKEN` (only until the first administrator exists) |
 | Worker variables | `SHEET_WEBAPP_URL`, `ALLOWED_ORIGINS`, `PIN_ITERATIONS`, `PUSH_CONTACT` (all optional) |
 | D1 `settings` table | the phone-alert key pair, made by the Worker on first use (never in code) |
-| Apps Script Script Properties | `WORKER_URL`, `SHEET_TOKEN`, `SENDER_NAME`, `REPLY_TO`, `UNLOCK_MAX_MINUTES` |
+| Apps Script Script Properties | `WORKER_URL`, `SHEET_TOKEN`, `SENDER_NAME`, `REPLY_TO`, `UNLOCK_MAX_MINUTES`, `WATCH_EMAIL` |
 
 `config.js` holds only the server's address. A test fails if a shipped file
 holds anything that looks like a secret.

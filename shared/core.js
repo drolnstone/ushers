@@ -18,7 +18,7 @@
    refused one. */
 (function () {
   "use strict";
-  var APP_VERSION = "v0.3.21";
+  var APP_VERSION = "v0.3.22";
   var CFG = window.USHERS_CONFIG || {};
   var K = { session: "ushers.session.v1", device: "ushers.device.v1", queue: "ushers.queue.v1", draft: "ushers.draft.v1:", saved: "ushers.saved.v1:",
             lastWho: "ushers.lastWho.v1", people: "ushers.people.v1:" };
@@ -415,16 +415,38 @@
     return swReg().then(function (reg) { return reg.pushManager.getSubscription(); })
       .then(function (s) { return s ? "on" : "off"; }, function () { return "unsupported"; });
   }
+  /* Each step that can fail says which it was (the Driver App's v1.116.0:
+     an Android phone said only "Could not turn alerts on."). A sign-up made
+     under another key is dropped and made again, once. */
+  function sameKey(sub, want) {
+    var have = sub && sub.options && sub.options.applicationServerKey;
+    if (!have) return true;
+    have = new Uint8Array(have);
+    if (have.length !== want.length) return false;
+    for (var i = 0; i < want.length; i++) if (have[i] !== want[i]) return false;
+    return true;
+  }
   function alertsOn(publicKey) {
+    var want = keyBytes(publicKey);
+    function fresh(reg) {
+      return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want }).catch(function (e) {
+        throw new Error("The phone's push service refused (" + ((e && e.name) || "error") + ").");
+      });
+    }
+    function tell(sub) {
+      return api("push.subscribe", { endpoint: sub.endpoint }).then(function (j) {
+        if (!j.ok) throw new Error("The Ushers server refused it" + (j.message ? ": " + j.message : "."));
+        return j;
+      });
+    }
     return Notification.requestPermission().then(function (p) {
       if (p !== "granted") throw new Error("Alerts were not allowed on this phone.");
       return swReg();
     }).then(function (reg) {
       return reg.pushManager.getSubscription().then(function (s) {
-        return s || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
+        if (s && sameKey(s, want)) return tell(s);
+        return (s ? s.unsubscribe().catch(function () {}) : Promise.resolve()).then(function () { return fresh(reg); }).then(tell);
       });
-    }).then(function (sub) {
-      return api("push.subscribe", { endpoint: sub.endpoint }).then(function (j) { if (!j.ok) throw new Error(j.message); return j; });
     });
   }
   function alertsOff() {
@@ -545,7 +567,7 @@
         if (location.hash === BELL.notes && BELL.onNew) BELL.onNew(true);
       }, function (e) {
         BELL.busy = false; bellPaint();
-        toast(e && e.network ? "No connection. Try again when you have signal." : (e && e.message) || "Could not turn alerts on.");
+        toast(e && e.network ? "No connection." : (e && e.message) || "Could not turn alerts on.");
       });
       return;
     }

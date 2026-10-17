@@ -110,7 +110,7 @@
     document.getElementById("title").textContent = "";
     var who = h("select", { id: "who" }, h("option", { value: "" }, "Choose your name"));
     var typed = h("input", { id: "whoTyped", placeholder: "e.g. John Smith", autocomplete: "name", hidden: true });
-    var find = h("input", { id: "whoFind", placeholder: "Type to find your name", hidden: true });
+    var find = h("input", { id: "whoFind", placeholder: "e.g. John", hidden: true });
     var notYou = h("button", { class: "ghost", id: "notYou", hidden: true, onclick: function () {
       C.forgetWho(); who.value = ""; notYou.hidden = true; who.focus();
     } }, "Not you?");
@@ -133,7 +133,7 @@
         C.rememberPin(j.me.name, pin.value);
         if (body.usherId) C.rememberWho(body.usherId, j.me.name);
         start();
-      }, function () { go.disabled = false; out.appendChild(msg("No connection. Try again when you have signal.", "bad")); });
+      }, function () { go.disabled = false; out.appendChild(msg("No connection.", "bad")); });
     }
     var go = h("button", { onclick: submit }, "Sign in");
     C.pinBox(pin, submit);
@@ -587,7 +587,8 @@
             u.active && !u.alerts ? h("span", { class: "chip warn", title: "No phone has alerts on: they are emailed instead" }, "Alerts off") : null,
             u.active && !u.installed ? h("span", { class: "chip warn", title: "Ushers is not on a Home Screen for them, so alerts cannot reach their phone" }, "Not installed") : null),
           h("div", {}, u.roles.map(function (r) { return h("span", { class: "chip" }, labelOf(r)); })),
-          h("div", { class: "muted" }, [u.email, u.phone].filter(Boolean).join(" · ")),
+          h("div", { class: "muted" }, u.email || null, u.email && u.phone ? " · " : null,
+            u.phone ? h("a", { href: "tel:" + u.phone }, u.phone) : null),
           u.active && !u.installed && j.canSend ? (function () { var o = h("div");
             return h("div", {}, h("button", { class: "ghost", onclick: function () { sendSteps(u.usherId, o); } }, "Send install steps"), o); })() : null,
           canEdit(u, j) ? h("a", { class: "btn ghost", href: "#ushers/" + encodeURIComponent(u.usherId) }, "Edit details and roles")
@@ -871,14 +872,14 @@
       }, function () { out.appendChild(msg("No connection.", "bad")); });
     }
     var kinds = Object.keys(CONF.eventTypes).filter(function (k) { return !CONF.eventTypes[k].sunday; });
-    var id = h("input", { placeholder: "prayer" }), title = h("input", { placeholder: "Prayer Meeting" });
+    var id = h("input", { placeholder: "e.g. prayer" }), title = h("input", { placeholder: "e.g. Prayer Meeting" });
     var kind = h("select", {}, kinds.map(function (k) { return h("option", { value: k }, CONF.eventTypes[k].label); }));
     var pattern = h("select", {},
       [["first-saturday", "the first Saturday of each month"], ["last-friday", "the last Friday of each month"],
        ["nth-weekday:2:sun", "the second Sunday of each month"], ["weekly:wed", "every Wednesday"],
        ["yearly:09:first-saturday", "the first Saturday of September, each year"]]
         .map(function (x) { return h("option", { value: x[0] }, x[1]); }));
-    var time = h("input", { placeholder: "17:00" });
+    var time = h("input", { placeholder: "e.g. 17:00" });
     return h("div", { class: "card" }, h("h2", {}, "Repeating events"),
       rules.length ? rules.map(function (r, i) {
         return h("div", { class: "row" },
@@ -915,7 +916,8 @@
       parts.push(repeatingCard(j.config, settings));
       parts.push(h("h2", {}, "Rules"), h("p", { class: "muted" }, "Values are JSON."));
       Object.keys(j.config).forEach(function (k) {
-        var box = h("textarea", { rows: typeof j.config[k] === "object" && j.config[k] !== null ? "4" : "1" }, JSON.stringify(j.config[k], null, 1));
+        var box = h("textarea", { rows: typeof j.config[k] === "object" && j.config[k] !== null ? "4" : "1",
+          placeholder: "e.g. " + JSON.stringify(j.defaults ? j.defaults[k] : j.config[k]) }, JSON.stringify(j.config[k], null, 1));
         var out = h("span");
         parts.push(h("div", { class: "card" }, h("b", {}, k), box, h("p"), h("button", { class: "ghost", onclick: function () {
           var v;

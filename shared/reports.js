@@ -7,13 +7,15 @@
   /* The ministration record, to fill in. fields come from the server's
      configuration (ministration_fields); values is changed in place. */
   function ministrationEdit(fields, values, onChange) {
+    var SAMPLES = { minister: "Pastor Ade", sermon_title: "Walking by faith", bible_text: "Hebrews 11:1",
+                    worship_leader: "Sis. Ruth Ade", special: "Choir" };
     return h("div", { class: "card" }, h("h2", {}, "Ministration"),
       (fields || []).map(function (f) {
         var id = "min-" + f.key;
         var v = values[f.key] == null ? "" : values[f.key];
         return h("div", {}, h("label", { for: id }, f.label),
           h("input", { id: id, value: v, type: f.kind === "number" ? "number" : "text", min: f.kind === "number" ? "0" : null, step: f.kind === "number" ? "1" : null,
-            inputmode: f.kind === "number" ? "numeric" : null, placeholder: f.kind === "number" ? "e.g. 2" : "",
+            inputmode: f.kind === "number" ? "numeric" : null, placeholder: f.kind === "number" ? "e.g. 2" : "e.g. " + (f.sample || SAMPLES[f.key] || "Pastor Ade"),
             oninput: function (e) { values[f.key] = e.target.value; if (onChange) onChange(); } }));
       }));
   }

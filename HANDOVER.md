@@ -18,7 +18,8 @@ For whoever picks this up next, Claude or human. Read this, then
    reviewer.
 4. **Claude never merges and never deploys.** Asim pastes the Worker and
    `Code.gs` himself and merges himself. A change to `server/worker.js` is
-   not live until he pastes it.
+   not live until he pastes it. Once deploy on merge is switched on
+   (DEPLOY.md section 5), his merge puts both live, after the tests pass.
 5. **`node tests/run-tests.mjs` must end in READY** before anything is
    pushed. `node tests/sabotage.mjs` is the slower check that the tests
    themselves still bite.
@@ -91,6 +92,13 @@ the pull request so he can say otherwise:
 | 15 | the month's and year's summary | monthly and yearly; no PDFs in Drive |
 | 16 | in charge today | built, contact only; it lends no permission |
 | 17 | the old-database suite and sabotage | — |
+
+A second Minibus review (17 October 2026, Minibus PRs #71 to #102) added
+facts-only wording, UK phone numbers, changes told, the PIN lock per
+phone, alerts failure reasons, tap to ring, "e.g." samples, the sheet's
+self-setup and watchdog, the browser journey on GitHub, and deploy on
+merge (`wrangler.toml`, `.github/workflows/apps-script.yml`). The Apps
+Script deployment ID is a GitHub secret, never in a file.
 
 ## What is waiting for Asim
 

@@ -7,6 +7,7 @@ in-memory SQLite database, and photographs each step. Not part of
     node tests/browser/journey.mjs /tmp/ushers-shots
     node tests/browser/serve.mjs          # try the apps by hand at http://localhost:8787
 
+Runs on GitHub for every pull request (`.github/workflows/browser.yml`).
 Needs Playwright (`npm i -D playwright` or a global install linked into
 `node_modules`). The local server seeds nothing; use the bootstrap call with
 `test-bootstrap` as the token.

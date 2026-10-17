@@ -17,11 +17,23 @@ async function api(action, body, token) {
   const r = await realFetch(BASE + "/api/" + action, { method: "POST", headers: Object.assign({ "content-type": "application/json" }, token ? { authorization: "Bearer " + token } : {}), body: JSON.stringify(body || {}) });
   return r.json();
 }
-const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
+/* CHROMIUM names a browser to use (GitHub's runner has its own Chrome). */
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, acceptDownloads: true });
 const page = await context.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
+/* The install offer and the alerts question come up after each sign-in on
+   a real phone, over whatever is on the screen. This journey is about the
+   work, so the page is told it is already on the Home Screen, and the
+   alerts question is put away with "Not now" whenever it stands in the
+   way. Suites 09 and 80 check the two questions. */
+await context.addInitScript(() => {
+  try { Object.defineProperty(navigator, "standalone", { get: () => true }); } catch (e) {}
+});
+await page.addLocatorHandler(page.locator("#alertAsk"), async (ask) => {
+  await ask.evaluate((el) => { const b = el.querySelector("button.ghost"); if (b) b.click(); else el.remove(); });
+}, { noWaitAfter: true });
 let n = 0;
 const shot = async (name) => { await page.waitForTimeout(250); await page.screenshot({ path: `${SHOTS}/${String(++n).padStart(2, "0")}-${name}.png`, fullPage: true }); };
 
@@ -47,6 +59,14 @@ const noUcodes = async (where) => {
   if (/\bU\d{3}\b/.test(t)) throw new Error("U-code visible on " + where);
 };
 
+/* The last digit of a PIN sends by itself (brief 04), so the button is
+   pressed only if the form is still waiting after a moment. */
+async function afterPin(sel) {
+  await page.waitForTimeout(1200);
+  const b = page.locator(sel).first();
+  if (await b.count() && await b.isVisible() && await b.isEnabled()) await b.click({ timeout: 3000 }).catch(() => {});
+}
+
 async function signIn(name, pin) {
   await page.goto(BASE + "/");
   await page.evaluate(() => localStorage.removeItem("ushers.session.v1"));
@@ -54,7 +74,7 @@ async function signIn(name, pin) {
   await page.waitForSelector("#who option:nth-child(2)", { state: "attached" });
   await page.selectOption("#who", { label: name });
   await page.fill("#pin", pin || "1234");
-  await page.click("button:has-text('Sign in')");
+  await afterPin("button:has-text('Sign in')");
   await page.waitForSelector("text=What am I doing?");
 }
 
@@ -97,7 +117,7 @@ await page.waitForSelector("#cs option:nth-child(3)", { state: "attached" });
 await page.selectOption("#cs", { label: "Mary Jones" });
 await page.fill("#sig", "John Smith"); await page.check("#agree"); await page.fill("#spin", "1234");
 await shot("a-report-filled");
-await page.click("text=Sign and submit");
+await afterPin("text=Sign and submit");
 await page.waitForSelector("text=Pending Countersignature");
 await page.waitForSelector("text=Faithful in little");
 await noUcodes("report");
@@ -111,9 +131,9 @@ await page.fill("#min-minister", "Pastor Bisi");
 await page.selectOption("#cat", "Vow"); await page.selectOption("#den", "5000"); await page.fill("#qty", "2"); await page.click("text=Add line");
 await page.waitForSelector("#cs option:nth-child(3)", { state: "attached" });
 await page.selectOption("#cs", { label: "Mary Jones" });
-await page.fill("#sig", "John Smith"); await page.check("#agree"); await page.fill("#spin", "1234");
 await context.setOffline(true);
-await page.click("text=Sign and submit");
+await page.fill("#sig", "John Smith"); await page.check("#agree"); await page.fill("#spin", "1234");
+await afterPin("text=Sign and submit");
 await page.waitForSelector("text=Saved on this phone");
 await shot("a-offline-saved");
 await context.setOffline(false);
@@ -140,7 +160,7 @@ await page.waitForSelector("#csig");
 await page.check(".card:has(#csig) input[type=checkbox]");
 await page.fill("#csig", "Mary Jones"); await page.fill("#cpin", "1234");
 await shot("b-review");
-await page.click("button:has-text('Countersign')");
+await afterPin("button:has-text('Countersign')");
 await page.waitForSelector(".chip.status-verified");
 await shot("b-verified");
 const [pdf1] = await Promise.all([page.waitForEvent("download"), page.click("button:has-text('PDF')")]);
@@ -178,7 +198,7 @@ await page.waitForSelector("#cs option:nth-child(3)", { state: "attached" });
 await page.selectOption("#cs", { label: "Peter Brown" });
 await page.fill("#sig", "John Smith"); await page.check("#agree"); await page.fill("#spin", "1234");
 await shot("a-amend-form");
-await page.click("button:has-text('Sign and submit amendment')");
+await afterPin("button:has-text('Sign and submit amendment')");
 await page.waitForSelector("text=Amended · version 2");
 await page.waitForSelector("text=Earlier versions");
 await shot("a-amended");
@@ -187,7 +207,7 @@ await page.click("text=Review and countersign");
 await page.waitForSelector("#csig");
 await page.check(".card:has(#csig) input[type=checkbox]");
 await page.fill("#csig", "Peter Brown"); await page.fill("#cpin", "1234");
-await page.click("button:has-text('Countersign')");
+await afterPin("button:has-text('Countersign')");
 await page.waitForSelector(".chip.status-verified");
 if (env.DB._one("SELECT version, attendance_total FROM reports WHERE event_id=?", "S" + focus.replace(/-/g, "") + "-1").attendance_total !== 37) throw new Error("amendment not saved");
 
@@ -201,7 +221,7 @@ await page.waitForSelector("#att-male");
 if (await page.locator("#cs").count()) throw new Error("a Prayer Meeting report asks for a countersigner");
 await page.fill("#att-male", "4"); await page.fill("#att-female", "6"); await page.fill("#att-children", "2");
 await page.fill("#sig", "John Smith"); await page.check("#agree"); await page.fill("#spin", "1234");
-await page.click("text=Sign and submit");
+await afterPin("text=Sign and submit");
 await page.waitForSelector(".chip.status-verified");
 await shot("a-prayer-filed");
 
@@ -250,7 +270,7 @@ async function signIn2(name, pin) {
   await page.waitForSelector("#who option:nth-child(2)", { state: "attached" });
   await page.selectOption("#who", { label: name });
   await page.fill("#pin", pin);
-  await page.click("button:has-text('Sign in')");
+  await afterPin("button:has-text('Sign in')");
   await page.waitForSelector("text=What am I doing?");
 }
 await page.goto(B2 + "/");
@@ -287,7 +307,7 @@ const adminNames = await page.locator("#who option").allTextContents();
 if (adminNames.some((n) => /Test Treasurer|Test Usher/.test(n))) throw new Error("Admin sign-in lists " + adminNames);
 await page.selectOption("#who", { label: "Test Head Usher" });
 await page.fill("#pin", "2468");
-await page.click("button:has-text('Sign in')");
+await afterPin("button:has-text('Sign in')");
 await page.waitForSelector("nav.tabs a:has-text('Approvals')");
 await shot("admin-own-sign-in");
 // Straight across to the Ushers App, no second sign-in.
@@ -307,27 +327,27 @@ await page.goto(BASE + "/");
 await page.waitForSelector("#who option:nth-child(2)", { state: "attached" });
 await page.selectOption("#who", { label: "Esther Bello" });
 await page.fill("#pin", "0123");
-await page.click("button:has-text('Sign in')");
+await afterPin("button:has-text('Sign in')");
 await page.waitForSelector("text=Do you wish to keep your default PIN?");
 if (await page.locator("text=/phone/i").count()) throw new Error("the PIN question mentions the phone");
 if (await page.locator("#tabs").isVisible()) throw new Error("tabs shown before answering");
 await shot("default-pin-question");
 await page.click("text=No, change it");
 // Each box hands on to the next at four digits; the last never submits.
-await page.click("#old"); await page.keyboard.type("0123");
+await page.click("#old"); await page.keyboard.type("0123"); await page.waitForTimeout(900);
 if (await page.evaluate(() => document.activeElement.id) !== "new") throw new Error("the default PIN box did not hand on");
-await page.keyboard.type("4826");
+await page.keyboard.type("4826"); await page.waitForTimeout(900);
 if (await page.evaluate(() => document.activeElement.id) !== "again") throw new Error("the new PIN box did not hand on");
 await page.keyboard.type("4827");
 if (await page.evaluate(() => document.activeElement.id) !== "again") throw new Error("the last PIN box moved on");
 // A wrong entry is said in bold red.
-await page.click("button:has-text('Change PIN')");
+await afterPin("button:has-text('Change PIN')");
 const bad = page.locator(".msg.bad", { hasText: "The new PINs do not match." });
 await bad.waitFor();
 if (Number(await bad.evaluate((e) => getComputedStyle(e).fontWeight)) < 700) throw new Error("the refusal is not bold");
 await shot("pin-mismatch-bold-red");
 await page.fill("#again", "4826");
-await page.click("button:has-text('Change PIN')");
+await afterPin("button:has-text('Change PIN')");
 await page.waitForSelector("text=What am I doing?");
 // Reset, and this time keep the default.
 const eb = (await api("ushers.list", {}, admin)).ushers.find((u) => u.name === "Esther Bello");
@@ -337,7 +357,7 @@ await page.goto(BASE + "/");
 await page.waitForSelector("#who option:nth-child(2)", { state: "attached" });
 await page.selectOption("#who", { label: "Esther Bello" });
 await page.fill("#pin", "0123");
-await page.click("button:has-text('Sign in')");
+await afterPin("button:has-text('Sign in')");
 await page.click("text=Yes, keep it");
 await page.waitForSelector("text=What am I doing?");
 

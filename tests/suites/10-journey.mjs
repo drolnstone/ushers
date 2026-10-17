@@ -498,7 +498,7 @@ export default async function ({ root }) {
     a.eq(sent.opts.headers["Content-Length"], "0", "nothing personal goes through the push service");
     const w = await call("push.what", { endpoint: ep });
     a.eq(w.title, "Meeting on Tuesday");
-    a.eq((await call("push.what", { endpoint: "https://push.example/unknown" })).body, "Open the app for the latest.");
+    a.eq((await call("push.what", { endpoint: "https://push.example/unknown" })).body, "New notification.");
     outbound.length = 0;
     a.ok((await call("notify.send", { title: "Again", body: "x", usherIds: [ID.A] }, T.hu)).ok);
     await call.settle();

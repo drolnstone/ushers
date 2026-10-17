@@ -32,7 +32,7 @@ export default async function ({ root }) {
       a.ok((await D.call("rota.set", { eventId: SECOND, usherIds: [D.ID.B, D.ID.C] }, D.T.hu)).ok);
       a.eq(titles(D.env, D.ID.A)[0], "You are on duty: Sunday First Service");
       a.eq(titles(D.env, D.ID.B)[0], "You are on duty: Sunday Second Service");
-      a.eq(titles(D.env, D.ID.hu).length, 0, "the one who set it is not told about it");
+      a.eq(notesOf(D.env, D.ID.hu).filter((n) => n.type !== "account_change").length, 0, "the one who set it is not told about it");
     });
   });
 

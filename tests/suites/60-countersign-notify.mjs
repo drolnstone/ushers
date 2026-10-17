@@ -179,7 +179,8 @@ export default async function ({ root }) {
     a.ok((await call("authorisation.decide", { id: q.id, decision: "reject", note: "Peter was not there", pin: "1234" }, T.ahu)).ok);
     a.eq(env.DB._rows("SELECT * FROM notifications WHERE usher_id=?", ID.C).length, before);
     const told = notes("A", "approval_decision", r.report.id).pop();
-    a.has(told.body, "Choose somebody else");
+    a.has(told.body, "was not approved.");
+    a.hasnt(told.body, "Choose somebody else");
     a.has(told.body, "Peter was not there");
     a.ok(env.DB._one("SELECT read_at FROM notifications WHERE usher_id=? AND type='approval_request' AND ref_id=?", ID.hu, q.id).read_at);
     const ch = await call("report.countersigner", { reportId: r.report.id, countersignerId: ID.hu }, T.A);
