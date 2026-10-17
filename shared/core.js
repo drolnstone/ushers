@@ -415,16 +415,38 @@
     return swReg().then(function (reg) { return reg.pushManager.getSubscription(); })
       .then(function (s) { return s ? "on" : "off"; }, function () { return "unsupported"; });
   }
+  /* Each step that can fail says which it was (the Driver App's v1.116.0:
+     an Android phone said only "Could not turn alerts on."). A sign-up made
+     under another key is dropped and made again, once. */
+  function sameKey(sub, want) {
+    var have = sub && sub.options && sub.options.applicationServerKey;
+    if (!have) return true;
+    have = new Uint8Array(have);
+    if (have.length !== want.length) return false;
+    for (var i = 0; i < want.length; i++) if (have[i] !== want[i]) return false;
+    return true;
+  }
   function alertsOn(publicKey) {
+    var want = keyBytes(publicKey);
+    function fresh(reg) {
+      return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want }).catch(function (e) {
+        throw new Error("The phone's push service refused (" + ((e && e.name) || "error") + ").");
+      });
+    }
+    function tell(sub) {
+      return api("push.subscribe", { endpoint: sub.endpoint }).then(function (j) {
+        if (!j.ok) throw new Error("The Ushers server refused it" + (j.message ? ": " + j.message : "."));
+        return j;
+      });
+    }
     return Notification.requestPermission().then(function (p) {
       if (p !== "granted") throw new Error("Alerts were not allowed on this phone.");
       return swReg();
     }).then(function (reg) {
       return reg.pushManager.getSubscription().then(function (s) {
-        return s || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
+        if (s && sameKey(s, want)) return tell(s);
+        return (s ? s.unsubscribe().catch(function () {}) : Promise.resolve()).then(function () { return fresh(reg); }).then(tell);
       });
-    }).then(function (sub) {
-      return api("push.subscribe", { endpoint: sub.endpoint }).then(function (j) { if (!j.ok) throw new Error(j.message); return j; });
     });
   }
   function alertsOff() {

@@ -82,7 +82,7 @@
     document.getElementById("treasurerTab").hidden = true;
     var who = h("select", { id: "who" }, h("option", { value: "" }, "Choose your name"));
     var typed = h("input", { id: "whoTyped", placeholder: "e.g. John Smith", autocomplete: "name", hidden: true });
-    var find = h("input", { id: "whoFind", placeholder: "Type to find your name", hidden: true });
+    var find = h("input", { id: "whoFind", placeholder: "e.g. John", hidden: true });
     var notYou = h("button", { class: "ghost", id: "notYou", hidden: true, onclick: function () {
       C.forgetWho(); who.value = ""; notYou.hidden = true; who.focus();
     } }, "Not you?");
@@ -146,7 +146,7 @@
      while nobody is one, and it needs the BOOTSTRAP_TOKEN set on the
      server, which is deleted afterwards. */
   function firstSetup() {
-    var tok = h("input", { id: "bt", type: "password", autocomplete: "off", placeholder: "The BOOTSTRAP_TOKEN from Cloudflare" });
+    var tok = h("input", { id: "bt", type: "password", autocomplete: "off", placeholder: "e.g. 7f3a9c1e" });
     var name = h("input", { id: "bn", autocomplete: "name", placeholder: "e.g. Asim Bassey" });
     var p1 = h("input", { id: "bp1", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
     var p2 = h("input", { id: "bp2", type: "password", inputmode: "numeric", maxlength: "4", pattern: "[0-9]*", class: "pin" });
@@ -237,7 +237,7 @@
     if (d.released === "approved") return h("div", { class: "chip" }, "Off this duty");
     var out = h("div");
     var open = h("button", { class: "ghost" }, "I can't make it");
-    var why = h("input", { type: "text", placeholder: "Why you cannot make it" });
+    var why = h("input", { type: "text", placeholder: "e.g. I am away that weekend" });
     var box = h("div", { hidden: true }, why, h("p"),
       h("div", { class: "row" }, h("button", { onclick: function () { ask(); } }, "Send to the Head Usher"),
         h("button", { class: "ghost", onclick: function () { box.hidden = true; } }, "Keep the duty")),
@@ -747,8 +747,8 @@
     C.api("dues.member", { usherId: usherId }).then(function (j) {
       if (!j.ok) return;
       var paidOn = h("input", { type: "date", value: C.londonToday() });
-      var amount = h("input", { type: "number", min: "0.01", step: "0.01", value: "5.00", inputmode: "decimal" });
-      var year = h("input", { type: "number", value: C.londonToday().slice(0, 4) });
+      var amount = h("input", { type: "number", min: "0.01", step: "0.01", value: "5.00", inputmode: "decimal", placeholder: "e.g. 5.00" });
+      var year = h("input", { type: "number", value: C.londonToday().slice(0, 4), placeholder: "e.g. " + C.londonToday().slice(0, 4) });
       var method = h("select", {}, ["Cash", "Bank transfer", "Card", "Other"].map(function (x) { return h("option", {}, x); }));
       var note = h("input", { placeholder: "e.g. Paid at the Sunday meeting" });
       var out = h("div");

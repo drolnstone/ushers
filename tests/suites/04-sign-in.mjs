@@ -132,7 +132,7 @@ export default async function ({ root }) {
       a.has(src, 'who.addEventListener("change"', "choosing a name moves to the PIN");
       a.has(src, 'pin.value = ""; pin.focus();', "a wrong PIN empties the box");
       a.has(src, "Not you?", "the remembered name can be cleared");
-      a.has(src, "Type to find your name", "a long list can be filtered");
+      a.has(src, 'id: "whoFind"', "a long list can be filtered");
     });
   }
 
