@@ -1,0 +1,477 @@
+<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Head Usher Picture Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap">
+<style>
+/* Layout: one task per "page" — words on the left, the real phone screen on the right; stacks on a phone, one task per sheet in print. */
+:root {
+  --bg: #f7f5fa;
+  --paper: #ffffff;
+  --ink: #221d2b;
+  --muted: #5d566a;
+  --line: #e4dfeb;
+  --purple: #5b2a86;      /* the Ushers App */
+  --teal: #0b5f5c;        /* the Admin App */
+  --mark: #e85d00;        /* the orange rings on the pictures */
+  --mark-soft: #fff1e6;
+  --tip: #f1ecf7;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --body: "Atkinson Hyperlegible", "Verdana", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #17141c; --paper: #211d28; --ink: #f2eff6; --muted: #b7afc4; --line: #362f40;
+  --purple: #c9a6ec; --teal: #6fd3cc; --mark: #ff8a3d; --mark-soft: #3a2616; --tip: #2b2435; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #17141c; --paper: #211d28; --ink: #f2eff6; --muted: #b7afc4; --line: #362f40;
+  --purple: #c9a6ec; --teal: #6fd3cc; --mark: #ff8a3d; --mark-soft: #3a2616; --tip: #2b2435; color-scheme: dark }
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 400 1.18rem/1.6 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 48px;
+}
+.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.12; }
+p { margin: 0; }
+b, strong { font-weight: 700; }
+
+/* Cover */
+.cover { padding-block: 44px 8px; display: grid; gap: 18px; }
+.cover .kicker { font: 700 .9rem/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.cover h1 { font-size: clamp(2.4rem, 6vw, 3.8rem); font-weight: 800; letter-spacing: -.01em; }
+.cover .lead { font-size: 1.3rem; max-width: 40ch; }
+.cover .note { color: var(--muted); max-width: 60ch; }
+
+.key { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.key div { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; display: grid; gap: 6px; min-width: 0; }
+.swatch { display: inline-block; width: 1.1em; height: 1.1em; border-radius: 5px; vertical-align: -.15em; margin-right: .45em; }
+.sw-purple { background: #5b2a86; } .sw-teal { background: #0b5f5c; }
+.sw-ring { border: 4px solid var(--mark); background: transparent; border-radius: 6px; }
+.key h3 { font-size: 1.2rem; }
+.key p { color: var(--muted); font-size: 1.05rem; }
+
+.contents { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 20px 24px; }
+.contents h2 { font-size: 1.3rem; margin-bottom: 10px; }
+.contents ol { margin: 0; padding-left: 1.6em; columns: 2 260px; column-gap: 32px; }
+.contents li { break-inside: avoid; padding: 2px 0; }
+.contents a { color: var(--ink); text-decoration-color: var(--line); text-underline-offset: 3px; }
+.contents a:hover, .contents a:focus-visible { text-decoration-color: var(--mark); }
+
+/* Part headings */
+.part { padding-top: 22px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; border-top: 3px solid var(--line); }
+.part h2 { font-size: 1.7rem; }
+.part p { color: var(--muted); }
+
+/* One task */
+.step {
+  background: var(--paper); border: 1px solid var(--line); border-radius: 22px;
+  padding: 28px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 28px; align-items: start;
+  scroll-margin-top: 16px;
+}
+.words { display: grid; gap: 14px; min-width: 0; align-content: start; }
+.num { font: 800 1rem/1 var(--display); letter-spacing: .06em; text-transform: uppercase; display: flex; align-items: center; gap: 10px; }
+.num span { display: inline-grid; place-items: center; width: 2.4rem; height: 2.4rem; border-radius: 50%; background: var(--mark); color: #fff; font-size: 1.15rem; }
+.app-u .num { color: var(--purple); } .app-a .num { color: var(--teal); }
+.step h3 { font-size: clamp(1.6rem, 3.2vw, 2.1rem); font-weight: 800; }
+.words p { max-width: 36ch; }
+.do { margin: 0; padding-left: 1.4em; display: grid; gap: 6px; max-width: 36ch; }
+.do li::marker { color: var(--mark); font-weight: 700; }
+.tip { background: var(--tip); border-radius: 14px; padding: 12px 16px; font-size: 1.04rem; max-width: 40ch; }
+.tip b { color: var(--ink); }
+.addr { font: 700 1.25rem/1.3 var(--body); background: var(--mark-soft); border: 2px dashed var(--mark); border-radius: 12px; padding: 10px 14px; word-break: break-all; user-select: all; }
+
+.shots { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+.phone { margin: 0; width: 300px; max-width: 100%; border-radius: 26px; border: 8px solid #2a2530; background: #2a2530; overflow: hidden; box-shadow: 0 10px 30px rgba(34, 29, 43, .14); }
+.phone img { display: block; width: 100%; height: auto; }
+.phone.short { border-radius: 20px; }
+.two .phone { width: 250px; }
+
+.end { background: var(--paper); border: 1px solid var(--line); border-radius: 22px; padding: 28px; display: grid; gap: 12px; }
+.end h2 { font-size: 1.7rem; }
+.end ul { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+.sample { color: var(--muted); font-size: .98rem; }
+
+@media (max-width: 760px) {
+  .step { grid-template-columns: minmax(0, 1fr); padding: 20px; }
+  .two .phone { width: 300px; }
+}
+
+@media print {
+  @page { size: A4; margin: 12mm; }
+  :root { --bg: #fff; --paper: #fff; }
+  body { font-size: 13pt; padding: 0; }
+  .wrap { gap: 0; max-width: none; }
+  .cover { padding-top: 0; }
+  .contents, .key div { break-inside: avoid; }
+  .contents { margin-top: 14px; }
+  .part { break-before: page; border-top: 0; padding-top: 0; margin-bottom: 8mm; }
+  .part + .step { break-before: avoid; }
+  .step { break-before: page; break-inside: avoid; border: 0; padding: 0; gap: 7mm; box-shadow: none; grid-template-columns: minmax(0, 1fr); }
+  .part + .step { break-before: auto; }
+  .step h3 { font-size: 26pt; }
+  .words { gap: 9px; font-size: 15pt; }
+  .words p, .do, .tip { max-width: none; }
+  .phone { box-shadow: none; width: auto; border-width: 6px; }
+  .phone img { height: 150mm; width: auto; max-width: 100%; object-fit: contain; object-position: top; }
+  .part + .step .phone img { height: 135mm; }
+  .step .phone.short img { height: auto; width: 110mm; }
+  .two .phone img { height: 140mm; }
+  .end { break-before: page; border: 0; padding: 0; }
+  .print-hide { display: none; }
+}
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="wrap">
+<header class="cover">
+  <div class="kicker">RCCG Dominion Assembly · Ushering</div>
+  <h1>Your Ushers App, one step at a time</h1>
+  <p class="lead">A picture guide for the Head Usher. Each page shows one thing you can do, with the exact button to tap.</p>
+  <p class="note">Take it one page at a time. Nothing here needs to be learned in one go, and nothing you tap can break the app. If you are ever unsure, ask Asim and he will go through it with you.</p>
+  <p class="note print-hide">To print it, or send it as one file: <a href="https://drolnstone.github.io/ushers/guide/head-usher-guide.pdf">the printable PDF</a>.</p>
+</header>
+
+<section class="key" aria-label="How to read this guide">
+  <div><h3><span class="swatch sw-purple"></span>Purple screens</h3><p>The <b>Ushers App</b>. Every usher has this. Your duties and reports to check are here.</p></div>
+  <div><h3><span class="swatch sw-teal"></span>Green screens</h3><p>The <b>Admin App</b>. Only you and the Assistant Head Usher have this. It is where you run the department.</p></div>
+  <div><h3><span class="swatch sw-ring"></span>Orange rings</h3><p>Show you <b>where to tap</b>. They are only in this guide, not in the real app.</p></div>
+</section>
+<nav class="contents" aria-label="Contents">
+  <h2>What is in this guide</h2>
+  <ol>
+    <li><a href="#install">Put the app on your phone</a></li>
+    <li><a href="#signin">Sign in</a></li>
+    <li><a href="#firstpin">The first time: your PIN</a></li>
+    <li><a href="#home">Your home page</a></li>
+    <li><a href="#alerts">Turn on alerts</a></li>
+    <li><a href="#admin">Open the Admin App</a></li>
+    <li><a href="#dashboard">See last Sunday at a glance</a></li>
+    <li><a href="#approvals">Say yes or no to a request</a></li>
+    <li><a href="#cover">Find cover later</a></li>
+    <li><a href="#countersign">Check and countersign a report</a></li>
+    <li><a href="#fillreport">Fill in a report yourself</a></li>
+    <li><a href="#signreport">Add the offering and sign</a></li>
+    <li><a href="#amend">Correct a report</a></li>
+    <li><a href="#reports">Read and print reports</a></li>
+    <li><a href="#rota">Make the Sunday rota</a></li>
+    <li><a href="#seerota">See the whole rota</a></li>
+    <li><a href="#events">Add a special event</a></li>
+    <li><a href="#cancel">Cancel an event</a></li>
+    <li><a href="#incharge">Who is in charge today</a></li>
+    <li><a href="#message">Send a message to the ushers</a></li>
+    <li><a href="#remind">See who has read your message</a></li>
+    <li><a href="#cantmake">If you can't make your own duty</a></li>
+    <li><a href="#addusher">Add a new usher</a></li>
+    <li><a href="#install2">Help your ushers get the app</a></li>
+    <li><a href="#roles">Give a role, or reset a PIN</a></li>
+    <li><a href="#remove">Remove someone</a></li>
+    <li><a href="#notifications">Your notifications</a></li>
+    <li><a href="#pin">Change your PIN</a></li>
+    <li><a href="#signout">Sign out</a></li>
+  </ol>
+</nav>
+
+<div class="part"><h2>Getting started</h2><p>You only do these once.</p></div>
+<section class="step app-u" id="install">
+  <div class="words">
+    <div class="num"><span>1</span>Getting started</div>
+    <h3>Put the app on your phone</h3>
+<p>Open this address on your phone:</p>
+<div class="addr">drolnstone.github.io/ushers</div>
+<p>The page that opens shows the steps for an <b>iPhone</b> and for an <b>Android</b> phone. Follow the ones for your phone. Afterwards, Ushers sits on your phone like any other app.</p>
+<div class="tip"><b>Tip:</b> Asim can do this part with you in two minutes.</div>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/01-install.jpg" alt="The &#x27;Add Ushers to your phone&#x27; page, with the iPhone and Android steps ringed"></figure></div>
+</section>
+<section class="step app-u" id="signin">
+  <div class="words">
+    <div class="num"><span>2</span>Getting started</div>
+    <h3>Sign in</h3>
+<ol class="do"><li>Choose <b>your name</b> from the list.</li><li>Type your <b>4-number PIN</b>.</li></ol>
+<p>That is all. The app signs you in by itself after the fourth number.</p>
+<div class="tip"><b>Keep your PIN to yourself.</b> It is also your signature when you sign or approve something.</div>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/02-signin.jpg" alt="The sign-in screen: name chosen at the top, PIN box below"></figure></div>
+</section>
+<section class="step app-u" id="firstpin">
+  <div class="words">
+    <div class="num"><span>3</span>Getting started</div>
+    <h3>The first time: your PIN</h3>
+<p>The very first time you sign in, the app asks if you want to keep the PIN you were given.</p>
+<ol class="do"><li>Tap <b>Yes, keep it</b> to carry on, or</li><li>Tap <b>No, change it</b> to choose your own four numbers.</li></ol>
+<div class="tip"><b>Tip:</b> pick four numbers you will remember, but not your birthday.</div>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/03-first-pin.jpg" alt="The question &#x27;Do you wish to keep your default PIN?&#x27; with its two buttons ringed"></figure></div>
+</section>
+<section class="step app-u" id="home">
+  <div class="words">
+    <div class="num"><span>4</span>Getting started</div>
+    <h3>Your home page</h3>
+<p>Home answers one question: <b>What am I doing?</b></p>
+<p>Anything waiting for you is at the top. Below it are your duties for this week and the weeks ahead.</p>
+<div class="tip"><b>Tip:</b> tap <b>Home</b> at any time to come back here.</div>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/04-home.jpg" alt="The Home page showing &#x27;What am I doing?&#x27; and a report waiting to be countersigned"></figure></div>
+</section>
+<section class="step app-u" id="alerts">
+  <div class="words">
+    <div class="num"><span>5</span>Getting started</div>
+    <h3>Turn on alerts</h3>
+<ol class="do"><li>Tap the <b>bell</b> at the top.</li><li>When your phone asks, tap <b>Allow</b>.</li></ol>
+<p>Your phone will now tell you when a report comes in or when someone needs your answer. The red number on the bell shows how many messages you have not read yet.</p>
+<div class="tip"><b>On an iPhone</b> this only works after step 1, when you open Ushers from your Home Screen.</div>
+  </div>
+  <div class="shots"><figure class="phone short"><img src="shots/05-bell.jpg" alt="The top of the app with the bell ringed"></figure></div>
+</section>
+<div class="part"><h2>After each Sunday</h2><p>Checking that everything came in.</p></div>
+<section class="step app-a" id="admin">
+  <div class="words">
+    <div class="num"><span>6</span>After each Sunday</div>
+    <h3>Open the Admin App</h3>
+<p>Your Head Usher tools are in the Admin App. Tap <b>Open Admin App</b> at the top. You do not need to sign in again.</p>
+<div class="tip"><b>How to tell where you are:</b> the Admin App is <b>green</b>, the Ushers App is <b>purple</b>.</div>
+  </div>
+  <div class="shots"><figure class="phone short"><img src="shots/06-open-admin.jpg" alt="The top of the Ushers App with the Open Admin App button ringed"></figure></div>
+</section>
+<section class="step app-a" id="dashboard">
+  <div class="words">
+    <div class="num"><span>7</span>After each Sunday</div>
+    <h3>See last Sunday at a glance</h3>
+<p>The <b>Dashboard</b> opens first. It shows how many reports came in, what is still waiting, attendance and the offering.</p>
+<p>If you see <b>Review approvals</b>, someone needs your answer. Tap it.</p>
+<div class="tip"><b>Tip:</b> further down you can see next Sunday's rota, with an <b>Edit rota</b> button.</div>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/07-dashboard.jpg" alt="The Dashboard: Needs your attention, with the Review approvals button ringed"></figure></div>
+</section>
+<section class="step app-a" id="approvals">
+  <div class="words">
+    <div class="num"><span>8</span>After each Sunday</div>
+    <h3>Say yes or no to a request</h3>
+<p>Requests come to <b>Approvals</b>. For example: an usher who cannot make their duty, an usher who needs to correct a report, someone who says they did another usher's duty, or a report sent to a checker who needs your OK.</p>
+<ol class="do"><li>If you know who will cover, choose them.</li><li>Type your PIN.</li><li>Tap <b>Approve</b>, or <b>Reject</b> if the answer is no.</li></ol>
+<p>The usher is told your answer straight away.</p>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/08-approvals.jpg" alt="An approval card for &#x27;Can&#x27;t make a duty&#x27; with the cover choice, PIN and Approve button ringed"></figure></div>
+</section>
+<section class="step app-a" id="cover">
+  <div class="words">
+    <div class="num"><span>9</span>After each Sunday</div>
+    <h3>Find cover later</h3>
+<p>If you said yes to <b>"Can't make a duty"</b> but did not know who would cover, the duty waits under <b>Cover still to arrange</b> in Approvals.</p>
+<ol class="do"><li>When you have found someone, choose them in <b>Who covers it</b>.</li><li>Type your PIN.</li><li>Tap <b>Save the cover</b>.</li></ol>
+<p>Both ushers are told.</p>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/x-cover.jpg" alt="Approvals with &#x27;Cover still to arrange&#x27; and the Save the cover button ringed"></figure></div>
+</section>
+<section class="step app-u" id="countersign">
+  <div class="words">
+    <div class="num"><span>10</span>After each Sunday</div>
+    <h3>Check and countersign a report</h3>
+<p>When an usher asks you to check their report, it waits on your <b>Home</b> page in the purple Ushers App.</p>
+<ol class="do"><li>Tap <b>Review and countersign</b>.</li><li>Read the report.</li><li>Tick the box, type your full name and your PIN.</li></ol>
+<div class="tip"><b>Countersigning</b> simply means: "I have checked this report and it is true."</div>
+  </div>
+  <div class="shots two"><figure class="phone"><img src="shots/09a-countersign.jpg" alt="Home with the Review and countersign button ringed"></figure><figure class="phone"><img src="shots/09b-countersign.jpg" alt="The bottom of a report: the tick box, name and PIN ringed"></figure></div>
+</section>
+<section class="step app-u" id="fillreport">
+  <div class="words">
+    <div class="num"><span>11</span>After each Sunday</div>
+    <h3>Fill in a report yourself</h3>
+<p>When you are on duty yourself, your service shows on <b>Home</b> in the purple Ushers App.</p>
+<ol class="do"><li>Tap <b>Open report</b>.</li><li>Type the numbers of men, women and children. The total adds up by itself.</li><li>Fill in the minister, sermon and the rest as far as you can.</li></ol>
+<div class="tip"><b>Good to know:</b> the app keeps what you type as you go, so you can stop and come back to it.</div>
+  </div>
+  <div class="shots two"><figure class="phone"><img src="shots/x-report1.jpg" alt="Home with the Open report button ringed"></figure><figure class="phone"><img src="shots/x-report2.jpg" alt="The report form with the attendance boxes ringed"></figure></div>
+</section>
+<section class="step app-u" id="signreport">
+  <div class="words">
+    <div class="num"><span>12</span>After each Sunday</div>
+    <h3>Add the offering and sign</h3>
+<ol class="do"><li>For each kind of offering, choose the kind, the note or coin, and how many. Tap <b>Add line</b>.</li><li>Choose who will check (countersign) it.</li><li>Type your full name, tick the box, and type your PIN.</li></ol>
+<p>It sends by itself after the fourth number of your PIN.</p>
+<div class="tip"><b>No signal in church?</b> It is saved on your phone and sent as soon as you have a signal.</div>
+  </div>
+  <div class="shots two"><figure class="phone"><img src="shots/x-report3.jpg" alt="The offering lines with kind, quantity and Add line ringed"></figure><figure class="phone"><img src="shots/x-report4.jpg" alt="The signing part with countersigner, name, tick box and PIN ringed"></figure></div>
+</section>
+<section class="step app-u" id="amend">
+  <div class="words">
+    <div class="num"><span>13</span>After each Sunday</div>
+    <h3>Correct a report</h3>
+<p>A report is never rubbed out, but it can be corrected. Open the report, scroll down and tap <b>Amend report</b>.</p>
+<ol class="do"><li>Say why it needs correcting.</li><li>Change what was wrong.</li><li>Sign it again with your name and PIN.</li></ol>
+<p>As Head Usher you can correct it straight away. The old version is kept, and the new one is checked (countersigned) again.</p>
+  </div>
+  <div class="shots two"><figure class="phone"><img src="shots/x-amend1.jpg" alt="A report with the Amend report button ringed"></figure><figure class="phone"><img src="shots/x-amend2.jpg" alt="The amend form with the reason box ringed"></figure></div>
+</section>
+<section class="step app-a" id="reports">
+  <div class="words">
+    <div class="num"><span>14</span>After each Sunday</div>
+    <h3>Read and print reports</h3>
+<p>Every report is kept in <b>Reports</b> in the Admin App.</p>
+<ul class="do"><li>Tap a service to read it.</li><li>Tap <b>PDF</b> to save or print it.</li><li>For a month at a time, choose the dates and tap <b>Make PDF summary</b>.</li></ul>
+<div class="tip"><b>Good to know:</b> you are sent a summary at the end of every month anyway.</div>
+  </div>
+  <div class="shots two"><figure class="phone"><img src="shots/10a-reports.jpg" alt="The Reports list with a service and the Make PDF summary button ringed"></figure><figure class="phone"><img src="shots/10b-report.jpg" alt="One report open, with the PDF button ringed"></figure></div>
+</section>
+<div class="part"><h2>Planning ahead</h2><p>Rotas, events and messages.</p></div>
+<section class="step app-a" id="rota">
+  <div class="words">
+    <div class="num"><span>15</span>Planning ahead</div>
+    <h3>Make the Sunday rota</h3>
+<ol class="do"><li>Tap <b>Rota</b>, then use the <b>Week</b> arrows to find the Sunday.</li><li>Tick the names for <b>First Service</b>, then tap <b>Save</b>.</li><li>Do the same for <b>Second Service</b>.</li></ol>
+<p>Everyone you add is told straight away, and reminded two days before. Anyone you take off is told too.</p>
+<div class="tip"><b>Second Service</b> needs exactly <b>2</b> offering counters.</div>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/11-rota.jpg" alt="The Rota screen with the Week arrow, a ticked name and Save ringed"></figure></div>
+</section>
+<section class="step app-u" id="seerota">
+  <div class="words">
+    <div class="num"><span>16</span>Planning ahead</div>
+    <h3>See the whole rota</h3>
+<p>In the purple Ushers App, tap <b>Rota</b> to see who is on duty for the next eight weeks. Your own name is marked <b>(you)</b>.</p>
+<div class="tip"><b>Good to know:</b> the first Sunday of each month is marked <b>Thanksgiving Sunday</b>.</div>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/x-rota.jpg" alt="The Ushers App Rota tab ringed, showing the coming Sundays"></figure></div>
+</section>
+<section class="step app-a" id="events">
+  <div class="words">
+    <div class="num"><span>17</span>Planning ahead</div>
+    <h3>Add a special event</h3>
+<p>For anything that is not a Sunday service, such as a naming ceremony or a prayer meeting.</p>
+<ol class="do"><li>Tap <b>Events</b> and choose what kind of event it is.</li><li>Pick the date and time.</li><li>Tap <b>Create</b>.</li></ol>
+<p>It then shows under <b>Coming up</b>, where you choose who is on duty.</p>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/12-events.jpg" alt="The New event form with Type, Date and Create ringed"></figure></div>
+</section>
+<section class="step app-a" id="cancel">
+  <div class="words">
+    <div class="num"><span>18</span>Planning ahead</div>
+    <h3>Cancel an event</h3>
+<p>If an event is not happening, find it under <b>Coming up</b> in Events and tap <b>Cancel event</b>.</p>
+<p>Everyone on duty for it is told. If it goes ahead after all, tap <b>Restore</b> and they are told it is back on.</p>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/x-cancel.jpg" alt="Events, Coming up, with the Cancel event button ringed"></figure></div>
+</section>
+<section class="step app-a" id="incharge">
+  <div class="words">
+    <div class="num"><span>19</span>Planning ahead</div>
+    <h3>Who is in charge today</h3>
+<p>Every usher's Home page says who is in charge today. It is <b>you</b>, unless you change it.</p>
+<ol class="do"><li>On the Dashboard, find <b>In charge today</b> and tap <b>Change</b>.</li><li>Choose a name.</li><li>Tap <b>Today only</b>, or <b>Until changed back</b>.</li></ol>
+<div class="tip"><b>Good to know:</b> "Today only" goes back to you by itself after midnight.</div>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/15-in-charge.jpg" alt="The In charge today card opened, with Today only ringed"></figure></div>
+</section>
+<section class="step app-a" id="message">
+  <div class="words">
+    <div class="num"><span>20</span>Planning ahead</div>
+    <h3>Send a message to the ushers</h3>
+<ol class="do"><li>Tap <b>Message</b>. Write a short title and your message.</li><li>Choose who it goes to: everybody, this Sunday's ushers, the counters, or people you pick.</li><li>Tap <b>Send</b>.</li></ol>
+<p>It reaches their app, phone and email. You can also choose to send it later, or keep it on everyone's Home page until a date.</p>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/13-message.jpg" alt="The Message form with Title, Who it goes to and Send ringed"></figure></div>
+</section>
+<section class="step app-a" id="remind">
+  <div class="words">
+    <div class="num"><span>21</span>Planning ahead</div>
+    <h3>See who has read your message</h3>
+<p>Under <b>Sent and waiting</b>, each message shows how many people have read it.</p>
+<p>Tap <b>Remind the ones who have not read it</b> to nudge only those people.</p>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/x-remind.jpg" alt="A sent message with &#x27;Seen by&#x27; and the Remind button ringed"></figure></div>
+</section>
+<section class="step app-u" id="cantmake">
+  <div class="words">
+    <div class="num"><span>22</span>Planning ahead</div>
+    <h3>If you can't make your own duty</h3>
+<ol class="do"><li>On <b>Home</b> in the purple Ushers App, tap <b>I can't make it</b> under the duty.</li><li>Say why.</li><li>Tap <b>Send</b>.</li></ol>
+<p>Because you are the Head Usher, it is agreed straight away. Then find cover in <b>Approvals</b>, as on the "Find cover later" page.</p>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/x-cantmake.jpg" alt="A duty with I can&#x27;t make it, the reason box and Send ringed"></figure></div>
+</section>
+<div class="part"><h2>Your ushers</h2><p>Adding people, getting them set up, and roles.</p></div>
+<section class="step app-a" id="addusher">
+  <div class="words">
+    <div class="num"><span>23</span>Your ushers</div>
+    <h3>Add a new usher</h3>
+<ol class="do"><li>Tap <b>Ushers</b>.</li><li>Under <b>Add an usher</b>, type their name, email and phone number.</li><li>Tap <b>Add</b>.</li></ol>
+<p>They sign in with their name and a starting PIN, and are asked whether to keep it.</p>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/14a-add-usher.jpg" alt="The Add an usher form ringed"></figure></div>
+</section>
+<section class="step app-a" id="install2">
+  <div class="words">
+    <div class="num"><span>24</span>Your ushers</div>
+    <h3>Help your ushers get the app</h3>
+<p>At the top of <b>Ushers</b> you can see how many have put the app on their phone.</p>
+<ul class="do"><li><b>Send install steps to all</b> sends the steps to everyone who has not done it yet.</li><li>Under one person, <b>Send install steps</b> sends it to just them.</li><li><b>Not installed</b> and <b>Alerts off</b> show who may be missing messages.</li></ul>
+  </div>
+  <div class="shots two"><figure class="phone"><img src="shots/x-install.jpg" alt="Installed count and Send install steps to all ringed"></figure><figure class="phone"><img src="shots/x-install2.jpg" alt="One usher marked Not installed and Alerts off"></figure></div>
+</section>
+<section class="step app-a" id="roles">
+  <div class="words">
+    <div class="num"><span>25</span>Your ushers</div>
+    <h3>Give a role, or reset a PIN</h3>
+<ol class="do"><li>In <b>Ushers</b>, tap <b>Edit details and roles</b> under their name.</li><li>Tick <b>Head Usher</b> or <b>Assistant Head Usher</b>, or change their phone or email.</li><li>Tap <b>Save</b>.</li></ol>
+<p>If someone forgets their PIN, tap <b>Reset PIN</b> on the same screen.</p>
+<div class="tip"><b>Treasurer</b> and <b>System Administrator</b> are given by Asim, so those boxes are greyed out for you.</div>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/14b-roles.jpg" alt="An usher&#x27;s details with the Head Usher role box ringed"></figure></div>
+</section>
+<section class="step app-a" id="remove">
+  <div class="words">
+    <div class="num"><span>26</span>Your ushers</div>
+    <h3>Remove someone</h3>
+<p>If someone leaves the department, open <b>Edit details and roles</b> under their name and tap <b>Remove</b> at the bottom.</p>
+<p>They can no longer sign in and come off any duties to come. Their past reports stay on the record. To bring them back, tick <b>Active</b> on the same screen and tap Save.</p>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/x-remove.jpg" alt="The Remove button at the bottom of an usher&#x27;s details ringed"></figure></div>
+</section>
+<div class="part"><h2>Looking after your account</h2></div>
+<section class="step app-a" id="notifications">
+  <div class="words">
+    <div class="num"><span>27</span>Looking after your account</div>
+    <h3>Your notifications</h3>
+<p>Everything the app has told you is kept in <b>Notifications</b>: reports filed, requests waiting, monthly summaries.</p>
+<p>Tap <b>Open</b> on any of them to go straight to it. If you have not turned alerts on yet, tap <b>Turn on alerts</b> here once.</p>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/16-notes.jpg" alt="The Notifications screen with the tab and Turn on alerts ringed"></figure></div>
+</section>
+<section class="step app-u" id="pin">
+  <div class="words">
+    <div class="num"><span>28</span>Looking after your account</div>
+    <h3>Change your PIN</h3>
+<ol class="do"><li>In the purple Ushers App, tap <b>PIN</b> at the end of the row of tabs.</li><li>Type your old PIN, then your new PIN twice.</li><li>Tap <b>Change PIN</b>.</li></ol>
+<div class="tip"><b>Tip:</b> slide the row of tabs to the left if you cannot see PIN.</div>
+  </div>
+  <div class="shots"><figure class="phone"><img src="shots/17-pin.jpg" alt="The Change PIN screen with the three PIN boxes ringed"></figure></div>
+</section>
+<section class="step app-a" id="signout">
+  <div class="words">
+    <div class="num"><span>29</span>Looking after your account</div>
+    <h3>Sign out</h3>
+<p>Tap <b>Sign out</b> if anyone else uses your phone. Next time, just sign in with your name and PIN.</p>
+<p><b>Open Ushers App</b> takes you back to the purple app.</p>
+  </div>
+  <div class="shots"><figure class="phone short"><img src="shots/18-signout.jpg" alt="The top of the Admin App with Open Ushers App and Sign out ringed"></figure></div>
+</section>
+<section class="end">
+  <h2>Good to know</h2>
+  <ul>
+    <li>The purple app also has <b>Dues</b> (your own department dues), <b>History</b> (your past duties and reports) and <b>Notifications</b>.</li>
+    <li>At the bottom of every screen, <b>Light</b> and <b>Dark</b> change the colours if one is easier on your eyes.</li>
+    <li>Ushers are reminded of their duty two days before, and on the day if their report is not in yet, so you do not have to chase them.</li>
+    <li><b>Dues and money</b> are looked after by the Treasurer. <b>Settings</b> are looked after by Asim.</li>
+    <li>The Assistant Head Usher can do everything in this guide too, so you can share the load.</li>
+    <li>If something looks wrong or a button does not do what you expect, ask Asim.</li>
+  </ul>
+  <p class="sample">The pictures use made-up practice names ("Test Head Usher", "Test Usher One"). On your phone you will see your own name and your ushers.</p>
+</section>
+
+</div>
+</html>
