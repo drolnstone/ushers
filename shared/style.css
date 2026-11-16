@@ -131,3 +131,23 @@ header.bar button.bell .bell-count { position: absolute; top: -6px; right: -6px;
 /* The three steps for adding the app to a Home Screen. */
 .ask ol.steps, ol.steps { margin: 0 0 12px 20px; padding: 0; color: var(--muted); font-size: 15px; }
 ol.steps li { margin: 0 0 6px; }
+/* Settings as choices, as the Driver App's coordinator chips: tap to pick,
+   lit when on. Yes or No is a pair side by side. */
+.set-row { padding: 10px 0; border-top: 1px solid var(--line); }
+.set-row:first-of-type { border-top: 0; }
+.set-label { font-weight: 600; margin: 0 0 6px; }
+.opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.opts button { min-height: 40px; padding: 6px 12px; border: 1.5px solid var(--line); border-radius: 999px;
+  background: var(--card); color: var(--ink); font-size: 14px; }
+.opts button.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight: 600; }
+.opts.two { display: grid; grid-template-columns: 1fr 1fr; max-width: 260px; }
+.opts.two button { border-radius: 10px; }
+.say .msg { margin: 6px 0 0; }
+.saved { color: var(--ok); font-weight: 600; }
+button.small { padding: 6px 10px; font-size: 14px; }
+.list-row { padding: 4px 0; }
+details.etype { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 6px 0; }
+details.etype summary, details.card summary { cursor: pointer; font-weight: 600; }
+details.group > summary { font-size: 18px; padding: 4px 0; }
+.list-row select { width: auto; }
+.list-row .grow { flex: 1 1 120px; }

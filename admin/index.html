@@ -908,23 +908,398 @@
       out);
   }
 
+  /* ---- the Rules, as choices rather than code ---------------------------
+
+     Asim, 16 Nov 2026: the settings read like code (JSON in boxes). Now
+     each one is the control that fits it, as in the Driver App's
+     coordinator screens: switches for yes or no, a pick list for an hour or
+     a day, tap-to-pick buttons for roles and kinds of alert, and small
+     editors for the lists. A switch, a pick list or a tap saves at once; a
+     typed value or a list saves with its own Save button. Only what has no
+     plain control yet (currencies, the permission table, PIN lengths)
+     stays as code, folded away under Advanced. */
+
+  var NOTE_TYPES = [
+    ["duty", "Put on or taken off a duty"], ["duty_reminder", "Duty reminder"], ["in_charge", "Put in charge of a service"],
+    ["countersign_request", "Asked to countersign a report"], ["report_status", "A report they are part of changed"],
+    ["report_filed", "A report was filed"], ["sent_report", "A copy of a report they sent"],
+    ["approval_request", "Asked to approve a request"], ["approval_decision", "Their request was decided"],
+    ["admin_message", "A message from the department"], ["dues_reminder", "Dues reminder"],
+    ["account_change", "A change to their own account"], ["install", "Weekly nudge to install the app"],
+    ["summary", "Monthly summary"]
+  ];
+  var DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  function hourWords(n) {
+    n = Number(n);
+    if (n === 0) return "Midnight";
+    if (n === 12) return "Midday";
+    return (n % 12) + (n < 12 ? " am" : " pm");
+  }
+  function hourOptions() { var o = []; for (var i = 0; i < 24; i++) o.push([i, hourWords(i)]); return o; }
+  function daysWords(d) { d = Number(d); return d === 0 ? "On the day" : d === 1 ? "1 day before" : d + " days before"; }
+  function roleWords(r) {
+    var x = (CONF.roles || []).filter(function (y) { return y.key === r; })[0];
+    return x ? x.label : r;
+  }
+
+  var SETTING_GROUPS = [
+    ["Church", "The names on reports, emails and the sign-in screen.", [
+      { k: "church_name", label: "Church name", kind: "text", eg: "RCCG Dominion Assembly" },
+      { k: "church_place", label: "Department and place", kind: "text", eg: "Liverpool - Ushering Department" },
+      { k: "app_url", label: "Where the apps are (a link in every email)", kind: "text", eg: "https://drolnstone.github.io/ushers/" }
+    ]],
+    ["Kinds of event", "What each kind of event's report asks for.", [
+      { k: "event_types", kind: "eventTypes" }
+    ]],
+    ["Reports", "", [
+      { k: "ministration_fields", label: "Ministration lines on every report", kind: "ministration" },
+      { k: "offering_categories", label: "Offering categories", kind: "list", eg: "Building Fund" },
+      { k: "default_currency", label: "Currency", kind: "select", options: function (c) { return Object.keys(c.currencies || {}).map(function (x) { return [x, x + " (" + ((c.currencies[x] || {}).symbol || x) + ")"]; }); } },
+      { k: "second_service_counters", label: "Counters at Second Service", kind: "number", min: 1, max: 6, eg: "2", unit: "people" },
+      { k: "countersign_roles", label: "Who may countersign a report", kind: "roles" },
+      { k: "countersign_rostered", label: "Anyone on duty at that service may countersign too", kind: "toggle" },
+      { k: "report_notify_roles", label: "Told when a report is filed", kind: "roles" },
+      { k: "report_reminder_hour", label: "Reminder to file the report goes on the day at", kind: "hour" },
+      { k: "offline_signing", label: "A report signed with no signal is kept and sent later", kind: "toggle" },
+      { k: "offline_max_hours", label: "A report signed with no signal must be sent within", kind: "number", min: 1, max: 336, eg: "72", unit: "hours" }
+    ]],
+    ["Rota and duties", "", [
+      { k: "rota_weeks_ahead", label: "The rota is made this far ahead", kind: "number", min: 1, max: 26, eg: "8", unit: "weeks" },
+      { k: "thanksgiving_rule", label: "Thanksgiving Sunday", kind: "select", options: [["first_sunday", "The first Sunday of each month"], ["none", "None"]] },
+      { k: "rules_months_ahead", label: "Repeating events are made this far ahead", kind: "number", min: 1, max: 24, eg: "12", unit: "months" },
+      { k: "release_late_days", label: "A \"can't make it\" is marked late if it comes within", kind: "number", min: 0, max: 14, eg: "1", unit: "days of the event" },
+      { k: "duty_reminder_days", label: "The duty reminder goes", kind: "dayChips" },
+      { k: "reminder_hour", label: "Duty reminders go at", kind: "hour" },
+      { k: "reminder_patterns", label: "Extra reminders for a kind of event", kind: "patterns" }
+    ]],
+    ["Approvals", "", [
+      { k: "self_approval", label: "An approver may decide a request they are part of", kind: "toggle" }
+    ]],
+    ["Alerts and emails", "", [
+      { k: "quiet_from", label: "Phones go quiet from", kind: "hour" },
+      { k: "quiet_to", label: "Phones wake again at", kind: "hour", note: "The same hour for both means never quiet." },
+      { k: "urgent_types", label: "Still wake phones in quiet hours", kind: "types" },
+      { k: "push_types", label: "Sent to phones as alerts", kind: "types", allowAll: true },
+      { k: "email_types", label: "Also sent by email", kind: "types" },
+      { k: "unalerted_email_minutes", label: "Someone with alerts on no phone is emailed what is unread after", kind: "select",
+        options: [[0, "Never"], [15, "15 minutes"], [30, "30 minutes"], [60, "1 hour"], [120, "2 hours"], [240, "4 hours"], [720, "12 hours"], [1440, "1 day"]] },
+      { k: "summary_roles", label: "The monthly summary goes to", kind: "roles" },
+      { k: "summary_hour", label: "The monthly summary goes on the last Sunday of the month at", kind: "hour" },
+      { k: "install_reminder_dow", label: "The weekly nudge to install the app goes on", kind: "select",
+        options: DAYS_OF_WEEK.map(function (d, i) { return [i, d]; }) }
+    ]],
+    ["Sign-in", "", [
+      { k: "public_name_list", label: "The sign-in screen lists names to pick from", kind: "toggle" },
+      { k: "pin_max_tries", label: "Wrong PINs allowed before a pause", kind: "number", min: 1, max: 10, eg: "3", unit: "tries" },
+      { k: "pin_lock_minutes", label: "The pause after too many wrong PINs", kind: "number", min: 1, max: 1440, eg: "5", unit: "minutes" },
+      { k: "session_idle_hours", label: "Signed out when unused for", kind: "number", min: 1, max: 720, eg: "12", unit: "hours" },
+      { k: "session_max_days", label: "Signed out after at most", kind: "number", min: 1, max: 365, eg: "30", unit: "days" }
+    ]],
+    ["Dues", "The amounts members pay. Recording and reminding is the Treasurer's.", [
+      { k: "dues_monthly_pence", label: "Monthly dues", kind: "money", eg: "5.00" },
+      { k: "dues_annual_pence", label: "Yearly dues", kind: "money", eg: "60.00" }
+    ]]
+  ];
+
+  /* One setting saved, and said beside it. */
+  function saveSetting(k, v, out, after) {
+    C.clear(out);
+    out.appendChild(h("span", { class: "muted" }, " Saving..."));
+    return C.send("config.set", { key: k, value: v, reason: "Setting: " + k }, "Setting: " + k).then(function (x) {
+      C.clear(out);
+      if (x.queued) out.appendChild(h("span", { class: "muted" }, " Saved on this phone. Not sent yet."));
+      else if (x.ok) { out.appendChild(h("span", { class: "saved" }, " Saved.")); if (after) after(v); }
+      else out.appendChild(msg(x.message, "bad"));
+    }, function (e) { C.clear(out); out.appendChild(msg(e && e.message ? e.message : "No connection.", "bad")); });
+  }
+
+  /* Tap-to-pick buttons: one or many lit, as the Driver App's chips. */
+  function pickButtons(options, chosen, many, onPick) {
+    var box = h("div", { class: "opts" });
+    function paint() {
+      Array.prototype.forEach.call(box.children, function (b) {
+        var on = chosen.indexOf(b.getAttribute("data-v")) !== -1;
+        b.className = on ? "on" : "";
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+    options.forEach(function (o) {
+      box.appendChild(h("button", { type: "button", "data-v": String(o[0]), onclick: function () {
+        var v = String(o[0]);
+        if (many) chosen = chosen.indexOf(v) === -1 ? chosen.concat([v]) : chosen.filter(function (x) { return x !== v; });
+        else chosen = [v];
+        paint();
+        onPick(chosen.slice());
+      } }, o[1]));
+    });
+    paint();
+    return box;
+  }
+
+  function settingRow(c, cfg, defs) {
+    var k = c.k, v = cfg[k], out = h("span", { class: "say" });
+    var title = c.label ? h("div", { class: "set-label" }, c.label) : null;
+    var note = c.note ? h("p", { class: "muted" }, c.note) : null;
+    var control;
+    function save(next) { cfg[k] = next; return saveSetting(k, next, out); }
+
+    if (c.kind === "toggle") {
+      control = pickButtons([["true", "Yes"], ["false", "No"]], [String(!!v)], false, function (p) { save(p[0] === "true"); });
+      control.className = "opts two";
+    } else if (c.kind === "hour" || c.kind === "select") {
+      var opts = c.kind === "hour" ? hourOptions() : typeof c.options === "function" ? c.options(cfg) : c.options;
+      if (!opts.some(function (o) { return String(o[0]) === String(v); })) opts = opts.concat([[v, String(v)]]);
+      control = h("select", { onchange: function () {
+        var pick = opts.filter(function (o) { return String(o[0]) === control.value; })[0];
+        save(pick ? pick[0] : control.value);
+      } }, opts.map(function (o) { return h("option", { value: String(o[0]) }, o[1]); }));
+      control.value = String(v);
+    } else if (c.kind === "text" || c.kind === "number" || c.kind === "money") {
+      var shown = c.kind === "money" ? (Number(v || 0) / 100).toFixed(2) : v;
+      var box = h("input", { inputmode: c.kind === "text" ? null : "decimal", placeholder: "e.g. " + c.eg, value: shown === null || shown === undefined ? "" : String(shown) });
+      var go = h("button", { class: "ghost", type: "button", onclick: function () {
+        C.clear(out);
+        var raw = String(box.value).trim(), next;
+        if (c.kind === "text") {
+          if (!raw) return out.appendChild(msg("Type something first.", "bad"));
+          next = raw;
+        } else if (c.kind === "money") {
+          if (!/^\d+(\.\d{1,2})?$/.test(raw)) return out.appendChild(msg("Type an amount such as 5.00.", "bad"));
+          next = Math.round(Number(raw) * 100);
+        } else {
+          next = Number(raw);
+          if (!/^\d+$/.test(raw) || next < c.min || next > c.max) return out.appendChild(msg("A whole number from " + c.min + " to " + c.max + ".", "bad"));
+        }
+        save(next);
+      } }, "Save");
+      control = h("div", { class: "row" }, c.kind === "money" ? h("span", {}, symbol(cfg)) : null,
+        h("span", { class: "grow" }, box), c.unit ? h("span", { class: "muted" }, c.unit) : null, go);
+    } else if (c.kind === "roles") {
+      control = pickButtons((CONF.roles || []).map(function (r) { return [r.key, r.label]; }), (v || []).map(String), true, function (p) { save(p); });
+    } else if (c.kind === "types") {
+      var known = NOTE_TYPES.slice();
+      (Array.isArray(v) ? v : []).forEach(function (t) { if (!known.some(function (x) { return x[0] === t; })) known.push([t, t]); });
+      var allBox = null;
+      var typesList = function (chosen) { return pickButtons(known, chosen, true, function (p) { save(p); }); };
+      if (c.allowAll) {
+        var holder = h("div");
+        var every = v === null || v === undefined;
+        allBox = pickButtons([["all", "Every kind"], ["some", "Only those picked"]], [every ? "all" : "some"], false, function (p) {
+          C.clear(holder);
+          if (p[0] === "all") save(null);
+          else { var start = Array.isArray(cfg[k]) ? cfg[k] : known.map(function (x) { return x[0]; }); holder.appendChild(typesList(start)); save(start); }
+        });
+        allBox.className = "opts two";
+        if (!every) holder.appendChild(typesList(v.map(String)));
+        control = h("div", {}, allBox, holder);
+      } else control = typesList((v || []).map(String));
+    } else if (c.kind === "dayChips") {
+      var dayOpts = [0, 1, 2, 3, 4, 5, 6, 7, 14].map(function (d) { return [d, daysWords(d)]; });
+      control = pickButtons(dayOpts, (v || []).map(String), true, function (p) {
+        save(p.map(Number).sort(function (a, b) { return b - a; }));
+      });
+    } else if (c.kind === "list") {
+      control = listEditor(k, v || [], c.eg, out);
+    } else if (c.kind === "ministration") {
+      control = ministrationEditor(v || [], out);
+    } else if (c.kind === "eventTypes") {
+      control = eventTypesEditor(cfg, out);
+    } else if (c.kind === "patterns") {
+      control = patternsEditor(cfg, out);
+    }
+    return h("div", { class: "set-row" }, title, control, note, out);
+  }
+
+  function symbol(cfg) {
+    var cur = (cfg.currencies || {})[cfg.default_currency] || {};
+    return cur.symbol || cfg.default_currency || "";
+  }
+
+  /* A list of words: each with Remove, and a box to add one. */
+  function listEditor(k, items, eg, out) {
+    items = items.slice();
+    var wrap = h("div");
+    function paint() {
+      C.clear(wrap);
+      items.forEach(function (x, i) {
+        wrap.appendChild(h("div", { class: "row list-row" }, h("span", { class: "grow" }, x),
+          i > 0 ? h("button", { class: "ghost small", type: "button", "aria-label": "Move up", onclick: function () {
+            var t = items[i - 1]; items[i - 1] = items[i]; items[i] = t; paint(); saveSetting(k, items.slice(), out);
+          } }, "↑") : null,
+          h("button", { class: "ghost small", type: "button", onclick: function () {
+            items.splice(i, 1); paint(); saveSetting(k, items.slice(), out);
+          } }, "Remove")));
+      });
+      var add = h("input", { placeholder: "e.g. " + eg });
+      wrap.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, add), h("button", { class: "ghost", type: "button", onclick: function () {
+        var t = String(add.value).replace(/\s+/g, " ").trim();
+        C.clear(out);
+        if (!t) return out.appendChild(msg("Type one to add.", "bad"));
+        if (items.some(function (x) { return x.toLowerCase() === t.toLowerCase(); })) return out.appendChild(msg("That one is there already.", "bad"));
+        items.push(t); paint(); saveSetting(k, items.slice(), out);
+      } }, "Add")));
+    }
+    paint();
+    return wrap;
+  }
+
+  /* The ministration lines: a name and whether it takes words or a number.
+     The stored key is made from the name once, and kept after, so reports
+     that used it still read. */
+  function ministrationEditor(fields, out) {
+    fields = fields.map(function (f) { return Object.assign({}, f); });
+    var wrap = h("div");
+    function keyFor(label) {
+      var base = String(label).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^[^a-z]+/, "").slice(0, 28) || "line";
+      var k = base, n = 2;
+      while (fields.some(function (f) { return f.key === k; })) k = base.slice(0, 26) + "_" + (n++);
+      return k;
+    }
+    function kindSelect(val, onch) {
+      var s = h("select", { onchange: function () { onch(s.value); } }, h("option", { value: "text" }, "Words"), h("option", { value: "number" }, "A number"));
+      s.value = val;
+      return s;
+    }
+    function paint() {
+      C.clear(wrap);
+      fields.forEach(function (f, i) {
+        var name = h("input", { placeholder: "e.g. Sermon title", value: f.label, oninput: function () { f.label = name.value; } });
+        wrap.appendChild(h("div", { class: "row list-row" }, h("span", { class: "grow" }, name),
+          h("span", {}, kindSelect(f.kind, function (x) { f.kind = x; })),
+          i > 0 ? h("button", { class: "ghost small", type: "button", "aria-label": "Move up", onclick: function () {
+            var t = fields[i - 1]; fields[i - 1] = fields[i]; fields[i] = t; paint();
+          } }, "↑") : null,
+          h("button", { class: "ghost small", type: "button", onclick: function () { fields.splice(i, 1); paint(); } }, "Remove")));
+      });
+      var add = h("input", { placeholder: "e.g. Offertory hymn" }), addKind = kindSelect("text", function () {});
+      wrap.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, add), h("span", {}, addKind), h("button", { class: "ghost", type: "button", onclick: function () {
+        var t = String(add.value).trim();
+        C.clear(out);
+        if (!t) return out.appendChild(msg("Type the name of the line to add.", "bad"));
+        fields.push({ key: keyFor(t), label: t, kind: addKind.value }); paint();
+      } }, "Add")));
+      wrap.appendChild(h("p", {}, h("button", { type: "button", onclick: function () {
+        C.clear(out);
+        if (fields.some(function (f) { return !String(f.label).trim(); })) return out.appendChild(msg("Every line needs a name.", "bad"));
+        saveSetting("ministration_fields", fields.map(function (f) { return { key: f.key, label: String(f.label).trim(), kind: f.kind }; }), out);
+      } }, "Save the ministration lines")));
+    }
+    paint();
+    return wrap;
+  }
+
+  /* Each kind of event: its name, the Sunday start time, what its report
+     holds and who does the duty. */
+  function eventTypesEditor(cfg, out) {
+    var types = JSON.parse(JSON.stringify(cfg.event_types || {}));
+    var parts = [["attendance", "Attendance"], ["ministration", "Ministration"], ["offering", "Offering"], ["countersign", "Countersigned"]];
+    var wrap = h("div");
+    Object.keys(types).forEach(function (code) {
+      var t = types[code];
+      var name = h("input", { placeholder: "e.g. Prayer Meeting", value: t.label || "", oninput: function () { t.label = name.value; } });
+      var start = t.sunday ? h("input", { type: "time", value: t.start || "", oninput: function () { t.start = start.value; } }) : null;
+      var duty = h("select", { onchange: function () { t.duty = duty.value; } }, h("option", { value: "ushering" }, "Ushering"), h("option", { value: "counting" }, "Counting"));
+      duty.value = t.duty || "ushering";
+      var on = parts.filter(function (p) { return t[p[0]]; }).map(function (p) { return p[0]; });
+      var pick = pickButtons(parts, on, true, function (p) { parts.forEach(function (x) { t[x[0]] = p.indexOf(x[0]) !== -1; }); });
+      wrap.appendChild(h("details", { class: "etype" }, h("summary", {}, (t.label || code) + (t.sunday ? " · Sunday, " + (t.start || "") : "")),
+        h("label", {}, "Name"), name,
+        start ? [h("label", {}, "Starts at"), start] : null,
+        h("label", {}, "Duty"), duty,
+        h("label", {}, "The report holds"), pick));
+    });
+    wrap.appendChild(h("p", {}, h("button", { type: "button", onclick: function () {
+      C.clear(out);
+      var blank = Object.keys(types).filter(function (c) { return !String(types[c].label || "").trim(); });
+      if (blank.length) return out.appendChild(msg("Every kind of event needs a name.", "bad"));
+      saveSetting("event_types", types, out);
+    } }, "Save the kinds of event")));
+    wrap.appendChild(h("p", { class: "muted" }, "Only Sunday services are countersigned unless you tick it here. Reports already filed keep what they held."));
+    return wrap;
+  }
+
+  /* Extra reminders for a kind of event, after Settings' repeating events:
+     a list with Pause and Delete, and Add one. */
+  function patternsEditor(cfg, out) {
+    var pats = JSON.parse(JSON.stringify(cfg.reminder_patterns || {}));
+    var types = cfg.event_types || {};
+    var wrap = h("div");
+    function save() {
+      var clean = {};
+      Object.keys(pats).forEach(function (t) { if (pats[t] && pats[t].length) clean[t] = pats[t]; });
+      saveSetting("reminder_patterns", clean, out, paint);
+    }
+    function paint() {
+      C.clear(wrap);
+      var any = false;
+      Object.keys(pats).forEach(function (t) {
+        (pats[t] || []).forEach(function (p, i) {
+          any = true;
+          wrap.appendChild(h("div", { class: "row list-row" },
+            h("span", { class: "grow" }, ((types[t] || {}).label || t) + " · " + daysWords(p.days) + " · " + hourWords(p.hour) +
+              " · " + (p.role ? roleWords(p.role) + " on duty" : "everyone on duty")),
+            p.paused ? h("span", { class: "chip warn" }, "Paused") : null,
+            h("button", { class: "ghost small", type: "button", onclick: function () { p.paused = !p.paused; save(); } }, p.paused ? "Start again" : "Pause"),
+            h("button", { class: "ghost small", type: "button", onclick: function () { pats[t].splice(i, 1); save(); } }, "Delete")));
+        });
+      });
+      if (!any) wrap.appendChild(h("p", { class: "muted" }, "None yet. Everyone on duty still gets the duty reminder above."));
+      var kind = h("select", {}, Object.keys(types).map(function (k) { return h("option", { value: k }, types[k].label || k); }));
+      var days = h("select", {}, [0, 1, 2, 3, 4, 5, 6, 7, 10, 14, 21, 28].map(function (d) { return h("option", { value: String(d) }, daysWords(d)); }));
+      days.value = "1";
+      var hour = h("select", {}, hourOptions().map(function (o) { return h("option", { value: String(o[0]) }, o[1]); }));
+      hour.value = "12";
+      var role = h("select", {}, h("option", { value: "" }, "Everyone on duty"),
+        (CONF.roles || []).map(function (r) { return h("option", { value: r.key }, "Only the " + r.label + " on duty"); }));
+      wrap.appendChild(h("details", { class: "etype" }, h("summary", {}, "Add a reminder"),
+        h("label", {}, "Kind of event"), kind, h("label", {}, "When"), days, h("label", {}, "At"), hour, h("label", {}, "To"), role, h("p"),
+        h("button", { type: "button", onclick: function () {
+          var list = pats[kind.value] || (pats[kind.value] = []);
+          if (list.length >= 8) { C.clear(out); return out.appendChild(msg("At most eight reminders for one kind of event.", "bad")); }
+          list.push({ days: Number(days.value), hour: Number(hour.value), role: role.value, paused: false });
+          save();
+        } }, "Add")));
+    }
+    paint();
+    return wrap;
+  }
+
+  function rulesCards(cfg, defs) {
+    var done = {}, cards = [];
+    SETTING_GROUPS.forEach(function (g) {
+      var rows = g[2].filter(function (c) { return Object.prototype.hasOwnProperty.call(cfg, c.k); });
+      rows.forEach(function (c) { done[c.k] = 1; });
+      if (!rows.length) return;
+      /* Folded, one heading each, so the page is a short list to open. */
+      cards.push(h("details", { class: "card group" }, h("summary", {}, g[0]), g[1] ? h("p", { class: "muted" }, g[1]) : null,
+        rows.map(function (c) { return settingRow(c, cfg, defs); })));
+    });
+    /* Anything without a plain control yet: as before, folded away. */
+    var rest = Object.keys(cfg).filter(function (k) { return !done[k] && k !== "event_rules"; });
+    if (rest.length) {
+      cards.push(h("details", { class: "card" }, h("summary", {}, "Advanced"),
+        h("p", { class: "muted" }, "These are written as code. Change them only if you know what they do."),
+        rest.map(function (k) {
+          var box = h("textarea", { rows: typeof cfg[k] === "object" && cfg[k] !== null ? "4" : "1",
+            placeholder: "e.g. " + JSON.stringify(defs ? defs[k] : cfg[k]) }, JSON.stringify(cfg[k], null, 1));
+          var out = h("span", { class: "say" });
+          return h("div", { class: "set-row" }, h("div", { class: "set-label" }, k), box, h("p"), h("button", { class: "ghost", type: "button", onclick: function () {
+            var v;
+            try { v = JSON.parse(box.value); } catch (e) { C.clear(out); out.appendChild(msg("Not valid JSON.", "bad")); return; }
+            saveSetting(k, v, out);
+          } }, "Save"), out);
+        })));
+    }
+    return cards;
+  }
+
   function settings() {
     loading();
     C.api("config.get").then(function (j) {
       var parts = [h("h1", {}, "Settings")];
       if (window.UshersTesting && can("ushers.manage") && can("roles.grant_any")) parts.push(window.UshersTesting.card(CONF));
       parts.push(repeatingCard(j.config, settings));
-      parts.push(h("h2", {}, "Rules"), h("p", { class: "muted" }, "Values are JSON."));
-      Object.keys(j.config).forEach(function (k) {
-        var box = h("textarea", { rows: typeof j.config[k] === "object" && j.config[k] !== null ? "4" : "1",
-          placeholder: "e.g. " + JSON.stringify(j.defaults ? j.defaults[k] : j.config[k]) }, JSON.stringify(j.config[k], null, 1));
-        var out = h("span");
-        parts.push(h("div", { class: "card" }, h("b", {}, k), box, h("p"), h("button", { class: "ghost", onclick: function () {
-          var v;
-          try { v = JSON.parse(box.value); } catch (e) { out.textContent = " Not valid JSON."; return; }
-          C.send("config.set", { key: k, value: v }, "Setting: " + k).then(function (x) { out.textContent = x.queued ? " Saved on this phone. Not sent yet." : x.ok ? " Saved." : " " + x.message; });
-        } }, "Save"), out));
-      });
+      parts = parts.concat(rulesCards(j.config, j.defaults));
       show.apply(null, parts);
     }, failed);
   }
