@@ -22,7 +22,7 @@
      PIN_ITERATIONS   optional. PBKDF2 rounds for new PINs (default 20000).
    ========================================================================== */
 
-const SERVER_VERSION = "w0.3.22";
+const SERVER_VERSION = "w0.3.23";
 
 /* ==========================================================================
    CONFIGURATION — defaults. A row in the config table overrides a key.
@@ -2881,7 +2881,8 @@ async function aConfigSet(env, cfg, b, me) {
   const def = DEFAULT_CONFIG[k];
   const v = b.value;
   if (def !== null && typeof v !== typeof def) fail(400, "type", "That setting takes a " + (Array.isArray(def) ? "list" : typeof def) + ".");
-  if (Array.isArray(def) !== Array.isArray(v)) fail(400, "type", "That setting takes a list.");
+  if (def !== null && Array.isArray(def) !== Array.isArray(v)) fail(400, "type", "That setting takes a list.");
+  if (k === "push_types" && v !== null && !(Array.isArray(v) && v.every((x) => typeof x === "string"))) fail(400, "type", "Pick every kind, or a list of kinds.");
   if (k === "ministration_fields") {
     const seen = {};
     if (v.length > 30) fail(400, "type", "At most 30 ministration lines.");

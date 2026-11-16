@@ -1,0 +1,26 @@
+USHERS
+======
+  app v0.3.24 · server w0.3.23 · sheet v0.3.6
+
+  Admin App → Settings is now choices instead of code: Yes/No switches,
+  pick lists for hours and days, tap-to-pick buttons for roles and kinds
+  of alert, and small editors for the lists (offering categories,
+  ministration lines, kinds of event, extra reminders). Currencies, the
+  permission table and PIN lengths stay as code under "Advanced".
+  Settings is still the System Administrator's alone.
+
+YOU ARE ON              GOING TO
+  Pages   v0.3.23         v0.3.24   (merge)
+  Worker  w0.3.22         w0.3.23   (merge: Cloudflare builds it)
+  Code.gs v0.3.6          v0.3.6    (no change)
+
+IN THIS ORDER
+1. Merge the pull request. Nothing to paste.
+
+AFTER IT (give it ten minutes)
+A. Cloudflare → Workers & Pages → ushers-api → Deployments: a build from
+   this merge, green, ending "Deployed ushers-api".
+B. /api/health shows "server":"w0.3.23".
+C. The foot of both apps reads app v0.3.24 · server w0.3.23 · sheet v0.3.6.
+D. Admin App → Settings: change one Yes/No (for example "A report signed
+   with no signal is kept and sent later"), see "Saved.", then put it back.
